@@ -56,7 +56,7 @@
         <div id="sessionList"></div>
         <button type="button" id="sessionClear" class="ghost" hidden>Clear session notes</button>
       </div>
-      <p class="hint" id="voiceDisclaimer">Voice availability depends on your browser. AUREN still understands specific commands rather than open-ended conversation.</p>
+      <p class="hint" id="voiceDisclaimer">Voice availability depends on your browser. For open-ended conversations, connect the optional AI Worker in settings. Spoken responses use your browser voice engine.</p>
     </section>
 
     <section id="memory" class="tab">
@@ -91,6 +91,12 @@
     </section>
 
     <section id="settings" class="tab">
+      <div class="card">
+        <h3>Connect AUREN's AI brain</h3>
+        <p class="hint">Paste the address of your free Cloudflare AI Worker. Do not paste API keys here. Natural conversation will work after you deploy and connect the Worker.</p>
+        <div class="row"><input id="aiEndpoint" type="url" placeholder="https://auren-ai.YOURNAME.workers.dev" aria-label="AI Worker URL"><button id="saveAIEndpoint" type="button">Connect AI</button><button id="clearAIEndpoint" type="button" class="ghost">Disconnect</button></div>
+        <p class="hint">Messages and relevant non-sensitive memories are sent to Cloudflare for answers. Memory commands remain on your device. The AI cannot save memories itself.</p>
+      </div>
       <div class="card">
         <h3>Privacy</h3>
         <label class="check"><input type="checkbox" id="saveHistory"> Keep chat history on this device</label>

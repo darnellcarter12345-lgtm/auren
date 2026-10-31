@@ -10,12 +10,18 @@ import { Butler, isSessionNote } from './butler.js';
 import { buildBackup, encryptBackup, decryptBackup, validateBackup, applyPlan, describeReport, LIMITS } from './backup.js';
 import { loadSettings, saveSettings } from './settings.js';
 import { createVoice } from './voice.js';
+import { getAIEndpoint, setAIEndpoint, askAI } from './ai.js';
 
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const butler = new Butler();
 const settings = loadSettings();
 const HISTORY_LIMIT = 200;
+const aiRecent = [];
+const aiEndpointInput = $('aiEndpoint');
+aiEndpointInput.value = getAIEndpoint();
+$('saveAIEndpoint').onclick = () => { try { setAIEndpoint(aiEndpointInput.value); showStatus('AUREN AI connection saved on this browser.', 'ok'); } catch (e) { showStatus(e.message, 'error'); } };
+$('clearAIEndpoint').onclick = () => { setAIEndpoint(''); aiEndpointInput.value = ''; showStatus('AI connection removed.', 'info'); };
 let storageOk = false, sinceTrim = 0;
 const voice = createVoice({
   onTranscript: transcript => {
@@ -164,8 +170,24 @@ async function presentResult(r) {
 
 async function send(text) {
   await addMessage('user', text, { ephemeral: isSessionNote(text) });
-  try { await presentResult(await butler.handle(text)); }
-  catch (e) { await addMessage('auren', 'I regret to say that failed: ' + e.message, { err: true }); showStatus(e.message, 'error'); renderSession(); }
+  try {
+    // Verified save/delete/project operations remain local. Other conversation goes to AI.
+    const isLocal = /^(?:help|\?|what can you do|for now|just for now|this session|for this session|clear (?:the )?session|save session note|session|what are we working on|what am i working on|remember\b|please remember\b|what do you (?:remember|know) about|recall\b|do you remember|search memory for|forget\b|new project\b|start project\b|create project\b|project\b|projects\b|list projects\b|yes\b|no\b|confirm\b|cancel\b)/i.test(text);
+    if (isLocal || !getAIEndpoint()) {
+      await presentResult(await butler.handle(text));
+    } else {
+      $('latestReply').textContent = 'Thinking…';
+      const context = await butler.getContext(text);
+      // Sensitive records never go to the third-party model automatically.
+      const answer = await askAI(text, context.memories.filter(m => !m.sensitive), context.session, aiRecent);
+      aiRecent.push({role:'user', content:text.slice(0,500)}, {role:'assistant', content:answer.slice(0,500)});
+      if (aiRecent.length > 12) aiRecent.splice(0, aiRecent.length - 12);
+      await addMessage('auren', answer);
+    }
+  } catch (e) {
+    await addMessage('auren', 'I could not reach my AI service. ' + e.message, { err: true });
+    showStatus(e.message, 'error'); renderSession();
+  }
 }
 async function answerConfirm(token, yes, label) {
   await addMessage('user', label);
