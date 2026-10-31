@@ -1,4 +1,7 @@
-AUREN v1.4.6
-Upload ONLY app.js and voice.js to the GitHub repository root. Keep all other files.
-This update removes the voice preview, prevents accidental rapid double taps, pins a consistent non-novelty voice, keeps Hey Auren and Settings, and retains interruptions toggle in Settings.
-Safari microphone and speaker behavior must be tested on device.
+AUREN v1.4.7 — Interrupt Timing Fix
+
+Upload app.js and voice.js to your existing GitHub repository root.
+
+Interruptions must be enabled in Settings. With it off, AUREN intentionally finishes speaking.
+When enabled, AUREN attempts to keep listening during its replies; Safari can block simultaneous speech recognition and playback. Early recognition uses two matching interim updates or a wake phrase where supported.
+This addresses a specific restart timing bug and is not a guarantee of perfect hands-free barge-in.
