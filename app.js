@@ -50,7 +50,8 @@ $('speakReplies').disabled = !capabilities.speak;
 $('stopSpeech').disabled = !capabilities.speak;
 $('voiceStatus').textContent = capabilities.listen ? 'Tap the microphone to dictate a command.' : 'Microphone recognition unavailable in this browser; typing works.';
 $('micBtn').onclick = () => {
-  const active = voice.startListening();
+  if (voice.listening) voice.stopListening();
+  else voice.startListening();
   syncVoiceUI();
 };
 $('speakReplies').onchange = () => voice.setEnabled($('speakReplies').checked);
@@ -78,101 +79,39 @@ $('wakeBtn').onclick = () => {
   $('speakReplies').checked = voice.enabled;
   syncVoiceUI();
 };
-// Persistent voice preferences. This never silently grants microphone access.
-const VOICE_PREFS_KEY = 'auren_voice_prefs_v12'; // Keep key for backward compatibility
-let voicePrefs = { wake: false, voiceURI: '', rate: 0.96, pitch: 0.95 };
-try { voicePrefs = { ...voicePrefs, ...JSON.parse(localStorage.getItem(VOICE_PREFS_KEY) || '{}') }; } catch {}
-function storeVoicePrefs() {
-  try { localStorage.setItem(VOICE_PREFS_KEY, JSON.stringify(voicePrefs)); }
-  catch { $('voiceStatus').textContent = 'Voice preferences cannot be saved in this browser.'; }
+// A single curated British-butler voice. No voice picker or tuning controls.
+// Keep the existing wake preference across upgrades. Microphone access still needs a tap.
+const VOICE_PREFS_KEY = 'auren_voice_prefs_v12';
+let savedWake = false;
+try { savedWake = !!JSON.parse(localStorage.getItem(VOICE_PREFS_KEY) || '{}').wake; } catch {}
+function saveWakePreference() {
+  try { localStorage.setItem(VOICE_PREFS_KEY, JSON.stringify({wake: savedWake})); } catch {}
 }
-const voiceOptions = document.createElement('div');
-voiceOptions.className = 'voice-preferences';
-voiceOptions.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;margin:14px auto;color:#d6b57b;font-size:14px;';
-const wakeLabel = document.createElement('label');
-wakeLabel.style.cssText = 'display:flex;align-items:center;gap:7px;cursor:pointer;';
-const wakePref = document.createElement('input');
-wakePref.type = 'checkbox'; wakePref.checked = !!voicePrefs.wake;
-wakeLabel.append(wakePref, document.createTextNode('Remember “Hey Auren” preference'));
-const voiceLabel = document.createElement('label'); voiceLabel.textContent = 'Voice: ';
-const voiceSelect = document.createElement('select');
-voiceSelect.setAttribute('aria-label', 'AUREN speaking voice');
-voiceSelect.style.cssText = 'max-width:230px;background:#20252c;color:#f2e4c6;border:1px solid #7a664b;border-radius:7px;padding:6px;';
-voiceLabel.append(voiceSelect);
-voiceOptions.append(wakeLabel, voiceLabel);
-const styleLabel = document.createElement('label');
-styleLabel.textContent = 'Pace: ';
-const pace = document.createElement('input');
-pace.type = 'range'; pace.min = '0.7'; pace.max = '1.25'; pace.step = '0.05';
-pace.value = String(voicePrefs.rate); pace.setAttribute('aria-label', 'Voice speaking speed');
-styleLabel.append(pace);
-const pitchLabel = document.createElement('label');
-pitchLabel.textContent = 'Tone: ';
-const pitch = document.createElement('input');
-pitch.type = 'range'; pitch.min = '0.7'; pitch.max = '1.3'; pitch.step = '0.05';
-pitch.value = String(voicePrefs.pitch); pitch.setAttribute('aria-label', 'Voice pitch');
-pitchLabel.append(pitch);
-voiceOptions.append(styleLabel, pitchLabel);
-const resumeNotice = document.createElement('button');
-resumeNotice.type = 'button'; resumeNotice.className = 'ghost';
-resumeNotice.textContent = 'Activate saved “Hey Auren”';
-resumeNotice.hidden = !voicePrefs.wake;
-voiceOptions.append(resumeNotice);
-function updateStyle() {
-  voicePrefs.rate = Number(pace.value); voicePrefs.pitch = Number(pitch.value);
-  voice.setVoiceStyle(voicePrefs); storeVoicePrefs();
-}
-pace.addEventListener('input', updateStyle);
-pitch.addEventListener('input', updateStyle);
-resumeNotice.onclick = () => {
-  if (!voicePrefs.wake) return;
-  voice.setEnabled(true); $('speakReplies').checked = true;
-  if (!voice.wakeMode) voice.setWakeMode(true);
-  resumeNotice.hidden = true; syncVoiceUI();
-};
-$('testVoice').insertAdjacentElement('afterend', voiceOptions);
-function refreshVoiceChoices() {
-  const list = voice.getVoices();
-  voiceSelect.replaceChildren();
-  const auto = document.createElement('option'); auto.value = ''; auto.textContent = 'Automatic (British preferred)'; voiceSelect.append(auto);
-  list.filter(v => /^en(-|$)/i.test(v.lang)).forEach(v => {
-    const o = document.createElement('option'); o.value = v.voiceURI;
-    o.textContent = `${v.name} (${v.lang})${v.localService ? ' • device' : ''}`;
-    voiceSelect.append(o);
-  });
-  voiceSelect.value = voicePrefs.voiceURI;
-  if (voiceSelect.value !== voicePrefs.voiceURI) voiceSelect.value = '';
-}
-voice.setVoicePreference(voicePrefs.voiceURI);
-voice.setVoiceStyle(voicePrefs);
-refreshVoiceChoices();
-if (window.speechSynthesis) window.speechSynthesis.addEventListener?.('voiceschanged', refreshVoiceChoices);
-voiceSelect.onchange = () => { voicePrefs.voiceURI = voiceSelect.value; voice.setVoicePreference(voicePrefs.voiceURI); storeVoicePrefs(); voice.speak('At your service. How does this voice sound?'); };
-wakePref.onchange = () => {
-  voicePrefs.wake = wakePref.checked; storeVoicePrefs();
-  resumeNotice.hidden = true;
-  if (wakePref.checked) {
-    voice.setEnabled(true); $('speakReplies').checked = true;
-    voice.setWakeMode(true); // direct user interaction: request microphone permission
-  } else if (voice.wakeMode) voice.stopListening();
-  syncVoiceUI();
-};
+voice.setVoicePreference(''); // Automatically choose the best available British voice.
+voice.setVoiceStyle({rate: 0.94, pitch: 0.96});
+
+// Keep the main screen focused on the orb. Secondary voice actions belong in Settings.
+const voiceCard = document.createElement('div');
+voiceCard.className = 'card';
+const voiceHeading = document.createElement('h3');
+voiceHeading.textContent = 'AUREN voice';
+const voiceDescription = document.createElement('p');
+voiceDescription.className = 'hint';
+voiceDescription.textContent = 'One automatically selected British-butler voice. The sound depends on which voices Safari and macOS provide.';
+voiceCard.append(voiceHeading, voiceDescription, $('testVoice'), $('wakeBtn'));
+$('testVoice').textContent = '▶ Hear AUREN';
+$('testVoice').style.marginRight = '12px';
+$('settings').insertBefore(voiceCard, $('settings').firstElementChild);
 const oldWakeClick = $('wakeBtn').onclick;
 $('wakeBtn').onclick = () => {
   oldWakeClick();
-  voicePrefs.wake = voice.wakeMode;
-  wakePref.checked = voicePrefs.wake;
-  storeVoicePrefs();
-  resumeNotice.hidden = !voicePrefs.wake || voice.wakeMode;
+  savedWake = voice.wakeMode;
+  saveWakePreference();
 };
-// A remembered preference is NOT permission to silently start recording.
-// Arm wake mode only from the user's first explicit interaction after a reload.
-if (voicePrefs.wake && capabilities.listen) {
-  $('voiceStatus').textContent = '“Hey Auren” saved. Tap the orb or Enable “Hey Auren” once to resume listening.';
+if (savedWake && capabilities.listen) {
+  $('voiceStatus').textContent = 'Hey Auren is saved. Open Settings and tap Resume Hey Auren to activate listening.';
   $('wakeBtn').textContent = 'Resume “Hey Auren”';
-  resumeNotice.hidden = false;
 }
-
 const observer = new MutationObserver(syncVoiceUI);
 observer.observe($('voiceStatus'), {childList:true,characterData:true,subtree:true});
 

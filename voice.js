@@ -37,9 +37,28 @@ export function createVoice({ onTranscript, onStatus }) {
   const available = () => ({ listen: !!Recognition, speak: !!(synth && window.SpeechSynthesisUtterance) });
   const cancelTimers = () => { clearTimeout(restartTimer); clearTimeout(idleTimer); };
   const abort = () => { const old = recognition; recognition = null; active = false; if (old) try { old.abort(); } catch {} };
+  // Pick one sophisticated British voice without exposing a confusing voice menu.
+  // Prefer macOS enhanced/premium voices when installed; avoid novelty voices.
   const voicePick = () => {
     const voices = synth?.getVoices?.() || [];
-    return voices.find(v => v.voiceURI === preferredVoiceURI) || voices.find(v => /^en-GB$/i.test(v.lang) && v.localService) || voices.find(v => /^en-GB$/i.test(v.lang)) || voices.find(v => /^en/i.test(v.lang)) || null;
+    if (preferredVoiceURI) {
+      const explicit = voices.find(v => v.voiceURI === preferredVoiceURI);
+      if (explicit) return explicit;
+    }
+    const isEnglish = v => /^en(?:-|$)/i.test(v.lang);
+    const novelty = /bad news|good news|bells|bubbles|whisper|zarvox|trinoids|cellos|boing|organ|bahh|albert|fred|hysterical|jester|wobble|robot|novelty/i;
+    const candidates = voices.filter(v => isEnglish(v) && !novelty.test(v.name));
+    const score = v => {
+      const name = v.name || '';
+      let n = /^en-GB$/i.test(v.lang) ? 100 : /^en-(IE|AU|NZ)$/i.test(v.lang) ? 30 : 0;
+      if (v.localService) n += 8;
+      if (/premium|enhanced|natural|neural/i.test(name)) n += 35;
+      if (/daniel|oliver|arthur|george|jamie|ryan|alabaster/i.test(name)) n += 25;
+      if (/siri/i.test(name)) n += 10;
+      if (/female|child/i.test(name)) n -= 15;
+      return n;
+    };
+    return candidates.sort((a,b) => score(b)-score(a))[0] || voices.find(isEnglish) || null;
   };
   function scheduleIdle() {
     clearTimeout(idleTimer);
@@ -136,7 +155,7 @@ export function createVoice({ onTranscript, onStatus }) {
     if (conversation && !wakeMode) { stopListening(); return false; }
     errorStop = false; permittedStart = true; conversation = true; desiredMode = 'conversation';
     clearTimeout(idleTimer); if (speaking) stopSpeaking();
-    scheduleIdle(); listenSoon(0);
+    scheduleIdle(); startEngine(); // Must run synchronously in the user's click on Safari.
     return true;
   }
   function stopListening() {
@@ -150,7 +169,8 @@ export function createVoice({ onTranscript, onStatus }) {
     // This must be called by a user interaction to receive microphone permission.
     errorStop = false; permittedStart = true; wakeMode = true; conversation = false; desiredMode = 'wake';
     cancelTimers(); if (speaking) stopSpeaking();
-    listenSoon(0); report('Listening for “Hey Auren” while this page is active.');
+    startEngine(); // Safari requires this within the user's activation.
+    if (active) report('Listening for “Hey Auren” while this page is active.');
     return true;
   }
   document.addEventListener('visibilitychange', () => {
