@@ -1,23 +1,11 @@
-AUREN v1.4 - Seamless Voice Conversation
+AUREN v1.4.2 — Combined wake-word + AI speaking fix
 
-Upload these FIVE files to the ROOT of your existing GitHub repository:
-  app.js
-  voice.js
-  index.html
-  styles.css
+This update includes the previous v1.4.1 wake-word recognition improvement AND a correction for AUREN going silent when the AI request fails.
 
-Do not upload this ZIP directly. Do not delete any other repository files.
-Do not replace Cloudflare Worker code. Memories stay in browser storage.
+Upload ONLY app.js and voice.js to the ROOT of your EXISTING GitHub repository. Commit changes, let GitHub Pages deploy, and reload the site with Command+Shift+R.
 
-What's new:
-- Home screen has the Enable "Hey Auren" button again.
-- Live interim speech caption appears while you speak (Safari permitting).
-- Final recognized words remain visible while AUREN thinks and answers.
-- Recognition does not submit partial transcripts as finished requests.
-- Clearer listening / thinking / speaking indicators.
-- No voice sliders, no voice picker; one curated voice.
-- Wake mode works only in an active browser tab and needs a user tap to start.
+Do NOT upload the ZIP file itself. Do NOT delete any other site files. No changes are needed to Cloudflare Worker or saved memory.
 
-Test: tap Enable "Hey Auren", speak "Hey Auren", then a question.
-Then test direct orb tap and a follow-up question after AUREN replies.
-Microphone/speech accuracy and auto-restart remain browser-dependent.
+After uploading, test a normal AI request by speaking “Hey Auren, tell me a fun fact.” If AUREN reports an AI connection problem, open Settings and check that the AI Worker URL is still configured. This repair cannot itself fix a Cloudflare outage, AI allowance limit, or disconnected Worker.
+
+Safari microphone permissions and web speech synthesis remain browser-dependent; it may require one user tap after opening a fresh tab.

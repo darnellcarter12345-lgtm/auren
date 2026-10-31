@@ -8,12 +8,13 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard }) {
   let speaking = false, responding = false, enabled = false, permittedStart = false;
   let token = 0, restartTimer = null, idleTimer = null, errorStop = false;
   let desiredMode = 'off';
+  let currentUtterance = null;
   let preferredVoiceURI = ''; let voiceRate = 0.96, voicePitch = 0.95; 
   const SILENCE_MS = 45000;
   // Browser recognition frequently transcribes the invented name AUREN as a
   // familiar name ("Orin", "Oren", "Aaron", "Lauren"). Match short wake
   // phrases, not arbitrary mentions in the middle of other sentences.
-  const wakeNames = new Set(['auren','aurin','auron','oren','orin','orren','aaron','erin','lauren','loren','orion']);
+  const wakeNames = new Set(['auren','aurin','auron','oren','orin','orren','aaron','aron','erin','lauren','loren','orion','orin']);
   function wordsOf(text) {
     return text.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-z0-9]+/g,' ').trim().split(/\s+/).filter(Boolean);
@@ -23,14 +24,17 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard }) {
     if (!words.length) return null;
     // "Hey, Auren" and speech-engine variations like "hey Lauren".
     // Require the greeting for potentially common names to avoid false wakes.
-    const greeting = ['hey','hi','hello','okay','ok'];
+    const greeting = ['hey','hi','hello','okay','ok','yo'];
     const offset = greeting.includes(words[0]) ? 1 : 0;
-    const candidate = words[offset];
+    let candidate = words[offset];
+    let nameLength = 1;
+    // Safari occasionally splits the spoken name 'Or-en' into two words.
+    if (['or','aur','ore'].includes(candidate) && ['en','in','an'].includes(words[offset+1])) { candidate = 'oren'; nameLength = 2; }
     if (!wakeNames.has(candidate)) return null;
     if (!offset && candidate !== 'auren' && candidate !== 'aurin' && candidate !== 'auron') return null;
     // Without a greeting, only allow a standalone name or a short direct command.
-    if (!offset && words.length > 1 && !['can','could','please','tell','what','remind','remember','help','how','do'].includes(words[1])) return null;
-    return { command: words.slice(offset+1).join(' ') };
+    if (!offset && words.length > nameLength && !['can','could','please','tell','what','remind','remember','help','how','do'].includes(words[nameLength])) return null;
+    return { command: words.slice(offset+nameLength).join(' ') };
   }
 
   const report = text => onStatus?.(text);
@@ -137,7 +141,11 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard }) {
   }
   async function deliver(text) {
     try { report('Thinking…'); await onTranscript?.(text); }
-    catch { report('I could not process that request.'); }
+    catch (error) {
+      // Do not hide the actual failure behind a generic message.
+      console.error('AUREN request failed', error);
+      report('Request error: ' + (error?.message || 'Unknown issue') + '. You can try again.');
+    }
     finally {
       responding = false;
       scheduleIdle();
@@ -146,6 +154,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard }) {
   }
   function stopSpeaking() {
     if (synth) synth.cancel();
+    currentUtterance = null;
     speaking = false;
     if (!responding) listenSoon(350);
   }
@@ -155,12 +164,13 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard }) {
     if (synth) synth.cancel();
     speaking = true;
     const u = new SpeechSynthesisUtterance(text);
+    currentUtterance = u; // Keep a strong reference; Safari may drop async utterances.
     u.lang = 'en-GB'; u.rate = voiceRate; u.pitch = voicePitch;
     const chosen = voicePick(); if (chosen) { u.voice = chosen; u.lang = chosen.lang; }
-    u.onend = () => { speaking = false; report(wakeMode ? 'Listening — ask a follow-up, or say “Hey Auren”' : (conversation ? 'Listening for your next question…' : 'Tap the orb to speak')); scheduleIdle(); if (!responding) listenSoon(250); };
-    u.onerror = () => { speaking = false; report('Voice output stopped; text remains available.'); if (!responding) listenSoon(420); };
+    u.onend = () => { if (currentUtterance === u) currentUtterance = null; speaking = false; report(wakeMode ? 'Listening — ask a follow-up, or say “Hey Auren”' : (conversation ? 'Listening for your next question…' : 'Tap the orb to speak')); scheduleIdle(); if (!responding) listenSoon(250); };
+    u.onerror = () => { if (currentUtterance === u) currentUtterance = null; speaking = false; report('Voice output stopped; text remains available.'); if (!responding) listenSoon(420); };
     try { synth.speak(u); report('AUREN speaking…'); }
-    catch { speaking = false; report('Speech output unavailable.'); if (!responding) listenSoon(); }
+    catch { currentUtterance = null; speaking = false; report('Speech output unavailable.'); if (!responding) listenSoon(); }
   }
   function startListening() {
     if (!Recognition) { report('Speech recognition is unsupported here.'); return false; }

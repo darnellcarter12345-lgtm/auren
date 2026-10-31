@@ -26,9 +26,14 @@ let storageOk = false, sinceTrim = 0;
 const voice = createVoice({
   onInterim: partial => { if (partial) { $('liveTranscript').textContent = 'You: ' + partial; $('liveTranscript').hidden = false; } },
   onHeard: text => { $('liveTranscript').textContent = 'You: ' + text; $('liveTranscript').hidden = false; },
-  onTranscript: transcript => {
+  onTranscript: async transcript => {
     $('chatInput').value = transcript;
-    return safe(send)(transcript);
+    try { await send(transcript); }
+    catch (error) {
+      console.error('AUREN conversation request failed', error);
+      showStatus('Voice request failed: ' + (error?.message || 'Unknown error'), 'error');
+      throw error;
+    }
   },
   onStatus: msg => {
     $('voiceStatus').textContent = msg;
@@ -217,6 +222,7 @@ function memoryCandidate(text) {
 }
 
 async function send(text) {
+  if (voice.available().speak && !voice.enabled) { voice.setEnabled(true); $('speakReplies').checked = true; }
   await addMessage('user', text, { ephemeral: isSessionNote(text) });
   try {
     // Verified save/delete/project operations remain local. Other conversation goes to AI.
@@ -247,8 +253,21 @@ async function send(text) {
       await addMessage('auren', answer);
     }
   } catch (e) {
-    await addMessage('auren', 'I could not reach my AI service. ' + e.message, { err: true });
-    showStatus(e.message, 'error'); renderSession();
+    // Make request failures audible too; previously err:true suppressed voice output,
+    // so users heard silence and had no clue whether the Worker had responded.
+    console.error('AUREN AI request failed:', e);
+    const detail = e?.message || 'Unknown connection problem';
+    const spoken = /abort|timeout/i.test(detail)
+      ? 'My AI service took too long to respond. Please try again.'
+      : /Failed to fetch|NetworkError|Load failed|fetch/i.test(detail)
+        ? 'I cannot reach my AI service. Please check the connection in Settings.'
+        : /Connect your free AI Worker|not connected/i.test(detail)
+          ? 'My AI connection is not configured on this browser. Please connect it in Settings.'
+          : 'My AI service returned an error. You can find the details on screen.';
+    await addMessage('auren', spoken, { err: true });
+    voice.speak(spoken);
+    showStatus('AI response failed: ' + detail, 'error');
+    renderSession();
   }
 }
 async function answerConfirm(token, yes, label) {
