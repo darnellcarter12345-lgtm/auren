@@ -5,7 +5,7 @@
 import { openDB, put, getAll, del, clear, healthCheck, storageEstimate, uid, STORES } from './db.js';
 import * as Mem from './memory.js';
 import * as Proj from './projects.js';
-import { NeedsConfirmationError, historySafe } from './sensitive.js';
+import { NeedsConfirmationError, historySafe, classify } from './sensitive.js';
 import { Butler, isSessionNote } from './butler.js';
 import { buildBackup, encryptBackup, decryptBackup, validateBackup, applyPlan, describeReport, LIMITS } from './backup.js';
 import { loadSettings, saveSettings } from './settings.js';
@@ -168,6 +168,19 @@ async function presentResult(r) {
   renderSession();
 }
 
+// Opt-in natural memory: explicit first-person durable preferences, interests and goals.
+// This never automatically saves anything or forwards the detected statement to an AI service.
+// Reject credential-like and sensitive statements rather than prompting on them.
+function memoryCandidate(text) {
+  const t = String(text).trim().replace(/[.!?]+$/, '');
+  if (t.length < 10 || t.length > 220 || /[\n\r]/.test(t)) return null;
+  if (/\b(?:today|tonight|tomorrow|yesterday|right now|for now|just now|at the moment)\b/i.test(t)) return null;
+  if (!/^(?:i (?:really )?(?:like|love|enjoy|prefer|am interested in|am into|want to learn|want to become|plan to|hope to)|i'm (?:interested in|into|learning|working on)|my (?:favorite|favourite|goal is|hobby is|hobbies are|preferred))\b/i.test(t)) return null;
+  const { blocked, sensitive } = classify(t);
+  if (blocked.length || sensitive.length) return null;
+  return t;
+}
+
 async function send(text) {
   await addMessage('user', text, { ephemeral: isSessionNote(text) });
   try {
@@ -175,6 +188,20 @@ async function send(text) {
     const isLocal = /^(?:help|\?|what can you do|for now|just for now|this session|for this session|clear (?:the )?session|save session note|session|what are we working on|what am i working on|remember\b|please remember\b|what do you (?:remember|know) about|recall\b|do you remember|search memory for|forget\b|new project\b|start project\b|create project\b|project\b|projects\b|list projects\b|yes\b|no\b|confirm\b|cancel\b)/i.test(text);
     if (isLocal || !getAIEndpoint()) {
       await presentResult(await butler.handle(text));
+    } else if (memoryCandidate(text)) {
+      const candidate = memoryCandidate(text);
+      const alreadySaved = (await Mem.listMemories()).some(m => m.text.toLowerCase() === candidate.toLowerCase());
+      if (alreadySaved) {
+        const context = await butler.getContext(text);
+        const answer = await askAI(text, context.memories.filter(m => !m.sensitive), context.session, aiRecent);
+        aiRecent.push({role:'user', content:text.slice(0,500)}, {role:'assistant', content:answer.slice(0,500)});
+        if (aiRecent.length > 12) aiRecent.splice(0, aiRecent.length - 12);
+        await addMessage('auren', answer);
+      } else {
+        // AUREN asks permission before adding a lasting fact; no data leaves the browser.
+        await presentResult(butler.ask({type:'save', payload:{text:candidate, category:Mem.guessCategory(candidate)}},
+          `Shall I remember that for future conversations, sir?\n“${candidate}”\nNothing has been saved yet.`));
+      }
     } else {
       $('latestReply').textContent = 'Thinking…';
       const context = await butler.getContext(text);

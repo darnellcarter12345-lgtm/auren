@@ -1,0 +1,20 @@
+AUREN v0.8 — Personal Memory Suggestion Update
+
+Upload ONLY app.js to the root of your existing GitHub AUREN repository, replacing the existing app.js.
+Do not upload the ZIP itself or delete any other files. Cloudflare Worker code remains unchanged.
+
+New behavior (when an AI URL is connected):
+- Tell AUREN a durable first-person interest, preference or goal, e.g. "I like making music".
+- AUREN asks whether to remember it instead of silently saving it.
+- Say "yes" or click Yes to save, or say "no" or click No to decline.
+- Memory is verified in the existing IndexedDB database and can be reviewed/deleted in Memory settings.
+- It avoids suggesting saves for time-limited notes, sensitive information or credential-like content.
+- Repeat facts already saved proceed to AI conversation without another prompt.
+- Explicit "remember that..." commands still work as before.
+
+LIMITATIONS:
+- Detection is rule-based, so it does not catch every way of stating a fact.
+- Device-local browser storage remains device-specific, not cloud synced.
+- This is not AI retraining. It uses the existing memory retrieval with the connected AI model.
+- Speak-to-text and text-to-speech behavior are unchanged.
+- Browser test is still required. Do not store secrets or sensitive information.
