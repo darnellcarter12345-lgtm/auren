@@ -28,7 +28,7 @@ const voice = createVoice({
     $('chatInput').value = transcript;
     $('micBtn').textContent = '🎙 Speak to AUREN';
     $('micBtn').setAttribute('aria-pressed', 'false');
-    safe(send)(transcript);
+    return safe(send)(transcript);
   },
   onStatus: msg => {
     $('voiceStatus').textContent = msg;

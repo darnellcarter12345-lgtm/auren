@@ -1,89 +1,141 @@
-// AUREN voice — optional browser speech features; never records or uploads audio itself.
-// SpeechRecognition support varies by browser and may use the browser vendor's online service.
+// AUREN v0.9: foreground voice dialogue and optional wake phrase.
+// SpeechRecognition is browser-dependent and may process microphone audio online.
+// The user must explicitly start voice access at least once; no background/locked-screen listening.
 export function createVoice({ onTranscript, onStatus }) {
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const synth = window.speechSynthesis || null;
-  let recognizer = null;
-  let listening = false;
-  let enabled = false;
-  let generation = 0;
-  let wakeMode = false, awaitingCommand = false, speaking = false;
-  let restartTimer = null;
-  const WAKE = /^(?:hey\s+)?(?:auren|oren|lauren)(?:[\s,.:!?]+|$)/i;
-
-  function status(message) { if (onStatus) onStatus(message); }
-  function available() { return { listen: !!Recognition, speak: !!(synth && window.SpeechSynthesisUtterance) }; }
-  function voicePick() {
-    if (!synth || !synth.getVoices) return null;
-    const voices = synth.getVoices();
+  let recognition = null, active = false, wakeMode = false, conversation = false;
+  let speaking = false, responding = false, enabled = false, permittedStart = false;
+  let token = 0, restartTimer = null, idleTimer = null, errorStop = false;
+  const SILENCE_MS = 20000;
+  const report = text => onStatus?.(text);
+  const available = () => ({ listen: !!Recognition, speak: !!(synth && window.SpeechSynthesisUtterance) });
+  const cancelTimers = () => { clearTimeout(restartTimer); clearTimeout(idleTimer); };
+  const abort = () => { const old = recognition; recognition = null; active = false; if (old) try { old.abort(); } catch {} };
+  const voicePick = () => {
+    const voices = synth?.getVoices?.() || [];
     return voices.find(v => /^en-GB$/i.test(v.lang)) || voices.find(v => /^en/i.test(v.lang)) || null;
+  };
+  function scheduleIdle() {
+    clearTimeout(idleTimer);
+    if (conversation && wakeMode) idleTimer = setTimeout(() => {
+      conversation = false;
+      report('Conversation paused after silence. Say “Hey Auren” to resume.');
+    }, SILENCE_MS);
+    else if (conversation) idleTimer = setTimeout(() => {
+      stopListening(); report('Conversation ended after silence. Tap the orb to speak again.');
+    }, SILENCE_MS);
   }
-  function stopSpeaking() { if (synth) synth.cancel(); speaking = false; }
-  function speak(text) {
-    if (!enabled || !available().speak || !text) return;
-    stopSpeaking();
-    if (wakeMode && listening) { stopListening(false); }
-    speaking = true; status('Speaking…');
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-GB'; utterance.rate = 0.96; utterance.pitch = 0.95;
-    const voice = voicePick(); if (voice) { utterance.voice = voice; utterance.lang = voice.lang; }
-    utterance.onend = () => { speaking = false; if (wakeMode) scheduleRestart(); else status('Ready.'); };
-    utterance.onerror = e => { if (e.error !== 'canceled' && e.error !== 'interrupted') status('Spoken reply failed. Text is still available.'); };
-    try { synth.speak(utterance); } catch { status('Speech output is unavailable in this browser.'); }
-  }
-  function stopListening(disableWake = true) {
-    if (disableWake) { wakeMode = false; awaitingCommand = false; }
+  function listenSoon(delay = 200) {
     clearTimeout(restartTimer);
-    generation++;
-    if (recognizer) {
-      try { recognizer.abort(); } catch { /* stopped already */ }
-      recognizer = null;
-    }
-    listening = false;
-    return listening;
+    if ((!wakeMode && !conversation) || speaking || responding || !permittedStart || errorStop || active || !Recognition) return;
+    restartTimer = setTimeout(startEngine, delay);
   }
-  function scheduleRestart() {
-    if (!wakeMode || speaking) return;
-    clearTimeout(restartTimer);
-    restartTimer = setTimeout(() => { if (wakeMode && !speaking && !listening) startListening(true); }, 600);
-  }
-  function startListening(fromWake = false) {
-    if (!Recognition) { status('Speech recognition is unavailable in this browser. Use the text box instead.'); return false; }
-    if (listening) { if (!fromWake) stopListening(); return false; }
-    if (!fromWake && !wakeMode) stopSpeaking();
-    const myGeneration = ++generation;
-    const r = new Recognition(); recognizer = r;
+  function startEngine() {
+    if (active || speaking || responding || errorStop || (!conversation && !wakeMode) || !permittedStart) return;
+    const id = ++token;
+    const r = new Recognition(); recognition = r;
     r.lang = 'en-US'; r.continuous = false; r.interimResults = false; r.maxAlternatives = 1;
     r.onresult = event => {
-      if (myGeneration !== generation) return;
-      const text = event.results?.[0]?.[0]?.transcript?.trim();
-      if (!text) return;
-      if (!wakeMode) { onTranscript(text); return; }
-      if (awaitingCommand) { awaitingCommand = false; onTranscript(text); return; }
-      const match = text.match(WAKE);
-      if (!match) { status('Listening for “Hey Auren”…'); return; }
-      const command = text.slice(match[0].length).trim();
-      if (command) onTranscript(command);
-      else { awaitingCommand = true; status('Yes, sir? Listening for your command…'); }
+      if (id !== token) return;
+      const transcript = [...event.results].map(item => item[0]?.transcript || '').join(' ').trim();
+      if (!transcript) return;
+      clearTimeout(idleTimer);
+      // Never listen while replying or speaking back.
+      responding = true;
+      const match = transcript.match(/\b(?:hey\s+)?(?:auren|orin|orren|oren|lauren)\b[\s,!.?]*/i);
+      if (wakeMode && !conversation && !match) {
+        responding = false; listenSoon(350); return;
+      }
+      if (match) {
+        conversation = true;
+        const command = transcript.slice(match.index + match[0].length).trim();
+        if (!command) {
+          report('AUREN activated. Listening for your request…');
+          speak('Yes, sir?');
+          responding = false;
+          if (!speaking) { scheduleIdle(); listenSoon(350); }
+          return;
+        }
+        deliver(command);
+      } else if (conversation) deliver(transcript);
+      else { responding = false; listenSoon(350); }
     };
-    r.onerror = event => {
-      if (myGeneration !== generation) return;
-      if (event.error === 'not-allowed' || event.error === 'service-not-allowed') { wakeMode = false; status('Microphone permission denied. Use text instead.'); }
-      else if (event.error !== 'aborted' && event.error !== 'no-speech') status('Microphone issue: ' + event.error + '. You can still type.');
+    r.onerror = e => {
+      if (id !== token) return;
+      if (['not-allowed','service-not-allowed','audio-capture'].includes(e.error)) {
+        errorStop = true; wakeMode = false; conversation = false;
+        report('Microphone unavailable (' + e.error + '). Enable access and tap the orb again.');
+      } else if (e.error !== 'aborted' && e.error !== 'no-speech') {
+        report('Voice recognition issue: ' + e.error + '.');
+      }
     };
     r.onend = () => {
-      if (myGeneration !== generation) return;
-      listening = false; recognizer = null; if (wakeMode) { status('Listening for “Hey Auren”…'); scheduleRestart(); } else status('Microphone stopped.');
+      if (id !== token) return;
+      recognition = null; active = false;
+      if (!responding && !speaking && !errorStop) listenSoon(450);
     };
-    try { r.start(); listening = true; status('Listening… speak now.'); return true; }
-    catch { recognizer = null; listening = false; status('Could not start microphone. Check browser permissions.'); return false; }
+    try { r.start(); active = true; report(conversation ? 'Listening for your next question…' : 'Listening for “Hey Auren”…'); }
+    catch { active = false; recognition = null; report('Could not start listening. Tap the orb to retry.'); }
   }
+  async function deliver(text) {
+    try { await onTranscript?.(text); }
+    catch { report('I could not process that request.'); }
+    finally {
+      responding = false;
+      scheduleIdle();
+      if (!speaking) listenSoon(400);
+    }
+  }
+  function stopSpeaking() {
+    if (synth) synth.cancel();
+    speaking = false;
+    if (!responding) listenSoon(350);
+  }
+  function speak(text) {
+    if (!enabled || !available().speak || !text) return;
+    abort(); // suppress microphone feedback from AUREN's own voice
+    if (synth) synth.cancel();
+    speaking = true;
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = 'en-GB'; u.rate = .96; u.pitch = .95;
+    const chosen = voicePick(); if (chosen) { u.voice = chosen; u.lang = chosen.lang; }
+    u.onend = () => { speaking = false; scheduleIdle(); if (!responding) listenSoon(420); };
+    u.onerror = () => { speaking = false; report('Voice output stopped; text remains available.'); if (!responding) listenSoon(420); };
+    try { synth.speak(u); report('AUREN speaking…'); }
+    catch { speaking = false; report('Speech output unavailable.'); if (!responding) listenSoon(); }
+  }
+  function startListening() {
+    if (!Recognition) { report('Speech recognition is unsupported here.'); return false; }
+    if (conversation && !wakeMode) { stopListening(); return false; }
+    errorStop = false; permittedStart = true; conversation = true;
+    clearTimeout(idleTimer); if (speaking) stopSpeaking();
+    scheduleIdle(); listenSoon(0);
+    return true;
+  }
+  function stopListening() {
+    wakeMode = false; conversation = false; responding = false; permittedStart = false;
+    cancelTimers(); ++token; abort();
+    report('Microphone stopped.'); return false;
+  }
+  function setWakeMode(value) {
+    if (!value) { stopListening(); return false; }
+    if (!Recognition) { report('Wake phrase unavailable in this browser.'); return false; }
+    // This must be called by a user interaction to receive microphone permission.
+    errorStop = false; permittedStart = true; wakeMode = true; conversation = false;
+    cancelTimers(); if (speaking) stopSpeaking();
+    listenSoon(0); report('Listening for “Hey Auren” while this page is active.');
+    return true;
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) { clearTimeout(restartTimer); ++token; abort(); report('Voice paused while AUREN is in the background.'); }
+    else if (permittedStart && (wakeMode || conversation) && !errorStop) listenSoon(350);
+  });
   return {
-    available, speak, stopSpeaking, startListening, stopListening,
-    setWakeMode(value) { wakeMode = !!value && !!Recognition; awaitingCommand = false; if (wakeMode) { if (!listening) startListening(true); } else stopListening(); return wakeMode; },
+    available, speak, stopSpeaking, startListening, stopListening, setWakeMode,
+    get listening() { return active || wakeMode || conversation; },
     get wakeMode() { return wakeMode; },
-    get listening() { return listening; },
     get enabled() { return enabled; },
-    setEnabled(value) { enabled = !!value; if (!enabled) stopSpeaking(); }
+    setEnabled(v) { enabled = !!v; if (!enabled) stopSpeaking(); }
   };
 }
