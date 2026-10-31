@@ -8,7 +8,7 @@ export function createVoice({ onTranscript, onStatus }) {
   let speaking = false, responding = false, enabled = false, permittedStart = false;
   let token = 0, restartTimer = null, idleTimer = null, errorStop = false;
   let desiredMode = 'off';
-  let preferredVoiceURI = ''; 
+  let preferredVoiceURI = ''; let voiceRate = 0.96, voicePitch = 0.95; 
   const SILENCE_MS = 20000;
   // Browser recognition frequently transcribes the invented name AUREN as a
   // familiar name ("Orin", "Oren", "Aaron", "Lauren"). Match short wake
@@ -124,7 +124,7 @@ export function createVoice({ onTranscript, onStatus }) {
     if (synth) synth.cancel();
     speaking = true;
     const u = new SpeechSynthesisUtterance(text);
-    u.lang = 'en-GB'; u.rate = .96; u.pitch = .95;
+    u.lang = 'en-GB'; u.rate = voiceRate; u.pitch = voicePitch;
     const chosen = voicePick(); if (chosen) { u.voice = chosen; u.lang = chosen.lang; }
     u.onend = () => { speaking = false; scheduleIdle(); if (!responding) listenSoon(420); };
     u.onerror = () => { speaking = false; report('Voice output stopped; text remains available.'); if (!responding) listenSoon(420); };
@@ -161,6 +161,10 @@ export function createVoice({ onTranscript, onStatus }) {
     available, speak, stopSpeaking, startListening, stopListening, setWakeMode,
     getVoices() { return synth?.getVoices?.() || []; },
     setVoicePreference(uri) { preferredVoiceURI = String(uri || ""); },
+    setVoiceStyle({ rate, pitch } = {}) {
+      if (Number.isFinite(Number(rate))) voiceRate = Math.max(0.7, Math.min(1.25, Number(rate)));
+      if (Number.isFinite(Number(pitch))) voicePitch = Math.max(0.7, Math.min(1.3, Number(pitch)));
+    },
     get listening() { return desiredMode !== 'off'; },
     get wakeMode() { return wakeMode; },
     get enabled() { return enabled; },

@@ -1,16 +1,9 @@
-AUREN v1.2 — saved wake preference + voice selection
+AUREN v1.3 — voice style + saved wake preference UX
 
-Upload only app.js and voice.js to the ROOT of your existing GitHub repository.
-Keep your existing files and Cloudflare Worker. Do not upload this ZIP.
+Upload ONLY app.js and voice.js to your EXISTING GitHub repository root. Keep all other files.
 
-What changed:
-- Select a preferred English voice from voices installed or exposed by your browser.
-- Remember whether you want Hey Auren mode enabled.
-- When you select the saved-wake option, AUREN starts wake listening via that click (browser asks microphone permission if required).
-- After a page reload it remembers the choice and displays a resume prompt. Tap the orb or Resume once before listening. Browsers can block unprompted recording; never bypass this.
-- Wake detection and continuous voice conversation from v1.1 remain.
+After a new visit, a saved wake preference shows an Activate saved Hey Auren control. Tap it to resume microphone activation. Browser restrictions do not allow a guaranteed automatic listening start on Safari.
 
-To get better voices on a Mac, install or enable system voices in macOS Settings > Accessibility > Spoken Content (availability depends on macOS version), then refresh Safari.
-No voice service or paid AI model was added; this is browser synthesis voice selection.
+Voice and tone sliders use device/browser speech synthesis. They do not install a new voice model.
 
-Test: enable remembered wake mode, allow microphone, say Hey Auren; reload page and check saved preference and explicit resume; test voice dropdown; turn microphone off and verify it stays off.
+Test in Safari: voice selection, pitch and pace; off state, saved preference reload, one-time activation, stop and wake phrase.

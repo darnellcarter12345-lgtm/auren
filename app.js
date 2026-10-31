@@ -79,8 +79,8 @@ $('wakeBtn').onclick = () => {
   syncVoiceUI();
 };
 // Persistent voice preferences. This never silently grants microphone access.
-const VOICE_PREFS_KEY = 'auren_voice_prefs_v12';
-let voicePrefs = { wake: false, voiceURI: '', rate: 0.96 };
+const VOICE_PREFS_KEY = 'auren_voice_prefs_v12'; // Keep key for backward compatibility
+let voicePrefs = { wake: false, voiceURI: '', rate: 0.96, pitch: 0.95 };
 try { voicePrefs = { ...voicePrefs, ...JSON.parse(localStorage.getItem(VOICE_PREFS_KEY) || '{}') }; } catch {}
 function storeVoicePrefs() {
   try { localStorage.setItem(VOICE_PREFS_KEY, JSON.stringify(voicePrefs)); }
@@ -100,6 +100,36 @@ voiceSelect.setAttribute('aria-label', 'AUREN speaking voice');
 voiceSelect.style.cssText = 'max-width:230px;background:#20252c;color:#f2e4c6;border:1px solid #7a664b;border-radius:7px;padding:6px;';
 voiceLabel.append(voiceSelect);
 voiceOptions.append(wakeLabel, voiceLabel);
+const styleLabel = document.createElement('label');
+styleLabel.textContent = 'Pace: ';
+const pace = document.createElement('input');
+pace.type = 'range'; pace.min = '0.7'; pace.max = '1.25'; pace.step = '0.05';
+pace.value = String(voicePrefs.rate); pace.setAttribute('aria-label', 'Voice speaking speed');
+styleLabel.append(pace);
+const pitchLabel = document.createElement('label');
+pitchLabel.textContent = 'Tone: ';
+const pitch = document.createElement('input');
+pitch.type = 'range'; pitch.min = '0.7'; pitch.max = '1.3'; pitch.step = '0.05';
+pitch.value = String(voicePrefs.pitch); pitch.setAttribute('aria-label', 'Voice pitch');
+pitchLabel.append(pitch);
+voiceOptions.append(styleLabel, pitchLabel);
+const resumeNotice = document.createElement('button');
+resumeNotice.type = 'button'; resumeNotice.className = 'ghost';
+resumeNotice.textContent = 'Activate saved “Hey Auren”';
+resumeNotice.hidden = !voicePrefs.wake;
+voiceOptions.append(resumeNotice);
+function updateStyle() {
+  voicePrefs.rate = Number(pace.value); voicePrefs.pitch = Number(pitch.value);
+  voice.setVoiceStyle(voicePrefs); storeVoicePrefs();
+}
+pace.addEventListener('input', updateStyle);
+pitch.addEventListener('input', updateStyle);
+resumeNotice.onclick = () => {
+  if (!voicePrefs.wake) return;
+  voice.setEnabled(true); $('speakReplies').checked = true;
+  if (!voice.wakeMode) voice.setWakeMode(true);
+  resumeNotice.hidden = true; syncVoiceUI();
+};
 $('testVoice').insertAdjacentElement('afterend', voiceOptions);
 function refreshVoiceChoices() {
   const list = voice.getVoices();
@@ -114,11 +144,13 @@ function refreshVoiceChoices() {
   if (voiceSelect.value !== voicePrefs.voiceURI) voiceSelect.value = '';
 }
 voice.setVoicePreference(voicePrefs.voiceURI);
+voice.setVoiceStyle(voicePrefs);
 refreshVoiceChoices();
 if (window.speechSynthesis) window.speechSynthesis.addEventListener?.('voiceschanged', refreshVoiceChoices);
 voiceSelect.onchange = () => { voicePrefs.voiceURI = voiceSelect.value; voice.setVoicePreference(voicePrefs.voiceURI); storeVoicePrefs(); voice.speak('At your service. How does this voice sound?'); };
 wakePref.onchange = () => {
   voicePrefs.wake = wakePref.checked; storeVoicePrefs();
+  resumeNotice.hidden = true;
   if (wakePref.checked) {
     voice.setEnabled(true); $('speakReplies').checked = true;
     voice.setWakeMode(true); // direct user interaction: request microphone permission
@@ -131,12 +163,14 @@ $('wakeBtn').onclick = () => {
   voicePrefs.wake = voice.wakeMode;
   wakePref.checked = voicePrefs.wake;
   storeVoicePrefs();
+  resumeNotice.hidden = !voicePrefs.wake || voice.wakeMode;
 };
 // A remembered preference is NOT permission to silently start recording.
 // Arm wake mode only from the user's first explicit interaction after a reload.
 if (voicePrefs.wake && capabilities.listen) {
   $('voiceStatus').textContent = '“Hey Auren” saved. Tap the orb or Enable “Hey Auren” once to resume listening.';
   $('wakeBtn').textContent = 'Resume “Hey Auren”';
+  resumeNotice.hidden = false;
 }
 
 const observer = new MutationObserver(syncVoiceUI);
