@@ -143,3 +143,7 @@ body {max-width:720px;}
 #advancedNav {justify-content:center;flex-wrap:wrap;}
 #advancedNav button {font-family:system-ui,sans-serif;}
 @media(max-width:520px) {.hero {min-height:min(65dvh,530px)} .auren-orb {width:205px;height:205px} .quick-controls button {font-size:.77rem;} }
+
+/* AUREN live speech caption — lightweight, legible, no extra settings */
+.auren-live-caption {max-width:560px;min-height:1.2em;margin:0!important;color:#f2e5cf!important;font:500 .95rem/1.5 system-ui,sans-serif!important;overflow-wrap:anywhere}
+.auren-live-caption[hidden]{display:none!important}

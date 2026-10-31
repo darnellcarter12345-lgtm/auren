@@ -1,7 +1,7 @@
 // AUREN v1.1: improved foreground wake-phrase recognition and microphone lifecycle.
 // SpeechRecognition is browser-dependent and may process microphone audio online.
 // The user must explicitly start voice access at least once; no background/locked-screen listening.
-export function createVoice({ onTranscript, onStatus }) {
+export function createVoice({ onTranscript, onStatus, onInterim, onHeard }) {
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const synth = window.speechSynthesis || null;
   let recognition = null, active = false, wakeMode = false, conversation = false;
@@ -9,7 +9,7 @@ export function createVoice({ onTranscript, onStatus }) {
   let token = 0, restartTimer = null, idleTimer = null, errorStop = false;
   let desiredMode = 'off';
   let preferredVoiceURI = ''; let voiceRate = 0.96, voicePitch = 0.95; 
-  const SILENCE_MS = 20000;
+  const SILENCE_MS = 45000;
   // Browser recognition frequently transcribes the invented name AUREN as a
   // familiar name ("Orin", "Oren", "Aaron", "Lauren"). Match short wake
   // phrases, not arbitrary mentions in the middle of other sentences.
@@ -79,32 +79,44 @@ export function createVoice({ onTranscript, onStatus }) {
     if (desiredMode === 'off' || active || speaking || responding || errorStop || (!conversation && !wakeMode) || !permittedStart) return;
     const id = ++token;
     const r = new Recognition(); recognition = r;
-    r.lang = 'en-US'; r.continuous = false; r.interimResults = false; r.maxAlternatives = 5;
+    r.lang = 'en-US'; r.continuous = false; r.interimResults = true; r.maxAlternatives = 5;
     r.onresult = event => {
       if (id !== token) return;
-      const alternatives = [...event.results].flatMap(item => Array.from(item).map(a => a.transcript?.trim()).filter(Boolean));
+      const finalResults = [];
+      const interim = [];
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (result.isFinal) finalResults.push(result);
+        else if (result[0]?.transcript) interim.push(result[0].transcript.trim());
+      }
+      if (interim.length) {
+        const preview = interim.join(' ').trim();
+        if (!wakeMode || conversation || detectWake(preview)) onInterim?.(preview);
+      }
+      if (!finalResults.length || responding) return;
+      const alternatives = finalResults.flatMap(item => Array.from(item).map(a => a.transcript?.trim()).filter(Boolean));
       const transcript = alternatives[0] || '';
       if (!transcript) return;
-      // Choose the first alternative containing a valid wake phrase.
       const detected = alternatives.map(detectWake).find(Boolean);
+      if (wakeMode && !conversation && !detected) { onInterim?.(''); return; }
       clearTimeout(idleTimer);
       responding = true;
-      if (wakeMode && !conversation && !detected) {
-        responding = false; listenSoon(350); return;
-      }
+      onInterim?.('');
       if (detected) {
         conversation = true;
-        const command = detected.command;
-        if (!command) {
-          report('AUREN activated. Listening for your request…');
-          speak('Yes, sir?');
+        if (!detected.command) {
           responding = false;
-          if (!speaking) { scheduleIdle(); listenSoon(350); }
+          report('Listening — go ahead…');
+          // Don't speak after just the wake phrase: it would interrupt the next request.
+          scheduleIdle();
           return;
         }
-        deliver(command);
-      } else if (conversation) deliver(transcript);
-      else { responding = false; listenSoon(350); }
+        onHeard?.(detected.command);
+        deliver(detected.command);
+      } else if (conversation) {
+        onHeard?.(transcript);
+        deliver(transcript);
+      } else responding = false;
     };
     r.onerror = e => {
       if (id !== token) return;
@@ -120,11 +132,11 @@ export function createVoice({ onTranscript, onStatus }) {
       recognition = null; active = false;
       if (!responding && !speaking && !errorStop) listenSoon(450);
     };
-    try { r.start(); active = true; report(conversation ? 'Listening for your next question…' : 'Listening for “Hey Auren”…'); }
+    try { r.start(); active = true; report(conversation ? 'Listening…' : 'Say “Hey Auren” to speak'); }
     catch { active = false; recognition = null; report('Could not start listening. Tap the orb to retry.'); }
   }
   async function deliver(text) {
-    try { await onTranscript?.(text); }
+    try { report('Thinking…'); await onTranscript?.(text); }
     catch { report('I could not process that request.'); }
     finally {
       responding = false;
@@ -145,7 +157,7 @@ export function createVoice({ onTranscript, onStatus }) {
     const u = new SpeechSynthesisUtterance(text);
     u.lang = 'en-GB'; u.rate = voiceRate; u.pitch = voicePitch;
     const chosen = voicePick(); if (chosen) { u.voice = chosen; u.lang = chosen.lang; }
-    u.onend = () => { speaking = false; scheduleIdle(); if (!responding) listenSoon(420); };
+    u.onend = () => { speaking = false; report(wakeMode ? 'Listening — ask a follow-up, or say “Hey Auren”' : (conversation ? 'Listening for your next question…' : 'Tap the orb to speak')); scheduleIdle(); if (!responding) listenSoon(250); };
     u.onerror = () => { speaking = false; report('Voice output stopped; text remains available.'); if (!responding) listenSoon(420); };
     try { synth.speak(u); report('AUREN speaking…'); }
     catch { speaking = false; report('Speech output unavailable.'); if (!responding) listenSoon(); }

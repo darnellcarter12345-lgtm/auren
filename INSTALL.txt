@@ -1,9 +1,23 @@
-AUREN v1.3 — voice style + saved wake preference UX
+AUREN v1.4 - Seamless Voice Conversation
 
-Upload ONLY app.js and voice.js to your EXISTING GitHub repository root. Keep all other files.
+Upload these FIVE files to the ROOT of your existing GitHub repository:
+  app.js
+  voice.js
+  index.html
+  styles.css
 
-After a new visit, a saved wake preference shows an Activate saved Hey Auren control. Tap it to resume microphone activation. Browser restrictions do not allow a guaranteed automatic listening start on Safari.
+Do not upload this ZIP directly. Do not delete any other repository files.
+Do not replace Cloudflare Worker code. Memories stay in browser storage.
 
-Voice and tone sliders use device/browser speech synthesis. They do not install a new voice model.
+What's new:
+- Home screen has the Enable "Hey Auren" button again.
+- Live interim speech caption appears while you speak (Safari permitting).
+- Final recognized words remain visible while AUREN thinks and answers.
+- Recognition does not submit partial transcripts as finished requests.
+- Clearer listening / thinking / speaking indicators.
+- No voice sliders, no voice picker; one curated voice.
+- Wake mode works only in an active browser tab and needs a user tap to start.
 
-Test in Safari: voice selection, pitch and pace; off state, saved preference reload, one-time activation, stop and wake phrase.
+Test: tap Enable "Hey Auren", speak "Hey Auren", then a question.
+Then test direct orb tap and a follow-up question after AUREN replies.
+Microphone/speech accuracy and auto-restart remain browser-dependent.

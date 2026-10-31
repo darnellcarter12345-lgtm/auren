@@ -24,6 +24,8 @@ $('saveAIEndpoint').onclick = () => { try { setAIEndpoint(aiEndpointInput.value)
 $('clearAIEndpoint').onclick = () => { setAIEndpoint(''); aiEndpointInput.value = ''; showStatus('AI connection removed.', 'info'); };
 let storageOk = false, sinceTrim = 0;
 const voice = createVoice({
+  onInterim: partial => { if (partial) { $('liveTranscript').textContent = 'You: ' + partial; $('liveTranscript').hidden = false; } },
+  onHeard: text => { $('liveTranscript').textContent = 'You: ' + text; $('liveTranscript').hidden = false; },
   onTranscript: transcript => {
     $('chatInput').value = transcript;
     return safe(send)(transcript);
@@ -41,8 +43,8 @@ function syncVoiceUI() {
   $('wakeBtn').textContent = voice.wakeMode ? '■ Stop “Hey Auren”' : 'Enable “Hey Auren”';
   $('wakeBtn').setAttribute('aria-pressed', String(voice.wakeMode));
   const message = $('voiceStatus').textContent;
-  $('heroState').textContent = listening ? message : (message.includes('unavailable') ? message : 'Tap the orb to speak');
-  document.body.dataset.voiceState = listening ? (/speaking/i.test(message) ? 'speaking' : 'listening') : 'idle';
+  $('heroState').textContent = message.includes('unavailable') ? message : (listening || /speaking|thinking/i.test(message) ? message : 'Tap the orb or enable “Hey Auren”');
+  document.body.dataset.voiceState = /speaking/i.test(message) ? 'speaking' : /thinking/i.test(message) ? 'processing' : listening ? 'listening' : 'idle';
 }
 const capabilities = voice.available();
 $('micBtn').disabled = !capabilities.listen;
@@ -98,8 +100,9 @@ voiceHeading.textContent = 'AUREN voice';
 const voiceDescription = document.createElement('p');
 voiceDescription.className = 'hint';
 voiceDescription.textContent = 'One automatically selected British-butler voice. The sound depends on which voices Safari and macOS provide.';
-voiceCard.append(voiceHeading, voiceDescription, $('testVoice'), $('wakeBtn'));
+voiceCard.append(voiceHeading, voiceDescription, $('testVoice'));
 $('testVoice').textContent = '▶ Hear AUREN';
+$('wakeBtn').textContent = 'Enable “Hey Auren”';
 $('testVoice').style.marginRight = '12px';
 $('settings').insertBefore(voiceCard, $('settings').firstElementChild);
 const oldWakeClick = $('wakeBtn').onclick;
@@ -109,7 +112,7 @@ $('wakeBtn').onclick = () => {
   saveWakePreference();
 };
 if (savedWake && capabilities.listen) {
-  $('voiceStatus').textContent = 'Hey Auren is saved. Open Settings and tap Resume Hey Auren to activate listening.';
+  $('voiceStatus').textContent = 'Hey Auren is saved. Tap Enable “Hey Auren” once to activate the microphone.';
   $('wakeBtn').textContent = 'Resume “Hey Auren”';
 }
 const observer = new MutationObserver(syncVoiceUI);
