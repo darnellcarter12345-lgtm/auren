@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#101318">
+  <title>AUREN</title>
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+  <div id="statusBar" role="status" aria-live="polite" hidden>
+    <span id="statusMsg"></span>
+    <button id="statusClose" type="button" aria-label="Dismiss">&times;</button>
+  </div>
+
+  <header>
+    <div class="orb" title="AUREN voice assistant"></div>
+    <div>
+      <h1>AUREN</h1>
+      <p class="sub">Your personal butler &middot; <span id="status">starting&hellip;</span></p>
+    </div>
+  </header>
+  <noscript><p class="card">AUREN needs JavaScript enabled.</p></noscript>
+
+  <nav>
+    <button data-tab="chat" class="active">Chat</button>
+    <button data-tab="memory">Memory</button>
+    <button data-tab="projects">Projects</button>
+    <button data-tab="reminders">Reminders</button>
+    <button data-tab="settings">Backup</button>
+  </nav>
+
+  <main>
+    <section id="chat" class="tab active">
+      <div id="log"></div>
+      <form id="chatForm">
+        <input id="chatInput" autocomplete="off" placeholder='Try: remember that I prefer dark mode   (type "help")'>
+        <button>Send</button>
+      </form>
+      <div class="voice-controls" aria-label="Voice controls">
+        <button type="button" id="micBtn" class="ghost" aria-pressed="false">🎙 Speak to AUREN</button>
+        <label class="check"><input type="checkbox" id="speakReplies"> Read replies aloud</label>
+        <button type="button" id="stopSpeech" class="ghost">Stop speaking</button>
+        <span class="hint" id="voiceStatus" role="status" aria-live="polite">Voice initializing…</span>
+      </div>
+      <div class="card" id="sessionPanel">
+        <b>This conversation's notes</b> <span class="hint">temporary &mdash; never saved, gone on reload</span>
+        <div id="sessionList"></div>
+        <button type="button" id="sessionClear" class="ghost" hidden>Clear session notes</button>
+      </div>
+      <p class="hint">Voice uses your browser's speech features. Availability and privacy policies vary by browser; some speech recognition services process audio online. AUREN's chat is still command-based, not a conversational AI.</p>
+    </section>
+
+    <section id="memory" class="tab">
+      <form id="memForm" class="card">
+        <input type="hidden" id="memId">
+        <textarea id="memText" rows="2" maxlength="2000" placeholder="Something AUREN should remember&hellip;" required></textarea>
+        <div class="row">
+          <select id="memCat" aria-label="Category"></select>
+          <input id="memTags" placeholder="tags, comma separated">
+          <button id="memSave">Save memory</button>
+          <button type="button" id="memCancel" class="ghost" hidden>Cancel edit</button>
+        </div>
+      </form>
+      <div class="row">
+        <input id="memSearch" placeholder="Search memories&hellip;">
+        <select id="memFilter" aria-label="Filter by category"></select>
+      </div>
+      <div id="memList"></div>
+    </section>
+
+    <section id="projects" class="tab">
+      <form id="projForm" class="row card">
+        <input id="projName" maxlength="200" placeholder="New project name" required>
+        <button>Add project</button>
+      </form>
+      <div id="projList"></div>
+    </section>
+
+    <section id="reminders" class="tab">
+      <div class="card"><b>Reminders &mdash; PLANNED, not built yet.</b><br>
+      Planned for a later milestone: in-app reminders, then browser notifications. Nothing on this tab works yet.</div>
+    </section>
+
+    <section id="settings" class="tab">
+      <div class="card">
+        <h3>Privacy</h3>
+        <label class="check"><input type="checkbox" id="saveHistory"> Keep chat history on this device</label>
+        <p class="hint">Messages containing sensitive details or session notes are never kept in history, even when this is on. Only the most recent 200 messages are kept. Chat history is never included in backups.</p>
+        <p class="hint">AUREN has no lock screen yet (planned). Anyone who can open this browser profile can read your memories.</p>
+      </div>
+      <div class="card">
+        <h3>Export backup</h3>
+        <label class="check"><input type="checkbox" id="expSensitive"> Include sensitive memories</label>
+        <input id="expPass" type="password" autocomplete="new-password" placeholder="Passphrase to encrypt (optional, 8+ characters)">
+        <p class="hint">Without a passphrase the file is plain, readable text. If you set one and forget it, the backup cannot be recovered.</p>
+        <button id="exportBtn">Export backup (.json)</button>
+      </div>
+      <div class="card">
+        <h3>Import backup</h3>
+        <input id="impPass" type="password" autocomplete="off" placeholder="Passphrase (only if the backup is encrypted)">
+        <p class="hint">The file is checked before anything is saved, and you will see a summary to approve.</p>
+        <label class="btn">Choose backup file <input type="file" id="importFile" accept=".json,application/json" hidden></label>
+      </div>
+      <div class="card">
+        <h3>Storage</h3>
+        <p id="persistStatus" class="hint"></p>
+        <p id="usageStatus" class="hint"></p>
+        <button id="clearChat" class="ghost">Clear chat history</button>
+      </div>
+      <div class="card danger">
+        <h3>Delete everything</h3>
+        <p class="hint">Permanently erases all memories, projects and chat history from this device. Export a backup first.</p>
+        <div class="row">
+          <input id="wipeConfirm" placeholder="Type DELETE to enable" autocomplete="off">
+          <button id="wipeBtn" class="ghost" disabled>Delete all data</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
