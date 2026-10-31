@@ -61,3 +61,29 @@ textarea { width:100%; resize:vertical; }
 .voice-controls #voiceStatus { flex:1 1 180px; }
 #micBtn[aria-pressed="true"] { border-color:var(--gold); background:#544329; }
 button:disabled { opacity:.48; cursor:not-allowed; }
+
+/* v0.4 voice-first: single primary screen, advanced features stay accessible */
+body {max-width:850px; margin:auto; background:#0d1117;}
+header {justify-content:center; padding:24px 0 4px;}
+header .orb {display:none;}
+header h1 {letter-spacing:.30em; font-weight:500;}
+header .sub {text-align:center;}
+.hero {display:flex; flex-direction:column; align-items:center; gap:12px; text-align:center; padding:30px 8px 20px;}
+.hero h2 {font-size:clamp(1.15rem,3vw,1.65rem); font-weight:400; color:#ece7dd; margin:4px 0;}
+.hero p {color:#b7a581; margin:0 0 8px;}
+.auren-orb {width:185px; height:185px; border:1px solid #8a6c42; border-radius:50%; display:grid; place-items:center; background:radial-gradient(circle,#d7b878 0%,#967440 29%,#34281d 67%,#14191e 78%); box-shadow:0 0 0 9px #d5b47610,0 0 50px #d6b57b22; cursor:pointer; transition:transform .2s,box-shadow .3s;}
+.auren-orb:hover {transform:scale(1.025)}
+.orb-core {width:76%;height:76%;border-radius:50%;border:1px solid #ecd39a55;box-shadow:inset 0 0 22px #f4d59d33;}
+body[data-voice-state="listening"] .auren-orb {animation:aurenPulse 1.6s ease-in-out infinite;}
+body[data-voice-state="speaking"] .auren-orb {animation:aurenPulse .85s ease-in-out infinite;}
+body[data-voice-state="processing"] .orb-core {animation:aurenRotate 2s linear infinite; border-style:dashed;}
+@keyframes aurenPulse {50% {box-shadow:0 0 0 19px #d6b57b18,0 0 70px #d6b57b66; transform:scale(1.025);}}
+@keyframes aurenRotate {to {transform:rotate(360deg)}}
+.quick-controls {display:flex; flex-wrap:wrap;justify-content:center; gap:10px}
+#advancedNav:not([hidden]) {display:flex;}
+#advancedNav[hidden] {display:none;}
+#chat {display:flex; flex-direction:column;}
+#chat #log {height:min(31vh,260px); min-height:110px;}
+#chat .voice-controls {justify-content:center;}
+#sessionPanel[hidden] {display:none;}
+@media(max-width:520px) {.hero {padding:22px 4px 12px}.auren-orb {width:154px;height:154px}#chat #log {height:26vh}header {padding-top:12px}}

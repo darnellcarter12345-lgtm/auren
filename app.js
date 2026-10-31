@@ -45,6 +45,30 @@ $('micBtn').onclick = () => {
 $('speakReplies').onchange = () => voice.setEnabled($('speakReplies').checked);
 $('stopSpeech').onclick = () => voice.stopSpeaking();
 
+// Voice-first dashboard and optional wake phrase (foreground only).
+const advancedNav = $('advancedNav');
+$('panelToggle').onclick = () => {
+  advancedNav.hidden = !advancedNav.hidden;
+  $('panelToggle').setAttribute('aria-expanded', String(!advancedNav.hidden));
+  if (!advancedNav.hidden) $('sessionPanel').hidden = false;
+};
+$('orbControl').onclick = () => $('micBtn').click();
+$('wakeBtn').onclick = () => {
+  const active = voice.setWakeMode(!voice.wakeMode);
+  $('wakeBtn').textContent = active ? '■ Stop “Hey Auren”' : 'Enable “Hey Auren”';
+  $('wakeBtn').setAttribute('aria-pressed', String(active));
+  if (active) voice.setEnabled(true);
+  $('speakReplies').checked = voice.enabled;
+  $('heroState').textContent = active ? 'Listening for “Hey Auren” (app must stay open)' : 'Tap the orb to speak';
+  document.body.dataset.voiceState = active ? 'listening' : 'idle';
+};
+const observer = new MutationObserver(() => {
+  const msg = $('voiceStatus').textContent;
+  $('heroState').textContent = msg;
+  document.body.dataset.voiceState = /speaking/i.test(msg) ? 'speaking' : /listening/i.test(msg) ? 'listening' : 'idle';
+});
+observer.observe($('voiceStatus'), {childList:true,characterData:true,subtree:true});
+
 // ---------- status banner (works on small screens; errors stay until dismissed) ----------
 let statusTimer = null;
 function showStatus(msg, level = 'info') {

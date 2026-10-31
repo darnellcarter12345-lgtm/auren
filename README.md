@@ -22,3 +22,7 @@ Start with docs/PROJECT_SPEC.md → BUILD_STATUS.md → NEXT_STEPS.md. Testing: 
 
 ## Voice (v0.3.0)
 Use a supported browser on localhost or HTTPS. Tap **Speak to AUREN** and grant microphone access to dictate a supported command. Check **Read replies aloud** for spoken responses, and **Stop speaking** to cancel audio. The app does not upload or save raw audio, but your browser’s recognition implementation may send it to the browser vendor’s service; consult its privacy settings. Speech recognition is not reliably available in every mobile browser. Text commands remain available. No AI language model is connected yet.
+
+
+## v0.4 update
+Voice-first single-screen interface. Optional foreground wake phrase “Hey Auren” (speech recognition browser dependent). Root files are the GitHub Pages deployment files. Memory and backup continue in IndexedDB. This is command-based, not yet a conversational AI.
