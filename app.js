@@ -51,8 +51,16 @@ $('panelToggle').onclick = () => {
   advancedNav.hidden = !advancedNav.hidden;
   $('panelToggle').setAttribute('aria-expanded', String(!advancedNav.hidden));
   if (!advancedNav.hidden) $('sessionPanel').hidden = false;
+  if (advancedNav.hidden && !document.querySelector('#chat').classList.contains('active')) document.querySelector('nav button[data-tab="chat"]').click();
 };
-$('orbControl').onclick = () => $('micBtn').click();
+$('orbControl').onclick = () => {
+  if (capabilities.speak) { voice.setEnabled(true); $('speakReplies').checked = true; }
+  $('micBtn').click();
+};
+$('testVoice').onclick = () => {
+  voice.setEnabled(true); $('speakReplies').checked = true;
+  voice.speak('Good afternoon, sir. Auren at your service.');
+};
 $('wakeBtn').onclick = () => {
   const active = voice.setWakeMode(!voice.wakeMode);
   $('wakeBtn').textContent = active ? '■ Stop “Hey Auren”' : 'Enable “Hey Auren”';

@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101318">
-  <title>AUREN · Private Intelligence</title>
+  <title>AUREN · Voice Assistant</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
@@ -26,10 +26,10 @@
     <button id="orbControl" class="auren-orb" type="button" aria-label="Start voice listening"><span class="orb-core"></span></button>
     <h2>How may I assist you, sir?</h2>
     <p id="heroState">Tap the orb to speak</p>
-    <div class="quick-controls"><button type="button" id="wakeBtn" class="ghost" aria-pressed="false">Enable “Hey Auren”</button><button type="button" id="panelToggle" class="ghost" aria-expanded="false">⚙ Memory & settings</button></div>
+    <div class="quick-controls"><button type="button" id="wakeBtn" class="ghost" aria-pressed="false">Enable “Hey Auren”</button><button type="button" id="panelToggle" class="ghost" aria-expanded="false">⚙ Settings</button></div><button type="button" id="testVoice" class="preview-voice">▶ Hear AUREN’s voice</button>
   </div>
   <nav id="advancedNav" hidden aria-label="Manage AUREN">
-    <button data-tab="chat" class="active">Chat</button>
+    <button data-tab="chat" class="active">Home</button>
     <button data-tab="memory">Memory</button>
     <button data-tab="projects">Projects</button>
     <button data-tab="reminders">Reminders</button>
@@ -39,7 +39,7 @@
   <main>
     <section id="chat" class="tab active">
       <div id="latestReply" class="latest-reply" role="status" aria-live="polite">Ready when you are.</div>
-      <details id="conversationDetails" class="conversation-details"><summary>View conversation history</summary><div id="log"></div></details>
+      <details id="conversationDetails" class="conversation-details"><summary>Text chat & history</summary><div id="log"></div>
       <form id="chatForm">
         <input id="chatInput" autocomplete="off" placeholder='Try: remember that I prefer dark mode   (type "help")'>
         <button>Send</button>
@@ -50,12 +50,13 @@
         <button type="button" id="stopSpeech" class="ghost">Stop speaking</button>
         <span class="hint" id="voiceStatus" role="status" aria-live="polite">Voice initializing…</span>
       </div>
+      </details>
       <div class="card" id="sessionPanel" hidden>
         <b>This conversation's notes</b> <span class="hint">temporary &mdash; never saved, gone on reload</span>
         <div id="sessionList"></div>
         <button type="button" id="sessionClear" class="ghost" hidden>Clear session notes</button>
       </div>
-      <p class="hint">Voice uses your browser's speech features. Availability and privacy policies vary by browser; some speech recognition services process audio online. AUREN's chat is still command-based, not a conversational AI.</p>
+      <p class="hint" id="voiceDisclaimer">Voice availability depends on your browser. AUREN still understands specific commands rather than open-ended conversation.</p>
     </section>
 
     <section id="memory" class="tab">

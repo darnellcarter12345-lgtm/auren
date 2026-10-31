@@ -1,0 +1,17 @@
+AUREN v0.6 — Voice-first streamlined interface
+
+Replace ONLY these files in your existing GitHub repository ROOT:
+index.html
+styles.css
+app.js
+
+Do not upload the ZIP itself. Keep voice.js, db.js, memory.js and all other files.
+
+What changed:
+- Chat history, text input and secondary voice controls live inside a collapsed Text chat & history section.
+- Memory/projects/backup tabs remain hidden until Settings is opened.
+- Orb enables read-replies-aloud on click.
+- Hear AUREN voice button tests your browser speech output.
+- Optional Hey Auren mode remains limited to the open browser and supported engines.
+
+The app remains command based, not connected to a language model. A browser voice is not a high-quality neural TTS service.
