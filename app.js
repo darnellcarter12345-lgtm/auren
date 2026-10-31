@@ -318,7 +318,7 @@ $('chatForm').onsubmit = e => { e.preventDefault(); const v = $('chatInput').val
 
 async function loadHistory() {
   const msgs = (await getAll(STORES.messages)).filter(m => m.role === 'user' || m.role === 'auren').sort((a, b) => a.at.localeCompare(b.at));
-  if (!msgs.length) return addMessage('auren', 'I'm here when you need me. Tap the orb to talk, or open settings for your memories.');
+  if (!msgs.length) return addMessage('auren', "I'm here when you need me. Tap the orb to talk, or open settings for your memories.");
   msgs.forEach(m => drawMessage(m));
 }
 
