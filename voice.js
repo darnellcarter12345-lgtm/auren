@@ -1,7 +1,7 @@
 // AUREN v1.1: improved foreground wake-phrase recognition and microphone lifecycle.
 // SpeechRecognition is browser-dependent and may process microphone audio online.
 // The user must explicitly start voice access at least once; no background/locked-screen listening.
-export function createVoice({ onTranscript, onStatus, onInterim, onHeard }) {
+export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpoken }) {
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const synth = window.speechSynthesis || null;
   let recognition = null, active = false, wakeMode = false, conversation = false;
@@ -9,6 +9,9 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard }) {
   let token = 0, restartTimer = null, idleTimer = null, errorStop = false;
   let desiredMode = 'off';
   let currentUtterance = null;
+  let spokenText = '';
+  let interrupted = false;
+  let interruptionsEnabled = false; // Privacy-conscious default: background voices cannot interrupt.
   let preferredVoiceURI = ''; let voiceRate = 0.96, voicePitch = 0.95; 
   const SILENCE_MS = 45000;
   // Browser recognition frequently transcribes the invented name AUREN as a
@@ -37,6 +40,14 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard }) {
     return { command: words.slice(offset+nameLength).join(' ') };
   }
 
+  function normalizeWakeDisplay(text) {
+    // Normalize only the invocation, never ordinary references to people named Aaron.
+    const words = String(text || '').trim().split(/\s+/);
+    const detected = detectWake(text);
+    if (!detected) return String(text || '').trim();
+    const prefix = /^(hey|hi|hello|okay|ok|yo)\b/i.test(words[0] || '') ? 'Hey ' : '';
+    return prefix + 'Auren' + (detected.command ? ' ' + detected.command : '');
+  }
   const report = text => onStatus?.(text);
   const available = () => ({ listen: !!Recognition, speak: !!(synth && window.SpeechSynthesisUtterance) });
   const cancelTimers = () => { clearTimeout(restartTimer); clearTimeout(idleTimer); };
@@ -76,14 +87,14 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard }) {
   }
   function listenSoon(delay = 200) {
     clearTimeout(restartTimer);
-    if (desiredMode === 'off' || (!wakeMode && !conversation) || speaking || responding || !permittedStart || errorStop || active || !Recognition) return;
+    if (desiredMode === 'off' || (!wakeMode && !conversation) || (speaking && (!conversation || !interruptionsEnabled)) || responding || !permittedStart || errorStop || active || !Recognition) return;
     restartTimer = setTimeout(startEngine, delay);
   }
   function startEngine() {
-    if (desiredMode === 'off' || active || speaking || responding || errorStop || (!conversation && !wakeMode) || !permittedStart) return;
+    if (desiredMode === 'off' || active || (speaking && (!conversation || !interruptionsEnabled)) || responding || errorStop || (!conversation && !wakeMode) || !permittedStart) return;
     const id = ++token;
     const r = new Recognition(); recognition = r;
-    r.lang = 'en-US'; r.continuous = false; r.interimResults = true; r.maxAlternatives = 5;
+    r.lang = 'en-GB'; r.continuous = false; r.interimResults = true; r.maxAlternatives = 5;
     r.onresult = event => {
       if (id !== token) return;
       const finalResults = [];
@@ -95,13 +106,32 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard }) {
       }
       if (interim.length) {
         const preview = interim.join(' ').trim();
-        if (!wakeMode || conversation || detectWake(preview)) onInterim?.(preview);
+        if (!speaking && (!wakeMode || conversation || detectWake(preview))) onInterim?.(normalizeWakeDisplay(preview));
       }
       if (!finalResults.length || responding) return;
       const alternatives = finalResults.flatMap(item => Array.from(item).map(a => a.transcript?.trim()).filter(Boolean));
       const transcript = alternatives[0] || '';
       if (!transcript) return;
+      if (speaking) {
+        if (!interruptionsEnabled) return;
+        // Safari may hear its own speakers. Only interrupt for a clear, distinct
+        // utterance; a wake phrase always counts. Others need 3+ words and
+        // must not be a fragment of what AUREN is currently saying.
+        const cleaned = transcript.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+        const output = spokenText.toLowerCase().replace(/[^a-z0-9 ]/g, '');
+        const wake = alternatives.map(detectWake).find(Boolean);
+        if (!wake && (cleaned.split(/\s+/).length < 3 || output.includes(cleaned))) return;
+        interrupted = true;
+        if (synth) synth.cancel();
+        currentUtterance = null;
+        speaking = false;
+        spokenText = '';
+        report('Interrupted — listening to you…');
+        onInterim?.('');
+        // Continue below through the exact same transcript pipeline as orb mode.
+      }
       const detected = alternatives.map(detectWake).find(Boolean);
+      const visibleTranscript = detected ? normalizeWakeDisplay(alternatives.find(a => detectWake(a)) || transcript) : transcript;
       if (wakeMode && !conversation && !detected) { onInterim?.(''); return; }
       clearTimeout(idleTimer);
       responding = true;
@@ -115,10 +145,10 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard }) {
           scheduleIdle();
           return;
         }
-        onHeard?.(detected.command);
+        onHeard?.(visibleTranscript);
         deliver(detected.command);
       } else if (conversation) {
-        onHeard?.(transcript);
+        onHeard?.(visibleTranscript);
         deliver(transcript);
       } else responding = false;
     };
@@ -134,7 +164,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard }) {
     r.onend = () => {
       if (id !== token) return;
       recognition = null; active = false;
-      if (!responding && !speaking && !errorStop) listenSoon(450);
+      if (!responding && !errorStop) listenSoon(450);
     };
     try { r.start(); active = true; report(conversation ? 'Listening…' : 'Say “Hey Auren” to speak'); }
     catch { active = false; recognition = null; report('Could not start listening. Tap the orb to retry.'); }
@@ -155,21 +185,31 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard }) {
   function stopSpeaking() {
     if (synth) synth.cancel();
     currentUtterance = null;
-    speaking = false;
+    speaking = false; spokenText = '';
     if (!responding) listenSoon(350);
   }
   function speak(text) {
     if (!enabled || !available().speak || !text) return;
-    abort(); // suppress microphone feedback from AUREN's own voice
+    // Keep recognition running during speech where Safari permits, so the user
+    // can interrupt. Spoken-voice echo is filtered in the recognition handler.
+    if (!conversation || !interruptionsEnabled) abort();
     if (synth) synth.cancel();
-    speaking = true;
+    speaking = true; interrupted = false; spokenText = text;
     const u = new SpeechSynthesisUtterance(text);
     currentUtterance = u; // Keep a strong reference; Safari may drop async utterances.
     u.lang = 'en-GB'; u.rate = voiceRate; u.pitch = voicePitch;
     const chosen = voicePick(); if (chosen) { u.voice = chosen; u.lang = chosen.lang; }
-    u.onend = () => { if (currentUtterance === u) currentUtterance = null; speaking = false; report(wakeMode ? 'Listening — ask a follow-up, or say “Hey Auren”' : (conversation ? 'Listening for your next question…' : 'Tap the orb to speak')); scheduleIdle(); if (!responding) listenSoon(250); };
-    u.onerror = () => { if (currentUtterance === u) currentUtterance = null; speaking = false; report('Voice output stopped; text remains available.'); if (!responding) listenSoon(420); };
-    try { synth.speak(u); report('AUREN speaking…'); }
+    u.onstart = () => { if (currentUtterance !== u) return; onSpoken?.(text, text); report('AUREN speaking…'); };
+    u.onboundary = e => { if (currentUtterance !== u) return;
+      // Safari supplies word boundaries on some voices but not all.
+      if (Number.isInteger(e.charIndex) && e.charIndex >= 0) {
+        const end = Math.min(text.length, e.charIndex + (e.charLength || 1));
+        onSpoken?.(text.slice(0, end), text);
+      }
+    };
+    u.onend = () => { if (currentUtterance !== u) return; spokenText = ''; onSpoken?.(text, text); if (currentUtterance === u) currentUtterance = null; speaking = false; report(wakeMode ? 'Listening — ask a follow-up, or say “Hey Auren”' : (conversation ? 'Listening for your next question…' : 'Tap the orb to speak')); scheduleIdle(); if (!responding) listenSoon(250); };
+    u.onerror = () => { if (currentUtterance !== u) return; spokenText = ''; if (currentUtterance === u) currentUtterance = null; speaking = false; report('Voice output stopped; text remains available.'); if (!responding) listenSoon(420); };
+    try { synth.speak(u); report('AUREN speaking…'); if (interruptionsEnabled && conversation && !active && !responding) listenSoon(250); }
     catch { currentUtterance = null; speaking = false; report('Speech output unavailable.'); if (!responding) listenSoon(); }
   }
   function startListening() {
@@ -210,6 +250,16 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard }) {
     get listening() { return desiredMode !== 'off'; },
     get wakeMode() { return wakeMode; },
     get enabled() { return enabled; },
+    get interruptionsEnabled() { return interruptionsEnabled; },
+    setInterruptionsEnabled(value) {
+      interruptionsEnabled = !!value;
+      // Switching OFF immediately halts microphone recognition during playback.
+      // It resumes only after AUREN finishes talking.
+      if (!interruptionsEnabled && speaking) { ++token; abort(); clearTimeout(restartTimer); }
+      // Switching ON is best-effort; never auto-request microphone permissions.
+      if (interruptionsEnabled && speaking && permittedStart && conversation && !responding) listenSoon(250);
+      return interruptionsEnabled;
+    },
     setEnabled(v) { enabled = !!v; if (!enabled) stopSpeaking(); }
   };
 }

@@ -24,7 +24,8 @@ $('saveAIEndpoint').onclick = () => { try { setAIEndpoint(aiEndpointInput.value)
 $('clearAIEndpoint').onclick = () => { setAIEndpoint(''); aiEndpointInput.value = ''; showStatus('AI connection removed.', 'info'); };
 let storageOk = false, sinceTrim = 0;
 const voice = createVoice({
-  onInterim: partial => { if (partial) { $('liveTranscript').textContent = 'You: ' + partial; $('liveTranscript').hidden = false; } },
+  onInterim: partial => { $('liveTranscript').textContent = partial ? 'You: ' + partial : ''; $('liveTranscript').hidden = !partial; },
+  onSpoken: (progress, full) => { $('liveTranscript').textContent = 'AUREN: ' + progress; $('liveTranscript').hidden = false; },
   onHeard: text => { $('liveTranscript').textContent = 'You: ' + text; $('liveTranscript').hidden = false; },
   onTranscript: async transcript => {
     $('chatInput').value = transcript;
@@ -67,10 +68,14 @@ $('stopSpeech').onclick = () => voice.stopSpeaking();
 // Voice-first dashboard and optional wake phrase (foreground only).
 const advancedNav = $('advancedNav');
 $('panelToggle').onclick = () => {
-  advancedNav.hidden = !advancedNav.hidden;
-  $('panelToggle').setAttribute('aria-expanded', String(!advancedNav.hidden));
-  if (!advancedNav.hidden) $('sessionPanel').hidden = false;
-  if (advancedNav.hidden && !document.querySelector('#chat').classList.contains('active')) document.querySelector('nav button[data-tab="chat"]').click();
+  // Settings goes straight to the settings panel. The navigation remains
+  // available for Memory, Projects and Home.
+  const isSettings = $('settings').classList.contains('active');
+  const target = isSettings ? 'chat' : 'settings';
+  advancedNav.hidden = isSettings;
+  $('panelToggle').setAttribute('aria-expanded', String(!isSettings));
+  const tab = document.querySelector(`nav button[data-tab="${target}"]`);
+  if (tab) tab.click();
 };
 $('orbControl').onclick = () => {
   if (capabilities.speak) { voice.setEnabled(true); $('speakReplies').checked = true; }
@@ -81,6 +86,7 @@ $('testVoice').onclick = () => {
   voice.speak('Good evening. What can I help you with?');
 };
 $('wakeBtn').onclick = () => {
+  if (capabilities.speak) voice.setEnabled(true);
   const active = voice.setWakeMode(!voice.wakeMode);
   if (active) voice.setEnabled(true);
   $('speakReplies').checked = voice.enabled;
@@ -106,6 +112,37 @@ const voiceDescription = document.createElement('p');
 voiceDescription.className = 'hint';
 voiceDescription.textContent = 'One automatically selected British-butler voice. The sound depends on which voices Safari and macOS provide.';
 voiceCard.append(voiceHeading, voiceDescription, $('testVoice'));
+// Interruptions are off by default to prevent nearby conversations from
+// cutting off AUREN. The setting is local to this browser and persists.
+const INTERRUPTIONS_KEY = 'auren_interruptions_enabled_v1';
+const interruptRow = document.createElement('label');
+interruptRow.className = 'check';
+interruptRow.style.marginTop = '16px';
+const interruptToggle = document.createElement('input');
+interruptToggle.type = 'checkbox';
+interruptToggle.id = 'interruptionsToggle';
+interruptToggle.checked = localStorage.getItem(INTERRUPTIONS_KEY) === 'true';
+voice.setInterruptionsEnabled(interruptToggle.checked);
+const interruptLabel = document.createElement('span');
+interruptLabel.textContent = 'Allow interruptions while AUREN is speaking';
+interruptRow.append(interruptToggle, interruptLabel);
+const interruptHelp = document.createElement('p');
+interruptHelp.className = 'hint';
+interruptHelp.id = 'interruptionsHelp';
+function syncInterruptionsHelp() {
+  interruptHelp.textContent = interruptToggle.checked
+    ? 'On — AUREN will try to hear you during replies. Nearby speech may occasionally interrupt it.'
+    : 'Off (recommended in busy places) — AUREN finishes speaking before listening for the next question.';
+}
+interruptToggle.addEventListener('change', () => {
+  const value = voice.setInterruptionsEnabled(interruptToggle.checked);
+  try { localStorage.setItem(INTERRUPTIONS_KEY, String(value)); }
+  catch { showStatus('This browser could not save the interruption preference.', 'error'); }
+  syncInterruptionsHelp();
+  showStatus(value ? 'Interruptions on. AUREN may pause for nearby speech.' : 'Interruptions off. AUREN will finish each reply.', 'info');
+});
+syncInterruptionsHelp();
+voiceCard.append(interruptRow, interruptHelp);
 $('testVoice').textContent = '▶ Hear AUREN';
 $('wakeBtn').textContent = 'Enable “Hey Auren”';
 $('testVoice').style.marginRight = '12px';

@@ -1,11 +1,11 @@
-AUREN v1.4.2 — Combined wake-word + AI speaking fix
+AUREN v1.4.5 — interruption preference (combined with v1.4.4)
 
-This update includes the previous v1.4.1 wake-word recognition improvement AND a correction for AUREN going silent when the AI request fails.
+Upload ONLY app.js and voice.js to the ROOT of your EXISTING AUREN GitHub repository.
+Do not delete or replace index.html, styles.css, memory.js, ai.js, or your Cloudflare Worker.
 
-Upload ONLY app.js and voice.js to the ROOT of your EXISTING GitHub repository. Commit changes, let GitHub Pages deploy, and reload the site with Command+Shift+R.
+Settings > AUREN voice > Allow interruptions while AUREN is speaking.
+Default OFF: conversations around you should not interrupt AUREN because it stops recognition during speech.
+ON: best-effort interruptions; Safari may hear AUREN itself or bystanders. No accurate speaker identification.
+The choice is saved locally in this browser.
 
-Do NOT upload the ZIP file itself. Do NOT delete any other site files. No changes are needed to Cloudflare Worker or saved memory.
-
-After uploading, test a normal AI request by speaking “Hey Auren, tell me a fun fact.” If AUREN reports an AI connection problem, open Settings and check that the AI Worker URL is still configured. This repair cannot itself fix a Cloudflare outage, AI allowance limit, or disconnected Worker.
-
-Safari microphone permissions and web speech synthesis remain browser-dependent; it may require one user tap after opening a fresh tab.
+After committing, hard-refresh Safari and test normal Q&A, wake phrase, Settings and the switch.
