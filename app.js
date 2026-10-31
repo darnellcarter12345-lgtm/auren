@@ -70,7 +70,7 @@ $('orbControl').onclick = () => {
 };
 $('testVoice').onclick = () => {
   voice.setEnabled(true); $('speakReplies').checked = true;
-  voice.speak('Hello. I'm Auren. What would you like to do?');
+  voice.speak('Good evening. What can I help you with?');
 };
 $('wakeBtn').onclick = () => {
   const active = voice.setWakeMode(!voice.wakeMode);
@@ -78,6 +78,67 @@ $('wakeBtn').onclick = () => {
   $('speakReplies').checked = voice.enabled;
   syncVoiceUI();
 };
+// Persistent voice preferences. This never silently grants microphone access.
+const VOICE_PREFS_KEY = 'auren_voice_prefs_v12';
+let voicePrefs = { wake: false, voiceURI: '', rate: 0.96 };
+try { voicePrefs = { ...voicePrefs, ...JSON.parse(localStorage.getItem(VOICE_PREFS_KEY) || '{}') }; } catch {}
+function storeVoicePrefs() {
+  try { localStorage.setItem(VOICE_PREFS_KEY, JSON.stringify(voicePrefs)); }
+  catch { $('voiceStatus').textContent = 'Voice preferences cannot be saved in this browser.'; }
+}
+const voiceOptions = document.createElement('div');
+voiceOptions.className = 'voice-preferences';
+voiceOptions.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center;margin:14px auto;color:#d6b57b;font-size:14px;';
+const wakeLabel = document.createElement('label');
+wakeLabel.style.cssText = 'display:flex;align-items:center;gap:7px;cursor:pointer;';
+const wakePref = document.createElement('input');
+wakePref.type = 'checkbox'; wakePref.checked = !!voicePrefs.wake;
+wakeLabel.append(wakePref, document.createTextNode('Remember “Hey Auren” preference'));
+const voiceLabel = document.createElement('label'); voiceLabel.textContent = 'Voice: ';
+const voiceSelect = document.createElement('select');
+voiceSelect.setAttribute('aria-label', 'AUREN speaking voice');
+voiceSelect.style.cssText = 'max-width:230px;background:#20252c;color:#f2e4c6;border:1px solid #7a664b;border-radius:7px;padding:6px;';
+voiceLabel.append(voiceSelect);
+voiceOptions.append(wakeLabel, voiceLabel);
+$('testVoice').insertAdjacentElement('afterend', voiceOptions);
+function refreshVoiceChoices() {
+  const list = voice.getVoices();
+  voiceSelect.replaceChildren();
+  const auto = document.createElement('option'); auto.value = ''; auto.textContent = 'Automatic (British preferred)'; voiceSelect.append(auto);
+  list.filter(v => /^en(-|$)/i.test(v.lang)).forEach(v => {
+    const o = document.createElement('option'); o.value = v.voiceURI;
+    o.textContent = `${v.name} (${v.lang})${v.localService ? ' • device' : ''}`;
+    voiceSelect.append(o);
+  });
+  voiceSelect.value = voicePrefs.voiceURI;
+  if (voiceSelect.value !== voicePrefs.voiceURI) voiceSelect.value = '';
+}
+voice.setVoicePreference(voicePrefs.voiceURI);
+refreshVoiceChoices();
+if (window.speechSynthesis) window.speechSynthesis.addEventListener?.('voiceschanged', refreshVoiceChoices);
+voiceSelect.onchange = () => { voicePrefs.voiceURI = voiceSelect.value; voice.setVoicePreference(voicePrefs.voiceURI); storeVoicePrefs(); voice.speak('At your service. How does this voice sound?'); };
+wakePref.onchange = () => {
+  voicePrefs.wake = wakePref.checked; storeVoicePrefs();
+  if (wakePref.checked) {
+    voice.setEnabled(true); $('speakReplies').checked = true;
+    voice.setWakeMode(true); // direct user interaction: request microphone permission
+  } else if (voice.wakeMode) voice.stopListening();
+  syncVoiceUI();
+};
+const oldWakeClick = $('wakeBtn').onclick;
+$('wakeBtn').onclick = () => {
+  oldWakeClick();
+  voicePrefs.wake = voice.wakeMode;
+  wakePref.checked = voicePrefs.wake;
+  storeVoicePrefs();
+};
+// A remembered preference is NOT permission to silently start recording.
+// Arm wake mode only from the user's first explicit interaction after a reload.
+if (voicePrefs.wake && capabilities.listen) {
+  $('voiceStatus').textContent = '“Hey Auren” saved. Tap the orb or Enable “Hey Auren” once to resume listening.';
+  $('wakeBtn').textContent = 'Resume “Hey Auren”';
+}
+
 const observer = new MutationObserver(syncVoiceUI);
 observer.observe($('voiceStatus'), {childList:true,characterData:true,subtree:true});
 

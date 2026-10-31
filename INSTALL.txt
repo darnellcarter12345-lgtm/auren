@@ -1,11 +1,16 @@
-AUREN v1.1 — Better "Hey Auren" recognition + v1.0 microphone fix
+AUREN v1.2 — saved wake preference + voice selection
 
-1. Extract this ZIP.
-2. Upload app.js and voice.js (NOT the ZIP) to the root of your existing GitHub auren repository.
-3. Commit changes and refresh the AUREN website once GitHub Pages publishes.
+Upload only app.js and voice.js to the ROOT of your existing GitHub repository.
+Keep your existing files and Cloudflare Worker. Do not upload this ZIP.
 
-Changes: More speech-to-text name alternatives; recognizes "Hey Auren", "Hey Orin", "Hey Oren", "Hey Lauren" and similar when recognition is active; avoids common-name triggers without a greeting. Includes the microphone-off and natural-greeting improvements from v1.0.
+What changed:
+- Select a preferred English voice from voices installed or exposed by your browser.
+- Remember whether you want Hey Auren mode enabled.
+- When you select the saved-wake option, AUREN starts wake listening via that click (browser asks microphone permission if required).
+- After a page reload it remembers the choice and displays a resume prompt. Tap the orb or Resume once before listening. Browsers can block unprompted recording; never bypass this.
+- Wake detection and continuous voice conversation from v1.1 remain.
 
-A browser site CANNOT turn on a microphone by itself or reliably hear a wake phrase when the tab is closed, the phone is locked, or the user hasn't enabled wake mode. Click Enable "Hey Auren" once per page session and grant microphone access. Safari can suspend speech recognition.
+To get better voices on a Mac, install or enable system voices in macOS Settings > Accessibility > Spoken Content (availability depends on macOS version), then refresh Safari.
+No voice service or paid AI model was added; this is browser synthesis voice selection.
 
-AUREN uses browser speech recognition: exact wake-word reliability cannot be guaranteed. Validate in Safari and on your phone.
+Test: enable remembered wake mode, allow microphone, say Hey Auren; reload page and check saved preference and explicit resume; test voice dropdown; turn microphone off and verify it stays off.

@@ -8,6 +8,7 @@ export function createVoice({ onTranscript, onStatus }) {
   let speaking = false, responding = false, enabled = false, permittedStart = false;
   let token = 0, restartTimer = null, idleTimer = null, errorStop = false;
   let desiredMode = 'off';
+  let preferredVoiceURI = ''; 
   const SILENCE_MS = 20000;
   // Browser recognition frequently transcribes the invented name AUREN as a
   // familiar name ("Orin", "Oren", "Aaron", "Lauren"). Match short wake
@@ -38,7 +39,7 @@ export function createVoice({ onTranscript, onStatus }) {
   const abort = () => { const old = recognition; recognition = null; active = false; if (old) try { old.abort(); } catch {} };
   const voicePick = () => {
     const voices = synth?.getVoices?.() || [];
-    return voices.find(v => /^en-GB$/i.test(v.lang)) || voices.find(v => /^en/i.test(v.lang)) || null;
+    return voices.find(v => v.voiceURI === preferredVoiceURI) || voices.find(v => /^en-GB$/i.test(v.lang) && v.localService) || voices.find(v => /^en-GB$/i.test(v.lang)) || voices.find(v => /^en/i.test(v.lang)) || null;
   };
   function scheduleIdle() {
     clearTimeout(idleTimer);
@@ -158,6 +159,8 @@ export function createVoice({ onTranscript, onStatus }) {
   });
   return {
     available, speak, stopSpeaking, startListening, stopListening, setWakeMode,
+    getVoices() { return synth?.getVoices?.() || []; },
+    setVoicePreference(uri) { preferredVoiceURI = String(uri || ""); },
     get listening() { return desiredMode !== 'off'; },
     get wakeMode() { return wakeMode; },
     get enabled() { return enabled; },
