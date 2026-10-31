@@ -1,11 +1,4 @@
-AUREN v1.4.5 — interruption preference (combined with v1.4.4)
-
-Upload ONLY app.js and voice.js to the ROOT of your EXISTING AUREN GitHub repository.
-Do not delete or replace index.html, styles.css, memory.js, ai.js, or your Cloudflare Worker.
-
-Settings > AUREN voice > Allow interruptions while AUREN is speaking.
-Default OFF: conversations around you should not interrupt AUREN because it stops recognition during speech.
-ON: best-effort interruptions; Safari may hear AUREN itself or bystanders. No accurate speaker identification.
-The choice is saved locally in this browser.
-
-After committing, hard-refresh Safari and test normal Q&A, wake phrase, Settings and the switch.
+AUREN v1.4.6
+Upload ONLY app.js and voice.js to the GitHub repository root. Keep all other files.
+This update removes the voice preview, prevents accidental rapid double taps, pins a consistent non-novelty voice, keeps Hey Auren and Settings, and retains interruptions toggle in Settings.
+Safari microphone and speaker behavior must be tested on device.

@@ -9,6 +9,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   let token = 0, restartTimer = null, idleTimer = null, errorStop = false;
   let desiredMode = 'off';
   let currentUtterance = null;
+  let fixedVoice = null;
   let spokenText = '';
   let interrupted = false;
   let interruptionsEnabled = false; // Privacy-conscious default: background voices cannot interrupt.
@@ -55,6 +56,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   // Pick one sophisticated British voice without exposing a confusing voice menu.
   // Prefer macOS enhanced/premium voices when installed; avoid novelty voices.
   const voicePick = () => {
+    if (fixedVoice) return fixedVoice;
     const voices = synth?.getVoices?.() || [];
     if (preferredVoiceURI) {
       const explicit = voices.find(v => v.voiceURI === preferredVoiceURI);
@@ -73,7 +75,11 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       if (/female|child/i.test(name)) n -= 15;
       return n;
     };
-    return candidates.sort((a,b) => score(b)-score(a))[0] || voices.find(isEnglish) || null;
+    const chosen = candidates.sort((a,b) => score(b)-score(a))[0] || null;
+    // Never switch between voices during the session, especially when Safari
+    // populates voices late or offers novelty-only fallbacks.
+    if (chosen) fixedVoice = chosen;
+    return fixedVoice;
   };
   function scheduleIdle() {
     clearTimeout(idleTimer);
@@ -190,6 +196,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   }
   function speak(text) {
     if (!enabled || !available().speak || !text) return;
+    // A fresh answer replaces prior speech; stop timers/recognition only once.
     // Keep recognition running during speech where Safari permits, so the user
     // can interrupt. Spoken-voice echo is filtered in the recognition handler.
     if (!conversation || !interruptionsEnabled) abort();
@@ -242,12 +249,13 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   return {
     available, speak, stopSpeaking, startListening, stopListening, setWakeMode,
     getVoices() { return synth?.getVoices?.() || []; },
-    setVoicePreference(uri) { preferredVoiceURI = String(uri || ""); },
+    setVoicePreference(uri) { preferredVoiceURI = String(uri || ""); fixedVoice = null; },
     setVoiceStyle({ rate, pitch } = {}) {
       if (Number.isFinite(Number(rate))) voiceRate = Math.max(0.7, Math.min(1.25, Number(rate)));
       if (Number.isFinite(Number(pitch))) voicePitch = Math.max(0.7, Math.min(1.3, Number(pitch)));
     },
     get listening() { return desiredMode !== 'off'; },
+    get speaking() { return speaking; },
     get wakeMode() { return wakeMode; },
     get enabled() { return enabled; },
     get interruptionsEnabled() { return interruptionsEnabled; },

@@ -77,14 +77,24 @@ $('panelToggle').onclick = () => {
   const tab = document.querySelector(`nav button[data-tab="${target}"]`);
   if (tab) tab.click();
 };
+// One deliberate tap per action. Rapid repeated taps must never queue voices.
+let lastOrbTap = 0;
 $('orbControl').onclick = () => {
+  const now = Date.now();
+  if (now - lastOrbTap < 650) return;
+  lastOrbTap = now;
   if (capabilities.speak) { voice.setEnabled(true); $('speakReplies').checked = true; }
-  $('micBtn').click();
+  // If speaking, a tap stops the answer and opens the mic; no new speech is queued.
+  if (voice.speaking) {
+    voice.stopSpeaking();
+    voice.stopListening();
+    voice.startListening();
+  } else $('micBtn').click();
+  syncVoiceUI();
 };
-$('testVoice').onclick = () => {
-  voice.setEnabled(true); $('speakReplies').checked = true;
-  voice.speak('Good evening. What can I help you with?');
-};
+// Voice preview is intentionally removed: one voice, one simple main control.
+$('testVoice').hidden = true;
+$('testVoice').onclick = null;
 $('wakeBtn').onclick = () => {
   if (capabilities.speak) voice.setEnabled(true);
   const active = voice.setWakeMode(!voice.wakeMode);
@@ -111,7 +121,7 @@ voiceHeading.textContent = 'AUREN voice';
 const voiceDescription = document.createElement('p');
 voiceDescription.className = 'hint';
 voiceDescription.textContent = 'One automatically selected British-butler voice. The sound depends on which voices Safari and macOS provide.';
-voiceCard.append(voiceHeading, voiceDescription, $('testVoice'));
+voiceCard.append(voiceHeading, voiceDescription);
 // Interruptions are off by default to prevent nearby conversations from
 // cutting off AUREN. The setting is local to this browser and persists.
 const INTERRUPTIONS_KEY = 'auren_interruptions_enabled_v1';
@@ -143,9 +153,7 @@ interruptToggle.addEventListener('change', () => {
 });
 syncInterruptionsHelp();
 voiceCard.append(interruptRow, interruptHelp);
-$('testVoice').textContent = '▶ Hear AUREN';
 $('wakeBtn').textContent = 'Enable “Hey Auren”';
-$('testVoice').style.marginRight = '12px';
 $('settings').insertBefore(voiceCard, $('settings').firstElementChild);
 const oldWakeClick = $('wakeBtn').onclick;
 $('wakeBtn').onclick = () => {
