@@ -104,6 +104,7 @@ async function withConfirm(run, verb = 'Save') {
 document.querySelectorAll('nav button').forEach(b => b.onclick = safe(async () => {
   document.querySelectorAll('nav button, .tab').forEach(x => x.classList.remove('active'));
   b.classList.add('active'); $(b.dataset.tab).classList.add('active');
+  if (b.dataset.tab !== 'chat') { advancedNav.hidden = false; $('panelToggle').setAttribute('aria-expanded', 'true'); }
   if (b.dataset.tab === 'memory') await renderMemories();
   if (b.dataset.tab === 'projects') await renderProjects();
   if (b.dataset.tab === 'settings') await renderStorageInfo();
@@ -123,6 +124,7 @@ function drawMessage(rec, opts = {}) {
     d.append(row);
   }
   $('log').append(d); $('log').scrollTop = $('log').scrollHeight;
+  if (rec.role === 'auren') $('latestReply').textContent = rec.text;
 }
 
 // What goes to disk is redacted: sensitive/blocked text and session notes are never kept in history.

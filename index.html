@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101318">
-  <title>AUREN</title>
+  <title>AUREN · Private Intelligence</title>
   <link rel="stylesheet" href="./styles.css">
 </head>
 <body>
@@ -28,7 +28,7 @@
     <p id="heroState">Tap the orb to speak</p>
     <div class="quick-controls"><button type="button" id="wakeBtn" class="ghost" aria-pressed="false">Enable “Hey Auren”</button><button type="button" id="panelToggle" class="ghost" aria-expanded="false">⚙ Memory & settings</button></div>
   </div>
-  <nav id="advancedNav" hidden>
+  <nav id="advancedNav" hidden aria-label="Manage AUREN">
     <button data-tab="chat" class="active">Chat</button>
     <button data-tab="memory">Memory</button>
     <button data-tab="projects">Projects</button>
@@ -38,7 +38,8 @@
 
   <main>
     <section id="chat" class="tab active">
-      <div id="log"></div>
+      <div id="latestReply" class="latest-reply" role="status" aria-live="polite">Ready when you are.</div>
+      <details id="conversationDetails" class="conversation-details"><summary>View conversation history</summary><div id="log"></div></details>
       <form id="chatForm">
         <input id="chatInput" autocomplete="off" placeholder='Try: remember that I prefer dark mode   (type "help")'>
         <button>Send</button>

@@ -87,3 +87,35 @@ body[data-voice-state="processing"] .orb-core {animation:aurenRotate 2s linear i
 #chat .voice-controls {justify-content:center;}
 #sessionPanel[hidden] {display:none;}
 @media(max-width:520px) {.hero {padding:22px 4px 12px}.auren-orb {width:154px;height:154px}#chat #log {height:26vh}header {padding-top:12px}}
+
+/* v0.5 definitive one-screen presentation. Existing features remain accessible. */
+html { min-height:100%; }
+body { max-width:700px; min-height:100dvh; padding:20px 22px 48px; }
+header { padding:16px 0 4px; margin:0; }
+header h1 {font:500 1.15rem/1.3 Georgia,serif; letter-spacing:.42em; text-align:center;}
+header .sub {font: .78rem/1.5 system-ui,sans-serif; color:#a9a7a1;}
+.hero {min-height:370px; justify-content:center; padding:20px 0 16px; gap:15px;}
+.hero h2 {margin:8px 0 0;font-size:clamp(1.3rem,3vw,1.9rem);}
+.hero p {font: .9rem system-ui,sans-serif; color:#bfb3a0;}
+.auren-orb {width:220px;height:220px; border:1px solid #ae8951; background:radial-gradient(circle at 35% 25%,#f4daa4 0%,#c4a06a 17%,#73552f 50%,#1f1c1a 74%,#111720 100%); box-shadow:0 0 0 1px #d4ad683b,0 0 90px #d6b57b1c;}
+.orb-core {border-color:#e8cb9655;}
+.quick-controls button {font: .84rem system-ui,sans-serif; padding:11px 14px;}
+#advancedNav {justify-content:center; padding:15px; margin:10px 0; background:#171c23; border:1px solid #333b47; border-radius:14px;}
+#advancedNav[hidden] {display:none!important;}
+#advancedNav button {font-size:.86rem;}
+.tab:not(.active) {display:none!important;}
+#chat {display:flex; flex-direction:column; gap:12px;}
+.latest-reply {font: 1rem/1.65 system-ui,sans-serif; text-align:center; color:#e4d5b9; padding:12px 16px; max-width:570px; align-self:center; overflow-wrap:anywhere;}
+.conversation-details {order:3; color:#aaa; font: .85rem system-ui,sans-serif;}
+.conversation-details summary {cursor:pointer; text-align:center; padding:10px;}
+.conversation-details #log {height:260px; min-height:0; font-family:system-ui,sans-serif;}
+#chatForm {order:1; max-width:650px; width:100%; margin:0;}
+#chatForm input {min-width:0; border-radius:14px; padding:15px; font-family:system-ui,sans-serif;}
+#chatForm button {padding:12px 20px; border-radius:13px;}
+#chat .voice-controls {order:2; gap:8px; font: .78rem system-ui,sans-serif;}
+#chat .voice-controls #voiceStatus {text-align:center; flex-basis:100%;}
+#chat .hint:last-child {order:5;text-align:center; font: .72rem/1.6 system-ui,sans-serif;}
+#sessionPanel {order:4;}
+button:focus-visible, input:focus-visible, summary:focus-visible {outline:2px solid var(--gold);outline-offset:3px;}
+@media(max-width:520px){body{padding:14px 14px 38px;} .hero{min-height:330px;} .auren-orb{width:184px;height:184px;} .quick-controls{gap:7px;} #chatForm input{font-size:16px;} .latest-reply{font-size:.93rem;} }
+@media(prefers-reduced-motion:reduce){.auren-orb,.orb-core{animation:none!important; transition:none!important;}}
