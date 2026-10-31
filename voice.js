@@ -1,4 +1,4 @@
-// AUREN v0.9: foreground voice dialogue and optional wake phrase.
+// AUREN v1.1: improved foreground wake-phrase recognition and microphone lifecycle.
 // SpeechRecognition is browser-dependent and may process microphone audio online.
 // The user must explicitly start voice access at least once; no background/locked-screen listening.
 export function createVoice({ onTranscript, onStatus }) {
@@ -7,7 +7,31 @@ export function createVoice({ onTranscript, onStatus }) {
   let recognition = null, active = false, wakeMode = false, conversation = false;
   let speaking = false, responding = false, enabled = false, permittedStart = false;
   let token = 0, restartTimer = null, idleTimer = null, errorStop = false;
+  let desiredMode = 'off';
   const SILENCE_MS = 20000;
+  // Browser recognition frequently transcribes the invented name AUREN as a
+  // familiar name ("Orin", "Oren", "Aaron", "Lauren"). Match short wake
+  // phrases, not arbitrary mentions in the middle of other sentences.
+  const wakeNames = new Set(['auren','aurin','auron','oren','orin','orren','aaron','erin','lauren','loren','orion']);
+  function wordsOf(text) {
+    return text.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9]+/g,' ').trim().split(/\s+/).filter(Boolean);
+  }
+  function detectWake(text) {
+    const words = wordsOf(text);
+    if (!words.length) return null;
+    // "Hey, Auren" and speech-engine variations like "hey Lauren".
+    // Require the greeting for potentially common names to avoid false wakes.
+    const greeting = ['hey','hi','hello','okay','ok'];
+    const offset = greeting.includes(words[0]) ? 1 : 0;
+    const candidate = words[offset];
+    if (!wakeNames.has(candidate)) return null;
+    if (!offset && candidate !== 'auren' && candidate !== 'aurin' && candidate !== 'auron') return null;
+    // Without a greeting, only allow a standalone name or a short direct command.
+    if (!offset && words.length > 1 && !['can','could','please','tell','what','remind','remember','help','how','do'].includes(words[1])) return null;
+    return { command: words.slice(offset+1).join(' ') };
+  }
+
   const report = text => onStatus?.(text);
   const available = () => ({ listen: !!Recognition, speak: !!(synth && window.SpeechSynthesisUtterance) });
   const cancelTimers = () => { clearTimeout(restartTimer); clearTimeout(idleTimer); };
@@ -28,28 +52,29 @@ export function createVoice({ onTranscript, onStatus }) {
   }
   function listenSoon(delay = 200) {
     clearTimeout(restartTimer);
-    if ((!wakeMode && !conversation) || speaking || responding || !permittedStart || errorStop || active || !Recognition) return;
+    if (desiredMode === 'off' || (!wakeMode && !conversation) || speaking || responding || !permittedStart || errorStop || active || !Recognition) return;
     restartTimer = setTimeout(startEngine, delay);
   }
   function startEngine() {
-    if (active || speaking || responding || errorStop || (!conversation && !wakeMode) || !permittedStart) return;
+    if (desiredMode === 'off' || active || speaking || responding || errorStop || (!conversation && !wakeMode) || !permittedStart) return;
     const id = ++token;
     const r = new Recognition(); recognition = r;
-    r.lang = 'en-US'; r.continuous = false; r.interimResults = false; r.maxAlternatives = 1;
+    r.lang = 'en-US'; r.continuous = false; r.interimResults = false; r.maxAlternatives = 5;
     r.onresult = event => {
       if (id !== token) return;
-      const transcript = [...event.results].map(item => item[0]?.transcript || '').join(' ').trim();
+      const alternatives = [...event.results].flatMap(item => Array.from(item).map(a => a.transcript?.trim()).filter(Boolean));
+      const transcript = alternatives[0] || '';
       if (!transcript) return;
+      // Choose the first alternative containing a valid wake phrase.
+      const detected = alternatives.map(detectWake).find(Boolean);
       clearTimeout(idleTimer);
-      // Never listen while replying or speaking back.
       responding = true;
-      const match = transcript.match(/\b(?:hey\s+)?(?:auren|orin|orren|oren|lauren)\b[\s,!.?]*/i);
-      if (wakeMode && !conversation && !match) {
+      if (wakeMode && !conversation && !detected) {
         responding = false; listenSoon(350); return;
       }
-      if (match) {
+      if (detected) {
         conversation = true;
-        const command = transcript.slice(match.index + match[0].length).trim();
+        const command = detected.command;
         if (!command) {
           report('AUREN activated. Listening for your request…');
           speak('Yes, sir?');
@@ -64,7 +89,7 @@ export function createVoice({ onTranscript, onStatus }) {
     r.onerror = e => {
       if (id !== token) return;
       if (['not-allowed','service-not-allowed','audio-capture'].includes(e.error)) {
-        errorStop = true; wakeMode = false; conversation = false;
+        errorStop = true; wakeMode = false; conversation = false; desiredMode = 'off'; permittedStart = false;
         report('Microphone unavailable (' + e.error + '). Enable access and tap the orb again.');
       } else if (e.error !== 'aborted' && e.error !== 'no-speech') {
         report('Voice recognition issue: ' + e.error + '.');
@@ -108,21 +133,21 @@ export function createVoice({ onTranscript, onStatus }) {
   function startListening() {
     if (!Recognition) { report('Speech recognition is unsupported here.'); return false; }
     if (conversation && !wakeMode) { stopListening(); return false; }
-    errorStop = false; permittedStart = true; conversation = true;
+    errorStop = false; permittedStart = true; conversation = true; desiredMode = 'conversation';
     clearTimeout(idleTimer); if (speaking) stopSpeaking();
     scheduleIdle(); listenSoon(0);
     return true;
   }
   function stopListening() {
-    wakeMode = false; conversation = false; responding = false; permittedStart = false;
+    wakeMode = false; conversation = false; responding = false; permittedStart = false; desiredMode = 'off';
     cancelTimers(); ++token; abort();
-    report('Microphone stopped.'); return false;
+    report('Microphone off. Tap the orb to speak.'); return false;
   }
   function setWakeMode(value) {
     if (!value) { stopListening(); return false; }
     if (!Recognition) { report('Wake phrase unavailable in this browser.'); return false; }
     // This must be called by a user interaction to receive microphone permission.
-    errorStop = false; permittedStart = true; wakeMode = true; conversation = false;
+    errorStop = false; permittedStart = true; wakeMode = true; conversation = false; desiredMode = 'wake';
     cancelTimers(); if (speaking) stopSpeaking();
     listenSoon(0); report('Listening for “Hey Auren” while this page is active.');
     return true;
@@ -133,7 +158,7 @@ export function createVoice({ onTranscript, onStatus }) {
   });
   return {
     available, speak, stopSpeaking, startListening, stopListening, setWakeMode,
-    get listening() { return active || wakeMode || conversation; },
+    get listening() { return desiredMode !== 'off'; },
     get wakeMode() { return wakeMode; },
     get enabled() { return enabled; },
     setEnabled(v) { enabled = !!v; if (!enabled) stopSpeaking(); }

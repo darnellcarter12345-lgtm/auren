@@ -1,19 +1,11 @@
-AUREN v0.9 — Continuous Voice + Wake Phrase
+AUREN v1.1 — Better "Hey Auren" recognition + v1.0 microphone fix
 
-UPLOAD ONLY THESE TWO FILES to the ROOT of your EXISTING GitHub repository:
-  app.js
-  voice.js
+1. Extract this ZIP.
+2. Upload app.js and voice.js (NOT the ZIP) to the root of your existing GitHub auren repository.
+3. Commit changes and refresh the AUREN website once GitHub Pages publishes.
 
-Do NOT upload the ZIP itself. Do NOT delete your other files, particularly ai.js, db.js or memory.js.
-After the GitHub Pages deployment has a green check, refresh your website.
+Changes: More speech-to-text name alternatives; recognizes "Hey Auren", "Hey Orin", "Hey Oren", "Hey Lauren" and similar when recognition is active; avoids common-name triggers without a greeting. Includes the microphone-off and natural-greeting improvements from v1.0.
 
-WHAT IT DOES:
-- Tap the golden orb to start a voice conversation. AUREN will listen again after speaking, until about 20 seconds of quiet, or when you stop it.
-- Click Enable “Hey Auren” ONCE to authorize foreground wake-word mode. After that, saying “Hey Auren” (or variants recognized by browser transcription) activates a conversation. With wake mode on, silence returns to monitoring the wake phrase.
-- AUREN temporarily pauses microphone recognition while its own voice speaks, reducing feedback.
-- Browser speech recognition can stop unexpectedly; this implementation attempts to restart in the foreground, but browser support varies.
+A browser site CANNOT turn on a microphone by itself or reliably hear a wake phrase when the tab is closed, the phone is locked, or the user hasn't enabled wake mode. Click Enable "Hey Auren" once per page session and grant microphone access. Safari can suspend speech recognition.
 
-IMPORTANT LIMITS:
-No website can reliably begin microphone capture from absolutely nothing without any initial user permission/gesture; it cannot reliably hear wake words when closed, backgrounded, or phone locked.
-The free browser speech recognition may be unreliable, and audio may be handled by the browser's provider. This version does not change the AI brain or the speaking voice quality.
-Test first on desktop Safari, then iPhone. There is no guarantee continuous wake mode works on iPhone.
+AUREN uses browser speech recognition: exact wake-word reliability cannot be guaranteed. Validate in Safari and on your phone.

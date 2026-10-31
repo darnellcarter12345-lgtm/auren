@@ -26,18 +26,24 @@ let storageOk = false, sinceTrim = 0;
 const voice = createVoice({
   onTranscript: transcript => {
     $('chatInput').value = transcript;
-    $('micBtn').textContent = '🎙 Speak to AUREN';
-    $('micBtn').setAttribute('aria-pressed', 'false');
     return safe(send)(transcript);
   },
   onStatus: msg => {
     $('voiceStatus').textContent = msg;
-    if (!voice.listening) {
-      $('micBtn').textContent = '🎙 Speak to AUREN';
-      $('micBtn').setAttribute('aria-pressed', 'false');
-    }
+    // Derive appearance from the actual microphone mode, never a status phrase.
+    queueMicrotask(() => syncVoiceUI());
   }
 });
+function syncVoiceUI() {
+  const listening = voice.listening;
+  $('micBtn').textContent = listening ? '■ Stop listening' : '🎙 Speak to AUREN';
+  $('micBtn').setAttribute('aria-pressed', String(listening));
+  $('wakeBtn').textContent = voice.wakeMode ? '■ Stop “Hey Auren”' : 'Enable “Hey Auren”';
+  $('wakeBtn').setAttribute('aria-pressed', String(voice.wakeMode));
+  const message = $('voiceStatus').textContent;
+  $('heroState').textContent = listening ? message : (message.includes('unavailable') ? message : 'Tap the orb to speak');
+  document.body.dataset.voiceState = listening ? (/speaking/i.test(message) ? 'speaking' : 'listening') : 'idle';
+}
 const capabilities = voice.available();
 $('micBtn').disabled = !capabilities.listen;
 $('speakReplies').disabled = !capabilities.speak;
@@ -45,8 +51,7 @@ $('stopSpeech').disabled = !capabilities.speak;
 $('voiceStatus').textContent = capabilities.listen ? 'Tap the microphone to dictate a command.' : 'Microphone recognition unavailable in this browser; typing works.';
 $('micBtn').onclick = () => {
   const active = voice.startListening();
-  $('micBtn').textContent = active ? '■ Stop listening' : '🎙 Speak to AUREN';
-  $('micBtn').setAttribute('aria-pressed', String(active));
+  syncVoiceUI();
 };
 $('speakReplies').onchange = () => voice.setEnabled($('speakReplies').checked);
 $('stopSpeech').onclick = () => voice.stopSpeaking();
@@ -65,22 +70,15 @@ $('orbControl').onclick = () => {
 };
 $('testVoice').onclick = () => {
   voice.setEnabled(true); $('speakReplies').checked = true;
-  voice.speak('Good afternoon, sir. Auren at your service.');
+  voice.speak('Hello. I'm Auren. What would you like to do?');
 };
 $('wakeBtn').onclick = () => {
   const active = voice.setWakeMode(!voice.wakeMode);
-  $('wakeBtn').textContent = active ? '■ Stop “Hey Auren”' : 'Enable “Hey Auren”';
-  $('wakeBtn').setAttribute('aria-pressed', String(active));
   if (active) voice.setEnabled(true);
   $('speakReplies').checked = voice.enabled;
-  $('heroState').textContent = active ? 'Listening for “Hey Auren” (app must stay open)' : 'Tap the orb to speak';
-  document.body.dataset.voiceState = active ? 'listening' : 'idle';
+  syncVoiceUI();
 };
-const observer = new MutationObserver(() => {
-  const msg = $('voiceStatus').textContent;
-  $('heroState').textContent = msg;
-  document.body.dataset.voiceState = /speaking/i.test(msg) ? 'speaking' : /listening/i.test(msg) ? 'listening' : 'idle';
-});
+const observer = new MutationObserver(syncVoiceUI);
 observer.observe($('voiceStatus'), {childList:true,characterData:true,subtree:true});
 
 // ---------- status banner (works on small screens; errors stay until dismissed) ----------
@@ -225,7 +223,7 @@ $('chatForm').onsubmit = e => { e.preventDefault(); const v = $('chatInput').val
 
 async function loadHistory() {
   const msgs = (await getAll(STORES.messages)).filter(m => m.role === 'user' || m.role === 'auren').sort((a, b) => a.at.localeCompare(b.at));
-  if (!msgs.length) return addMessage('auren', 'Good day, sir. I am AUREN. My long-term memory is online; microphone dictation and speech are available in supported browsers, but full AI conversation is not built yet. Type "help" to see what I can do.');
+  if (!msgs.length) return addMessage('auren', 'I'm here when you need me. Tap the orb to talk, or open settings for your memories.');
   msgs.forEach(m => drawMessage(m));
 }
 
