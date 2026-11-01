@@ -1,3 +1,4 @@
+// AUREN v2.22 — category-aware places, quiet location controls, graceful fallback
 // AUREN v2.21 — complete-intent search and simple Maps choices
 // AUREN v2.20 — Maps return navigation, concise replies, responsive live captions
 // AUREN v2.19 — intent-first directions, immediate Maps popup, contextual responses
@@ -1626,8 +1627,8 @@ function locationOn(){
   aurenLocation={latitude:pos.coords.latitude,longitude:pos.coords.longitude,accuracy:pos.coords.accuracy};
   locationPaint();
   const request=pendingLocationIntent;pendingLocationIntent=null;
-  if(request){void addMessage('auren',"Location is enabled. I've prepared a map search based on your approximate location. You can open it using the button below.");showNearbyResults(request);}
-  else {void addMessage('auren','Location is on for this tab. Ask me to find places near you, or say turn location off at any time.');}
+  if(request){showNearbyResults(request);}
+  else { locationStatus.textContent='Location enabled for this tab.'; }
  },err=>{
   if(id!==locationRequestSequence)return;
   locationOff();
@@ -1704,7 +1705,7 @@ async function send(text) {
   if(personalPendingInterest && /^(?:yes|yeah|sure|save it|remember it|please do|go ahead|no|no thanks|not now|nah|skip)[.! ]*$/i.test(clean)){await addMessage('user',clean);if(await personalInterestConfirmation(clean))return;}
   if(locationOffCommand(clean)){
    locationOff();await addMessage('user',clean);
-   await addMessage('auren','Location is OFF. I cleared the coordinates AUREN was holding. You can also revoke Safari’s website permission in browser settings.');return;
+   await addMessage('auren','Location turned off.');return;
   }
   if(pendingLocationIntent&&/^(?:no|no thanks|not now|cancel|don't|do not|nah)[.! ]*$/i.test(clean)){
    pendingLocationIntent=null;locationPermissionBar.hidden=true;await addMessage('user',clean);
@@ -2247,8 +2248,16 @@ aurenPlaces = (() => {
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&mapOverlay.style.display!=='none')closePopup();});
   function showPopup(message,places=[]){
     mapText.textContent=message;mapChoices.replaceChildren();mapOverlay.style.display='flex';
+    if(places.length){
+      const list=document.createElement('div');list.style.cssText='display:grid;gap:8px;margin:8px 0 12px';
+      const label=document.createElement('strong');label.textContent='Nearby suggestions';list.append(label);
+      for(const place of places.slice(0,5)){
+        const button=document.createElement('button');button.type='button';button.textContent=place.name+' · '+place.km.toFixed(1)+' km · Directions';
+        button.style.cssText='text-align:left;padding:10px;border:1px solid #a98a54;border-radius:10px';button.onclick=()=>openMap(mapLink(place));list.append(button);
+      }
+      mapChoices.append(list);
+    }
     popupButton('Nearby places',()=>{
-      closePopup();
       if(results.length){displayResults(false);return;}
       if(coords){void lookup();return;}
       if(locationApproved&&aurenLocation){coords={lat:aurenLocation.latitude,lon:aurenLocation.longitude};void lookup();return;}
@@ -2271,6 +2280,15 @@ aurenPlaces = (() => {
     wrap.append(link);$('log')?.append(wrap);if($('log'))$('log').scrollTop=$('log').scrollHeight;
     return url;
   }
+  function normalizePlaceQuery(text){
+    let q=String(text||'').trim().replace(/^(?:hey\s+)?auren[,.! ]*/i,'').replace(/^(?:(?:please|can you|could you|would you)\s+)/i,'').replace(/[.!?]+$/,'').trim();
+    const food=/\b(?:places? to eat|somewhere to eat|restaurants?|food|dinner|lunch|breakfast|brunch|where (?:can|should) i eat)\b/i;
+    const types=[[/\b(?:coffee shops?|cafes?|coffee)\b/i,'coffee shops'],[/\b(?:parks?|hiking trails?|outdoors|nature)\b/i,'parks'],[/\b(?:gyms?|fitness centers?|workout places?)\b/i,'gyms'],[/\b(?:museums?|art galleries?)\b/i,'museums'],[/\b(?:libraries|library)\b/i,'libraries'],[/\b(?:movie theaters?|cinemas?|movies)\b/i,'movie theaters'],[/\b(?:stores?|shopping|shops?|malls?)\b/i,'stores'],[/\b(?:gas stations?|fuel stations?)\b/i,'gas stations'],[/\b(?:pharmac(?:y|ies)|drugstores?)\b/i,'pharmacies'],[/\b(?:hotels?|places? to stay)\b/i,'hotels'],[/\b(?:barbers?|haircuts?|salons?)\b/i,'barbers'],[/\b(?:car washes?|auto detailing)\b/i,'car washes'],[/\b(?:mechanics?|auto repairs?)\b/i,'mechanics'],[/\b(?:things to do|somewhere to go|places? to visit|fun activities)\b/i,'things to do']];
+    if(food.test(q))return 'restaurants';
+    for(const [pattern,category] of types)if(pattern.test(q))return category;
+    q=q.replace(/^(?:find|locate|look for|search for|show|suggest|recommend|take|navigate|go|get|give)\s+(?:me\s+)?(?:directions\s+to\s+|to\s+)?/i,'').replace(/^(?:a|an|the|some|nearby|closest|nearest|good|best)\s+/i,'').replace(/\b(?:near me|nearby|around me|in my area|closest to me)\b/gi,'').trim();
+    return q || 'places to visit';
+  }
   function mapsQuery(){return pending+(coords?' near '+coords.lat.toFixed(5)+','+coords.lon.toFixed(5):' near me');}
   function classifyQuery(input){
     const q=input.toLowerCase();
@@ -2282,12 +2300,12 @@ aurenPlaces = (() => {
   function selectors(q){const {category,branded}=classifyQuery(q);if(branded)return {regex:'["name"~"'+branded.replace(/'/g,"'?").replace(/\./g,'.')+'",i]',radius:8500};
     const rules={eat:'["amenity"~"restaurant|fast_food|cafe"]',coffee:'["amenity"="cafe"]',park:'["leisure"~"park|nature_reserve|garden"]',gym:'["leisure"="fitness_centre"]',cinema:'["amenity"="cinema"]',museum:'["tourism"~"museum|gallery|attraction"]',library:'["amenity"="library"]',activity:'["tourism"~"attraction|museum|gallery|viewpoint"]',gas:'["amenity"="fuel"]',pharmacy:'["amenity"="pharmacy"]',hotel:'["tourism"~"hotel|motel|guest_house"]',carwash:'["amenity"="car_wash"]',mechanic:'["shop"="car_repair"]',shop:'["shop"]',salon:'["shop"~"hairdresser|beauty"]'};const raw=String(q||'').trim();const named=!/\b(?:restaurant|eat|dinner|lunch|breakfast|food|coffee|cafe|park|gym|museum|library|bowling|arcade|entertainment|fun|things to do|where should|where can|gas|pharmacy|hotel|car wash|mechanic|store|shop|mall|buy|grocery|barber|haircut|salon)\b/i.test(raw) && /^[a-z0-9 &.'-]{2,70}$/i.test(raw);if(named){const safe=raw.replace(/\./g,'\\.').replace(/'/g,"'?");return {regex:'["name"~"'+safe+'",i]',radius:9000};}return {regex:rules[category]||rules.activity,radius:5000};}
   function displayResults(announce=false){
-    phase='results';showPopup(results.length?'Here are nearby locations I found. Choose one or open the full search in Google Maps.':'I could not verify nearby listings. You can still open a Google Maps search.',results);show('Nearby places',results.length?'Public OpenStreetMap listings. Distances are straight-line estimates; hours, ratings and availability are not verified.':'No matching places were returned. Try another category or open Google Maps.');
+    phase='results';showPopup(results.length?'Here are nearby locations I found. Choose one or open the full search in Google Maps.':'More options are available in Google Maps.',results);show('Nearby places',results.length?'Public OpenStreetMap listings. Distances are straight-line estimates; hours, ratings and availability are not verified.':'No verified listings returned for this category. Try Google Maps for more choices.');
     for(const r of results){const p=document.createElement('p');p.style.margin='10px 0';const strong=document.createElement('strong');strong.textContent=r.name;const note=document.createElement('span');note.textContent=' · '+r.km.toFixed(1)+' km away'+(r.address?' · '+r.address:'');const b=document.createElement('button');b.type='button';b.textContent='View in Google Maps';b.onclick=()=>openMap(mapLink(r));p.append(strong,note,document.createTextNode(' '),b);content.append(p);}
     action('Search all on Google Maps',()=>{const q=mapsQuery();openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q));});
     action('Repeat places',()=>displayResults(true));action('Finish search',finish);
     if(announce){
-      void addMessage('auren',results.length?`I found ${results.length} nearby places, including ${results.slice(0,3).map(x=>x.name).join(', ')}. Distances are approximate. I've provided Google Maps links in Text Chat.`:'I could not find matching public listings. You can still see search options in Google Maps.');
+      void addMessage('auren',results.length?`Here are ${results.length} nearby options: ${results.slice(0,3).map(x=>x.name).join(', ')}. Choose one on screen for directions.`:'I could not find matching public listings. You can still see search options in Google Maps.');
       for(const r of results.slice(0,3))appendMapsLink(r.lat+','+r.lon+' '+r.name,'View '+r.name+' in Google Maps');
       appendMapsLink(mapsQuery(),'See all options in Google Maps');
     }
@@ -2302,18 +2320,22 @@ aurenPlaces = (() => {
       const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),16000);let response;
       try{response=await fetch(endpoint,{method:'POST',body:new URLSearchParams({data:query}),signal:controller.signal});}finally{clearTimeout(timer);}
       if(!response.ok)throw Error('Service unavailable');const data=await response.json();if(seq!==requestId)return;
-      const seen=new Set();results=(data.elements||[]).map(e=>{const t=e.tags||{},lat=e.lat??e.center?.lat,lon=e.lon??e.center?.lon;const name=t.name||t.brand||'',address=[t['addr:housenumber'],t['addr:street'],t['addr:city']].filter(Boolean).join(' ');return {name,address,lat,lon,km:Number.isFinite(lat)&&Number.isFinite(lon)?distanceKm(coords.lat,coords.lon,lat,lon):Infinity};}).filter(r=>r.name&&Number.isFinite(r.km)).sort((a,b)=>a.km-b.km).filter(r=>{const key=r.name.toLowerCase()+'-'+Math.round(r.lat*1000)+'-'+Math.round(r.lon*1000);if(seen.has(key))return false;seen.add(key);return true;}).slice(0,6);
+      const seen=new Set();results=(data.elements||[]).map(e=>{const t=e.tags||{},lat=e.lat??e.center?.lat,lon=e.lon??e.center?.lon;const name=t.name||t.brand||'',address=[t['addr:housenumber'],t['addr:street'],t['addr:city']].filter(Boolean).join(' ');return {name,address,lat,lon,km:Number.isFinite(lat)&&Number.isFinite(lon)?distanceKm(coords.lat,coords.lon,lat,lon):Infinity};}).filter(r=>r.name&&Number.isFinite(r.km)).sort((a,b)=>a.km-b.km).filter(r=>{const key=r.name.toLowerCase()+'-'+Math.round(r.lat*1000)+'-'+Math.round(r.lon*1000);if(seen.has(key))return false;seen.add(key);return true;}).slice(0,8);
       displayResults(true);return;
     }catch(err){if(seq!==requestId)return;}}
-    show('Live lookup unavailable','The free map database is unavailable right now. The Google Maps option is ready below.');phase='results';showPopup('The free listings service is unavailable. You can still open the requested Google Maps search.');action('Search Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(pending+' near '+coords.lat+','+coords.lon)));action('Finish search',finish);
-    void addMessage('auren','The free nearby listings service is unavailable. Here is a Google Maps search for your requested place.');appendMapsLink(mapsQuery());
+    // Service failure is an implementation detail, not something to read aloud.
+    // The Google Maps button remains available even when external listings time out.
+    phase='results';results=[];showPopup('Open Google Maps to browse '+pending+' near you.');
+    show('Search options','Google Maps can show more places for this search.');
+    action('Open Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
+    action('Finish search',finish);appendMapsLink(mapsQuery());
   }
   function enable(){if(!navigator.geolocation){show('Location unavailable','Your browser does not support location sharing.');return;}const seq=++requestId;phase='locating';show('Allow location','Safari may ask for access. Your location will only be used for this nearby search.');
-    navigator.geolocation.getCurrentPosition(pos=>{if(seq!==requestId)return;coords={lat:pos.coords.latitude,lon:pos.coords.longitude};void lookup();},()=>{if(seq!==requestId)return;phase='consent';show('Location not available','Check your Safari location permission, or search manually in Google Maps.');action('Try again',enable);action('Cancel',clear);},{enableHighAccuracy:false,maximumAge:0,timeout:12000});}
+    navigator.geolocation.getCurrentPosition(pos=>{if(seq!==requestId)return;coords={lat:pos.coords.latitude,lon:pos.coords.longitude};void lookup();},()=>{if(seq!==requestId)return;phase='consent';show('Choose your search','Location was not available. Google Maps can still search for the category.');action('Try again',enable);action('Cancel',clear);},{enableHighAccuracy:false,maximumAge:0,timeout:12000});}
   function request(text){
-    requestId++;pending=destinationFrom(text)||namedPlaceSearch(text)||text;coords=null;results=[];
+    requestId++;pending=normalizePlaceQuery(destinationFrom(text)||namedPlaceSearch(text)||text);coords=null;results=[];
     // An optional working Maps search should exist even if the free lookup fails.
-    appendMapsLink(pending+' near me','Search '+pending.slice(0,65)+' in Google Maps');
+    // The popup provides the primary Maps action; no unsolicited chat link.
     if(locationApproved&&aurenLocation){
       coords={lat:aurenLocation.latitude,lon:aurenLocation.longitude};
       phase='consent';showPopup('Choose how you want to search for '+pending+'.');return;
