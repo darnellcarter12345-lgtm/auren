@@ -1,4 +1,4 @@
-// AUREN v2.9.6 — unified context, conversation continuity and planner awareness
+// AUREN v2.9.7 — resumable interactive briefings and proactive planner intelligence
 // AUREN — js/app.js
 // Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
 // v0.2: status banner for storage problems, session panel, privacy controls, safe backup import.
@@ -190,11 +190,8 @@ async function activateScreen(screen) {
   if (!target || !target.classList.contains('tab')) return;
   // Screen navigation is always silent. Cancel any reply still playing from
   // the previous screen; never turn on TTS or the microphone from a tab click.
-  if (voice.speaking) voice.stopSpeaking();
-  clearInterval(captionTimer);
-  captionTimer = null;
-  captionSpeaking = false;
-  showCaption('', '');
+  if (!briefingPlayer.active && voice.speaking) voice.stopSpeaking();
+  if(!briefingPlayer.active){clearInterval(captionTimer);captionTimer=null;captionSpeaking=false;showCaption('', '');}
   if (screen !== 'settings') lastNonSettingsScreen = screen;
   document.querySelectorAll('nav button, .tab').forEach(node => node.classList.remove('active'));
   target.classList.add('active');
@@ -231,6 +228,7 @@ function activateOrb(event) {
     return;
   }
   try {
+    if (briefingPlayer.active) briefingPlayer.pause();
     if (capabilities.speak) { voice.primeAudio(); voice.setEnabled(true); $('speakReplies').checked = true; }
     if (voice.speaking) {
       // Stop the reply first, then listen for the correction on this same user gesture.
@@ -697,18 +695,108 @@ $('planForm').onsubmit=e=>{
   // Manual planner saves directly and silently. Voice-driven scheduling is
   // handled separately by the conversation planner, with no interference.
   const event={id:uid(),title:title.slice(0,120),date,time,duration:60};
+  const overlapping = conflictingEvents(event);
   plans.push(event);
   try{
     savePlans();
     pendingPlan=null;
     $('planTitle').value='';
     renderDay();
-    showStatus('Appointment saved.', 'ok');
+    showStatus(overlapping.length ? `Appointment saved. Note: it overlaps ${overlapping[0].title}${overlapping.length>1?' and '+(overlapping.length-1)+' more':''}.` : 'Appointment saved.', overlapping.length ? 'info':'ok');
   }catch(error){
     plans=plans.filter(item=>item.id!==event.id);
     showStatus('Could not save appointment: '+(error?.message||'storage unavailable'), 'error');
   }
 };
+// Briefing playback is independent of the currently visible tab.
+// Progress advances only after a segment actually finishes speaking.
+// If the browser fails to deliver speech boundary events, we resume from
+// the beginning of the last unfinished segment rather than skipping content.
+const briefingPlayer = (() => {
+  let segments = [], position = 0, playing = false, generation = 0;
+  let questionPending = false;
+  const split = text => (String(text).match(/[^.!?]+(?:[.!?]+|$)/g) || [String(text)])
+    .map(x => x.trim()).filter(Boolean).reduce((chunks, sentence) => {
+      if (chunks.length && chunks[chunks.length-1].length + sentence.length < 175)
+        chunks[chunks.length-1] += ' ' + sentence;
+      else chunks.push(sentence);
+      return chunks;
+    }, []);
+  const controls = document.createElement('div');
+  controls.className = 'row';
+  controls.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:12px';
+  const pauseButton = document.createElement('button');
+  const resumeButton = document.createElement('button');
+  const repeatButton = document.createElement('button');
+  for (const btn of [pauseButton,resumeButton,repeatButton]) btn.type='button';
+  pauseButton.textContent='Pause briefing';
+  resumeButton.textContent='Resume briefing';
+  repeatButton.textContent='Replay briefing';
+  resumeButton.className=repeatButton.className='ghost';
+  const note = document.createElement('small');
+  note.setAttribute('role','status');
+  note.style.display='block';
+  note.style.marginTop='5px';
+  controls.append(pauseButton,resumeButton,repeatButton);
+  const target=$('playBriefing');
+  if(target?.parentNode){ target.insertAdjacentElement('afterend',controls);controls.insertAdjacentElement('afterend',note); }
+  function render(){
+    controls.hidden=!segments.length;
+    pauseButton.hidden=!playing;
+    resumeButton.hidden=playing || position>=segments.length;
+    note.textContent=!segments.length?'':playing?'Briefing playing — you can navigate elsewhere or interrupt it.':
+      position>=segments.length?'Briefing finished. Replay whenever you like.':
+      `Briefing paused at part ${position+1} of ${segments.length}.`;
+  }
+  const state = () => ({active:playing, available:!!segments.length, paused:!!segments.length&&!playing&&position<segments.length});
+  function pause(){
+    if (!playing) return;
+    playing=false; generation++;
+    voice.stopSpeaking(); render();
+  }
+  function speakPart(version){
+    if(!playing || version!==generation) return;
+    if(position>=segments.length){playing=false;render();return;}
+    const part=segments[position];
+    voice.speak(part,{onFinished:()=>{
+      if(!playing || generation!==version)return;
+      position++; render();
+      speakPart(version);
+    }});
+  }
+  function resume(){
+    if(!segments.length)return false;
+    if(position>=segments.length)position=0;
+    if(playing)return true;
+    voice.primeAudio(); voice.setEnabled(true);
+    playing=true; const version=++generation;
+    render(); speakPart(version);
+    return true;
+  }
+  function start(text){
+    if(playing)pause();
+    segments=split(text);position=0;questionPending=false;
+    render();resume();
+  }
+  function replay(){if(playing)pause(); position=0;resume();}
+  function ask(text){
+    if(!segments.length)return false;
+    const q=String(text).trim();
+    if(/^(?:resume|continue|carry on|go on|where (?:were|did) we (?:leave off|stop)|finish (?:the|my) briefing|continue (?:the|my) briefing)(?: please| with (?:the|my) briefing)?[.!?]*$/i.test(q)){
+      resume();return 'Certainly. Continuing the briefing from where we stopped.';
+    }
+    if(/^(?:repeat|replay|restart|start over|from the beginning)(?: (?:the|my) briefing)?[.!?]*$/i.test(q)){
+      replay();return 'Certainly. Starting the briefing again.';
+    }
+    if(/^(?:pause|hold on|stop)(?: (?:the|my) briefing)?[.!?]*$/i.test(q)){
+      pause();return 'Briefing paused. Say resume briefing whenever you are ready.';
+    }
+    return false;
+  }
+  pauseButton.onclick=pause;resumeButton.onclick=resume;repeatButton.onclick=replay;
+  render();
+  return {start,pause,resume,replay,ask,get active(){return playing;},get available(){return segments.length>0;},get position(){return position;}};
+})();
 function prepareSpokenReview(){
   // A briefing click requests a spoken briefing; it must not open a second
   // microphone session at the same time (especially unreliable on iPhone).
@@ -740,7 +828,8 @@ $('playBriefing').onclick=async()=>{
   const weather=result?.success?' '+result.spoken:'';
   const briefingText = `Good morning. ${summary}${extra}${weather}`;
   latestBriefingContext = { text: briefingText.slice(0, 1200), at: Date.now() };
-  await addMessage('auren', briefingText);
+  await addMessage('auren', briefingText, {silent:true});
+  briefingPlayer.start(briefingText);
 };
 function proposedDay(text){return parseDateIntent(text)||$('planDate').value||localDate();}
 function timeFromText(text){
@@ -905,7 +994,7 @@ async function trimHistory() {
 async function addMessage(role, text, opts = {}) {
   const rec = { id: uid(), role, text, at: new Date().toISOString() };
   drawMessage(rec, opts);
-  if (role === 'auren' && !opts.err) voice.speak(text);
+  if (role === 'auren' && !opts.err && !opts.silent) voice.speak(text);
   await persistMessage(rec, opts);
 }
 
@@ -967,7 +1056,7 @@ async function askWithMemory(question) {
   const projects = (await Proj.listProjects()).filter(p => !p.sensitive)
     .slice(0, 8).map(p => `${p.name.slice(0,90)} | ${p.status} | ${p.progress}%`);
   const isFollowup = /^(?:what about|tell me more|why|how|the (?:first|second|third)|first|second|third|explain|and |what did you mean|what was that)/i.test(question.trim());
-  const briefing = isFollowup && latestBriefingContext && Date.now()-latestBriefingContext.at < 45*60*1000
+  const briefing = (isFollowup || /\b(?:briefing|earlier|mentioned|that story|that part|those plans)\b/i.test(question)) && latestBriefingContext && Date.now()-latestBriefingContext.at < 45*60*1000
     ? latestBriefingContext.text : '';
   const deviceContext = [
     `Current local date/time: ${new Date().toLocaleString()} (${localTimeZone()})`,
@@ -1083,6 +1172,13 @@ let recentWeatherScope = null;
 let recentWeatherAt = 0;
 let recentWeatherHour = null;
 async function send(text) {
+  if(briefingPlayer.active) briefingPlayer.pause();
+  const briefingCommand=briefingPlayer.ask(text);
+  if(briefingCommand){
+    await addMessage('user',text);
+    await addMessage('auren',briefingCommand,{silent:true});
+    return;
+  }
   // Preserve the user's Read replies aloud preference. Text messages must not
   // turn speech on automatically or override the user's explicit setting.
   // Voice initiated from the orb still enables speech in the orb handler.
