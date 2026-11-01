@@ -901,7 +901,9 @@ let recentWeatherScope = null;
 let recentWeatherAt = 0;
 let recentWeatherHour = null;
 async function send(text) {
-  if (voice.available().speak && !voice.enabled) { voice.setEnabled(true); $('speakReplies').checked = true; }
+  // Preserve the user's Read replies aloud preference. Text messages must not
+  // turn speech on automatically or override the user's explicit setting.
+  // Voice initiated from the orb still enables speech in the orb handler.
   await addMessage('user', text, { ephemeral: isSessionNote(text) });
   try {
     // Explicit preferences and schedule insights are device-local, and never consume AI credits.

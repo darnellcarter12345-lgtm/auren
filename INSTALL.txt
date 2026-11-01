@@ -1,3 +1,11 @@
-AUREN v2.6.5 — Readable Live Text
-Replace ONLY app.js and styles.css in the GitHub repository.
-Keep other files unchanged. Commit both, reload Safari.
+AUREN v2.8.1 Step 1 — Voice preference reliability
+
+1. Back up your current GitHub app.js.
+2. Replace only app.js with this complete file.
+3. Commit and refresh AUREN.
+4. In Settings, uncheck Read replies aloud. Type a message. AUREN should answer without speaking.
+5. Check Read replies aloud and type a message. AUREN should speak.
+6. Tap the orb and ask something. The voice path should still work.
+
+Do not replace voice.js, weather.js, styles.css, or your Cloudflare Worker.
+Other public-release milestones remain outstanding.
