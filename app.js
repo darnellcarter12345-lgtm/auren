@@ -1,4 +1,4 @@
-// AUREN v2.11.0 — accurate schedules, live captions, optional check-ins and clock awareness
+// AUREN v2.11.1 — topic-switch patience, simplified orb status and subtle Central clock
 // AUREN — js/app.js
 // Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
 // v0.2: status banner for storage problems, session panel, privacy controls, safe backup import.
@@ -55,12 +55,22 @@ const speechPanel=document.createElement('section');
 speechPanel.id='aurenSpeechPanel';
 speechPanel.setAttribute('aria-label','Live voice conversation');
 speechPanel.style.cssText='box-sizing:border-box;width:min(92%,680px);margin:14px auto 12px;padding:14px 18px;border:1px solid rgba(199,168,104,.38);border-radius:15px;background:rgba(25,27,32,.92);color:#e6d5af;line-height:1.55;text-align:left;min-height:66px;max-height:158px;overflow-y:auto;overflow-wrap:anywhere;font-size:15px;';
-const speechPanelTitle=document.createElement('strong');speechPanelTitle.textContent='LIVE CONVERSATION';speechPanelTitle.style.cssText='display:block;font-size:10px;letter-spacing:2px;opacity:.75;margin-bottom:5px;';
+const speechPanelTitle=document.createElement('strong');speechPanelTitle.textContent=''; speechPanelTitle.hidden=true;speechPanelTitle.style.cssText='display:block;font-size:10px;letter-spacing:2px;opacity:.75;margin-bottom:5px;';
 const speechPanelText=document.createElement('div');speechPanelText.textContent='Your conversation appears here when speaking.';
 const chicagoClock=document.createElement('div');chicagoClock.style.cssText='font-size:11px;opacity:.75;margin-top:8px;';
 const paintChicagoClock=()=>{chicagoClock.textContent='Dallas · '+new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',weekday:'short',hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date());};
 paintChicagoClock();setInterval(paintChicagoClock,30000);
-speechPanel.append(speechPanelTitle,speechPanelText,chicagoClock);
+speechPanel.append(speechPanelTitle,speechPanelText);
+// Keep time as quiet metadata beneath the wake instruction, not a large live badge.
+const wakeInstruction=$('wakeHint');
+const subtleCentralTime=document.createElement('p');
+subtleCentralTime.id='aurenSubtleClock';
+subtleCentralTime.style.cssText='font-size:11px;letter-spacing:.07em;opacity:.55;margin:5px auto 0;text-align:center;color:#c9b78e;';
+const updateSubtleClock=()=>{subtleCentralTime.textContent='Central time · '+new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',weekday:'short',hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date());};
+updateSubtleClock();setInterval(updateSubtleClock,30000);
+wakeInstruction?.insertAdjacentElement('afterend',subtleCentralTime);
+// The clock stays visible as metadata, even while voice is active.
+
 
 let captionTimer = null;
 let captionClear = null;
@@ -175,6 +185,7 @@ function syncVoiceUI() {
   $('heroState').textContent = speaking ? 'AUREN is speaking' : thinking ? 'AUREN is thinking' : voice.awake ? 'Listening' : 'AUREN is asleep';
   $('heroState').hidden = state === 'idle';
   $('wakeHint').hidden = state !== 'idle';
+  subtleCentralTime.hidden = state !== 'idle';
   if (state === 'idle') $('aurenHeadline').textContent = 'At your service.';
   else if (state === 'listening') $('aurenHeadline').textContent = 'I’m listening.';
   else if (state === 'processing') $('aurenHeadline').textContent = 'One moment.';
@@ -1409,6 +1420,15 @@ async function send(text) {
   // Voice initiated from the orb still enables speech in the orb handler.
   await addMessage('user', text, { ephemeral: isSessionNote(text) });
   try {
+    // A topic change is an invitation to listen, NOT a request to list projects,
+    // memories or previous subjects. Retire unfinished topic-specific offers.
+    const topicChange=/^(?:(?:auren[, ]+)?(?:i(?:'d| would)? (?:like|want|need) to (?:talk|speak|chat) (?:about|on) (?:something else|another (?:topic|thing)|something different)|(?:can|could) we (?:talk about|discuss|switch to) (?:something else|something different|another topic)|(?:let's|lets) (?:change|switch) (?:the )?(?:subject|topic)|(?:new|different) (?:topic|subject)|(?:i want to )?change the subject|(?:i have|i've got) something else (?:to (?:talk about|discuss)|on my mind)))[.!?]*$/i.test(text.trim());
+    if (topicChange) {
+      pendingPlan=null;pendingReminder=null;planClarification=null;
+      planningOffer=null;pendingWeatherOffer=null;
+      await addMessage('auren','Of course. What would you like to talk about?');
+      return;
+    }
     // A request for general help is not a continuation of a previously discussed
     // appointment, walk, project, or weather forecast. Handle it before any
     // pending-topic, AI-memory or planner routing can latch onto stale context.
