@@ -1,0 +1,10 @@
+{
+  "name": "auren-ai",
+  "main": "worker.js",
+  "compatibility_date": "2026-10-01",
+  "ai": { "binding": "AI" },
+  "durable_objects": {
+    "bindings": [{ "name": "BUDGET", "class_name": "RequestBudget" }]
+  },
+  "migrations": [{ "tag": "v1-budget", "new_sqlite_classes": ["RequestBudget"] }]
+}
