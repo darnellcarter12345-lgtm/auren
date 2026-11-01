@@ -101,29 +101,31 @@ function clearCaption(delay = 1500) {
   }, delay);
 }
 function voiceCaptionSpoken(text) {
-  // voice.js invokes onSpoken both at speech start and speech end.
+  // The voice engine signals start and end. Show the first sentence immediately
+  // and advance full sentences quickly instead of slowly revealing two words.
   if (captionSpeaking) {
     captionSpeaking = false;
-    clearInterval(captionTimer);
+    clearTimeout(captionTimer);
     captionTimer = null;
-    clearCaption(1400);
-    // Restore the home screen to its upcoming reminder or appointment
-    // once AUREN finishes a spoken reply; chat history remains intact.
-    homeMessageUntil = Date.now() + 1700;
-    setTimeout(() => { if (!captionSpeaking) renderUpNext(); }, 1800);
+    clearCaption(1000);
+    homeMessageUntil = Date.now() + 1100;
+    setTimeout(() => { if (!captionSpeaking) renderUpNext(); }, 1200);
     return;
   }
   captionSpeaking = true;
-  clearInterval(captionTimer);
-  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
-  let position = Math.min(words.length, 8);
-  const paint = () => showCaption(words.slice(0, position).join(' '), 'AUREN');
-  paint();
-  captionTimer = setInterval(() => {
-    position = Math.min(words.length, position + 2);
-    paint();
-    if (position >= words.length) { clearInterval(captionTimer); captionTimer = null; }
-  }, 900);
+  clearTimeout(captionTimer);
+  const sentences = (String(text || '').match(/[^.!?\n]+(?:[.!?]+|$)/g) || [String(text || '')])
+    .map(s => s.trim()).filter(Boolean);
+  let index = 0;
+  const next = () => {
+    if (!captionSpeaking || !sentences.length) return;
+    showCaption(sentences[index], 'AUREN');
+    if (index < sentences.length - 1) {
+      const ms = Math.max(650, Math.min(1900, sentences[index].length * 17));
+      captionTimer = setTimeout(() => { index++; next(); }, ms);
+    }
+  };
+  next();
 }
 const voice = createVoice({
   onInterim: transcript => {
@@ -2156,6 +2158,17 @@ aurenPlaces = (() => {
   const done=/^(?:done|finished|i(?:'m| am) done|that's all|end search|close results|stop searching)[.!? ]*$/i;
   const repeat=/^(?:repeat|repeat that|say that again|show (?:them|those|the places|results) again|what were the places)[.!? ]*$/i;
   const broadPlaceIntent=/\b(?:find|show|suggest|recommend|search|look for|looking for|take me to|i want|i need|could use|want to find)\b[\s\S]{0,80}\b(?:place(?:s)?|somewhere|restaurant(?:s)?|eat|food|dinner|lunch|breakfast|coffee|cafe|shop(?:ping)?|store(?:s)?|park(?:s)?|gym(?:s)?|museum(?:s)?|library|barber|salon|hotel|gas station|car wash|mechanic|movie|theater|arcade|bowling|pharmacy|mcdonald'?s|starbucks|walmart|target)\b|\b(?:anything (?:fun )?to do|what(?:'s| is) (?:around|near) me|something to do|somewhere to go|places around here|where to go|places (?:for|to) (?:eat|visit|shop))\b/i;
+  // Understand requests for any named destination, not just a preset brand list.
+  // Only route explicit navigation phrasing; normal questions stay with the AI.
+  const navigationIntent=/^(?:(?:hey\s+)?auren[,! ]*)?(?:(?:please|can you|could you|would you)\s+)?(?:take me to|navigate (?:me )?to|give me directions to|directions to|route me to|show me how to get to|bring up maps for)\s+(.{2,120})[.!?]*$/i;
+  function destinationFrom(text) {
+    const match=String(text||'').trim().match(navigationIntent);
+    if (!match) return '';
+    const dest=match[1].trim().replace(/[.!?]+$/,'').trim();
+    // These are interface actions, not destinations.
+    if (/^(?:settings|text chat|history|home|the home screen|my schedule|my calendar)$/i.test(dest)) return '';
+    return dest;
+  }
   const placeIntent=/\b(?:where (?:should|can|could) (?:i|we) (?:go|eat|shop|visit)|(?:find|show|suggest|recommend|look up|search for)\s+(?:me\s+)?(?:some\s+|a\s+|an\s+|the\s+|nearby\s+|closest\s+|good\s+|best\s+)*(?:places?|locations?|spots?|things to do|restaurants?|food|cafes?|coffee shops?|mcdonald'?s|chick.fil.a|starbucks|parks?|gyms?|stores?|shops?|museums?|libraries|theaters?|cinemas?|bowling|hiking|pharmacies|gas stations?|hotels?|barbers?|salons?|car washes?|mechanics?|dealerships?|bookstores?|arcades?|grocery stores?|supermarkets?|walmart|target)|(?:near me|nearby|closest to me|around me|in my area))\b/i;
   const panel=document.createElement('section');panel.id='aurenSmartPlacesV215';panel.className='card';panel.style.cssText='margin:12px auto;width:min(92%,680px);padding:14px;border:1px solid rgba(199,168,104,.38);border-radius:14px;background:#191b20;color:#ebd9b2;display:none';
   const heading=document.createElement('strong'), content=document.createElement('div'), actions=document.createElement('div');actions.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-top:12px';panel.append(heading,content,actions);
@@ -2207,7 +2220,7 @@ aurenPlaces = (() => {
     return {category,branded};
   }
   function selectors(q){const {category,branded}=classifyQuery(q);if(branded)return {regex:'["name"~"'+branded.replace(/'/g,"'?").replace(/\./g,'.')+'",i]',radius:8500};
-    const rules={eat:'["amenity"~"restaurant|fast_food|cafe"]',coffee:'["amenity"="cafe"]',park:'["leisure"~"park|nature_reserve|garden"]',gym:'["leisure"="fitness_centre"]',cinema:'["amenity"="cinema"]',museum:'["tourism"~"museum|gallery|attraction"]',library:'["amenity"="library"]',activity:'["tourism"~"attraction|museum|gallery|viewpoint"]',gas:'["amenity"="fuel"]',pharmacy:'["amenity"="pharmacy"]',hotel:'["tourism"~"hotel|motel|guest_house"]',carwash:'["amenity"="car_wash"]',mechanic:'["shop"="car_repair"]',shop:'["shop"]',salon:'["shop"~"hairdresser|beauty"]'};return {regex:rules[category]||rules.activity,radius:5000};}
+    const rules={eat:'["amenity"~"restaurant|fast_food|cafe"]',coffee:'["amenity"="cafe"]',park:'["leisure"~"park|nature_reserve|garden"]',gym:'["leisure"="fitness_centre"]',cinema:'["amenity"="cinema"]',museum:'["tourism"~"museum|gallery|attraction"]',library:'["amenity"="library"]',activity:'["tourism"~"attraction|museum|gallery|viewpoint"]',gas:'["amenity"="fuel"]',pharmacy:'["amenity"="pharmacy"]',hotel:'["tourism"~"hotel|motel|guest_house"]',carwash:'["amenity"="car_wash"]',mechanic:'["shop"="car_repair"]',shop:'["shop"]',salon:'["shop"~"hairdresser|beauty"]'};const raw=String(q||'').trim();const named=!/\b(?:restaurant|eat|dinner|lunch|breakfast|food|coffee|cafe|park|gym|museum|library|bowling|arcade|entertainment|fun|things to do|where should|where can|gas|pharmacy|hotel|car wash|mechanic|store|shop|mall|buy|grocery|barber|haircut|salon)\b/i.test(raw) && /^[a-z0-9 &.'-]{2,70}$/i.test(raw);if(named){const safe=raw.replace(/\./g,'\\.').replace(/'/g,"'?");return {regex:'["name"~"'+safe+'",i]',radius:9000};}return {regex:rules[category]||rules.activity,radius:5000};}
   function displayResults(announce=false){
     phase='results';showPopup(results.length?'Here are nearby locations I found. Choose one or open the full search in Google Maps.':'I could not verify nearby listings. You can still open a Google Maps search.',results);show('Nearby places',results.length?'Public OpenStreetMap listings. Distances are straight-line estimates; hours, ratings and availability are not verified.':'No matching places were returned. Try another category or open Google Maps.');
     for(const r of results){const p=document.createElement('p');p.style.margin='10px 0';const strong=document.createElement('strong');strong.textContent=r.name;const note=document.createElement('span');note.textContent=' · '+r.km.toFixed(1)+' km away'+(r.address?' · '+r.address:'');const b=document.createElement('button');b.type='button';b.textContent='View in Google Maps';b.onclick=()=>openMap(mapLink(r));p.append(strong,note,document.createTextNode(' '),b);content.append(p);}
@@ -2238,7 +2251,7 @@ aurenPlaces = (() => {
   function enable(){if(!navigator.geolocation){show('Location unavailable','Your browser does not support location sharing.');return;}const seq=++requestId;phase='locating';show('Allow location','Safari may ask for access. Your location will only be used for this nearby search.');
     navigator.geolocation.getCurrentPosition(pos=>{if(seq!==requestId)return;coords={lat:pos.coords.latitude,lon:pos.coords.longitude};void lookup();},()=>{if(seq!==requestId)return;phase='consent';show('Location not available','Check your Safari location permission, or search manually in Google Maps.');action('Try again',enable);action('Cancel',clear);},{enableHighAccuracy:false,maximumAge:0,timeout:12000});}
   function request(text){
-    requestId++;pending=text;coords=null;results=[];
+    requestId++;pending=destinationFrom(text)||text;coords=null;results=[];
     // An optional working Maps search should exist even if the free lookup fails.
     appendMapsLink(pending+' near me','Search '+pending.slice(0,65)+' in Google Maps');
     if(locationApproved&&aurenLocation){
@@ -2261,7 +2274,7 @@ aurenPlaces = (() => {
       return true;
     }
     if(phase==='consent'&&no.test(t)){await addMessage('user',t);clear();await addMessage('auren','Of course. I will not use your location.');return true;}
-    if(placeIntent.test(t)||broadPlaceIntent.test(t)){
+    if(destinationFrom(t)||placeIntent.test(t)||broadPlaceIntent.test(t)){
       await addMessage('user',t);request(t);
       await addMessage('auren',locationApproved&&aurenLocation?'Searching nearby places now. I also provided a Google Maps link in Text Chat.':'I added a Google Maps search link to Text Chat. If you want AUREN to list nearby places itself, you can approve location in Settings.');
       return true;
