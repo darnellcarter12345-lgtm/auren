@@ -200,3 +200,11 @@ body[data-voice-state=processing] .auren-orb { filter:saturate(.95); }
 /* The previous full answer must also not shift controls when it is long. */
 #chat .latest-reply { height:82px; min-height:82px; max-height:82px; overflow:auto; scrollbar-width:thin; }
 @media(max-width:520px){ .auren-caption-slot {height:72px;flex-basis:72px;} }
+
+/* AUREN v2.1: one-orb interface, stable captions */
+header .sub { display:none!important; }
+#wakeBtn {display:none!important;}
+#heroState[hidden] {display:none!important;}
+#wakeHint[hidden] {display:none!important;}
+.auren-caption-slot {height:76px; min-height:76px; max-height:76px; overflow:hidden;}
+.auren-live-caption {max-height:76px; overflow:hidden; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;}

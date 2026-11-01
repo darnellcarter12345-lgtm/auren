@@ -60,11 +60,12 @@ function syncVoiceUI() {
   const message = $('voiceStatus').textContent || '';
   const speaking = voice.speaking || /AUREN speaking|speaking…/i.test(message);
   const thinking = /thinking|processing|requesting/i.test(message) || $('latestReply').textContent === 'Thinking…';
-  const waitingWake = voice.wakeMode && !listening && !speaking && !thinking;
-  const state = speaking ? 'speaking' : thinking ? 'processing' : listening ? 'listening' : 'idle';
+  const waitingWake = voice.wakeMode && !voice.awake && !speaking && !thinking;
+  const state = speaking ? 'speaking' : thinking ? 'processing' : voice.awake ? 'listening' : 'idle';
   document.body.dataset.voiceState = state;
-  $('heroState').textContent = speaking ? 'AUREN is speaking' : thinking ? 'AUREN is thinking' : listening ? (voice.wakeMode ? 'AUREN is listening' : 'Listening') : waitingWake ? 'Wake mode ready' : 'AUREN is asleep';
-  $('wakeHint').hidden = speaking || thinking || listening;
+  $('heroState').textContent = speaking ? 'AUREN is speaking' : thinking ? 'AUREN is thinking' : voice.awake ? 'Listening' : 'AUREN is asleep';
+  $('heroState').hidden = state === 'idle';
+  $('wakeHint').hidden = state !== 'idle';
   if (state === 'idle') $('aurenHeadline').textContent = 'At your service.';
   else if (state === 'listening') $('aurenHeadline').textContent = 'I’m listening.';
   else if (state === 'processing') $('aurenHeadline').textContent = 'One moment.';
@@ -75,7 +76,7 @@ const capabilities = voice.available();
 $('micBtn').disabled = !capabilities.listen;
 $('speakReplies').disabled = !capabilities.speak;
 $('stopSpeech').disabled = !capabilities.speak;
-$('voiceStatus').textContent = capabilities.listen ? 'Tap the microphone to dictate a command.' : 'Microphone recognition unavailable in this browser; typing works.';
+$('voiceStatus').textContent = capabilities.listen ? 'Tap the orb once to activate voice. Safari may require this after each visit.' : 'Microphone recognition unavailable in this browser; typing works.';
 $('micBtn').onclick = () => {
   if (voice.listening) voice.stopListening();
   else voice.startListening();
@@ -108,7 +109,11 @@ $('orbControl').onclick = () => {
     voice.stopSpeaking();
     voice.stopListening();
     voice.startListening();
-  } else $('micBtn').click();
+  } else if (voice.awake) {
+    voice.setWakeMode(true); // sleep and keep authorized wake scanning
+  } else {
+    voice.startListening(); // wake on direct click; preserve wake scanner after silence
+  }
   syncVoiceUI();
 };
 // Voice preview is intentionally removed: one voice, one simple main control.

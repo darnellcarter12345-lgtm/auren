@@ -17,7 +17,7 @@
     <div class="orb" title="AUREN voice assistant"></div>
     <div>
       <h1>AUREN</h1>
-      <p class="sub">Your personal butler <span class="sr-only">· <span id="status">starting&hellip;</span></span></p>
+      <p class="sub"><span class="sr-only" id="status">starting&hellip;</span></p>
     </div>
   </header>
   <noscript><p class="card">AUREN needs JavaScript enabled.</p></noscript>
@@ -25,10 +25,10 @@
   <div class="hero" aria-label="AUREN voice assistant">
     <button id="orbControl" class="auren-orb" type="button" aria-label="Start voice listening"><span class="orb-core"></span></button>
     <h2 id="aurenHeadline">At your service.</h2>
-    <p id="heroState">AUREN is asleep</p>
-    <p id="wakeHint" class="wake-hint">Say “Hey Auren” or tap to awaken</p>
+    <p id="heroState" hidden>AUREN is asleep</p>
+    <p id="wakeHint" class="wake-hint">Tap to awaken</p>
     <div class="auren-caption-slot" aria-label="Live conversation"><p id="liveTranscript" class="auren-live-caption" aria-live="polite"></p></div>
-    <div class="quick-controls"><button type="button" id="wakeBtn" class="ghost" aria-pressed="false">Enable “Hey Auren”</button><button type="button" id="panelToggle" class="ghost" aria-expanded="false">⚙ Settings</button></div>
+    <div class="quick-controls"><button type="button" id="wakeBtn" class="ghost" hidden aria-pressed="false">Enable “Hey Auren”</button><button type="button" id="panelToggle" class="ghost" aria-expanded="false">⚙ Settings</button></div>
   </div>
   <nav id="advancedNav" hidden aria-label="Manage AUREN">
     <button data-tab="chat" class="active">Home</button>

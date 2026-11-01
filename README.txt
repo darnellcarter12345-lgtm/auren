@@ -1,9 +1,7 @@
-AUREN v2.0.5 — Combined v2.0.4 routing + memory-dispute handling.
+AUREN v2.1 — Simplified wake experience
 
-Required: replace ONLY app.js in your existing GitHub repository root and commit. No need to install v2.0.4 separately. All other website files remain unchanged.
+Replace ONLY index.html, styles.css, app.js, and voice.js in the existing GitHub repository root. Keep all remaining files and your Cloudflare Worker unchanged.
 
-Optional: For more consistent handling of disputed memories in ordinary AI conversations, replace the script in your EXISTING Cloudflare Worker with cloudflare-worker.js and Deploy. Do NOT upload the Worker file as a GitHub Pages script. Keep the existing AI binding.
+Home shows no personal-butler subtitle or Hey Auren button; idle prompt reads Tap to awaken. Click orb to begin conversation. After 18 seconds of silence, conversation returns to sleep, leaving wake recognition enabled while Safari permits. Say Hey Auren / Hey Oren / Hey Lauren or click orb to wake again. If Safari blocks recognition, tap the orb again.
 
-Test: save "I like trading" in Memory. Ask "I never told you I like trading." AUREN should acknowledge the saved record without pretending to know who originally entered it. Then ask for a recommendation and check normal Cloudflare AI replies still work.
-
-Limitations: AUREN still cannot prove who said a saved fact. Browser-based voice and Cloudflare responses need Safari testing. This is not an AI model upgrade.
+This cannot activate mic automatically from a fresh page load on Safari, work while tab is closed, or bypass microphone permission. Wake listening uses browser SpeechRecognition and may be restarted by Safari. Settings and memory remain intact.

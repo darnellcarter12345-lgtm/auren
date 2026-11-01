@@ -15,7 +15,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   let interruptionsEnabled = false; // Privacy-conscious default: background voices cannot interrupt.
   let interruptionCandidate = '', interruptionSamples = 0;
   let preferredVoiceURI = ''; let voiceRate = 0.96, voicePitch = 0.95; 
-  const SILENCE_MS = 45000;
+  const SILENCE_MS = 18000;
   // Browser recognition frequently transcribes the invented name AUREN as a
   // familiar name ("Orin", "Oren", "Aaron", "Lauren"). Match short wake
   // phrases, not arbitrary mentions in the middle of other sentences.
@@ -106,7 +106,12 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       report('Conversation paused after silence. Say “Hey Auren” to resume.');
     }, SILENCE_MS);
     else if (conversation) idleTimer = setTimeout(() => {
-      stopListening(); report('Conversation ended after silence. Tap the orb to speak again.');
+      // Conversation sleeps, but an already authorized active page stays in wake mode.
+      conversation = false;
+      wakeMode = true;
+      desiredMode = 'wake';
+      report('Asleep — waiting for “Hey Auren”');
+      if (!active) listenSoon(250);
     }, SILENCE_MS);
   }
   function listenSoon(delay = 200) {
@@ -254,7 +259,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   function startListening() {
     if (!Recognition) { report('Speech recognition is unsupported here.'); return false; }
     if (conversation && !wakeMode) { stopListening(); return false; }
-    errorStop = false; permittedStart = true; conversation = true; desiredMode = 'conversation';
+    errorStop = false; permittedStart = true; wakeMode = true; conversation = true; desiredMode = 'conversation';
     clearTimeout(idleTimer); if (speaking) stopSpeaking();
     scheduleIdle(); startEngine(); // Must run synchronously in the user's click on Safari.
     return true;
@@ -289,6 +294,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     get listening() { return desiredMode !== 'off'; },
     get speaking() { return speaking; },
     get wakeMode() { return wakeMode; },
+    get awake() { return conversation; },
     get enabled() { return enabled; },
     get interruptionsEnabled() { return interruptionsEnabled; },
     get microphoneActive() { return engineRunning; },
