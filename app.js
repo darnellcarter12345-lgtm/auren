@@ -1559,6 +1559,7 @@ locationDesc.textContent='OFF by default. One-time GPS requests only. Coordinate
 const locationButton=document.createElement('button');locationButton.type='button';
 const locationStatus=document.createElement('p');locationStatus.className='hint';
 function locationPaint(){
+ // Only update controls that exist in Settings. No deleted Home-screen controls.
  const active=locationApproved||locationPending;
  locationButton.textContent=active?'Turn location OFF':'Turn location ON';
  locationButton.setAttribute('aria-pressed',String(active));
