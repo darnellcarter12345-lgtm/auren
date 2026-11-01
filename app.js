@@ -1,4 +1,4 @@
-// AUREN v2.9.7 — resumable interactive briefings and proactive planner intelligence
+// AUREN v2.9.8 — restrained butler, clock-safe reminders, conversational briefings
 // AUREN — js/app.js
 // Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
 // v0.2: status banner for storage problems, session panel, privacy controls, safe backup import.
@@ -10,7 +10,7 @@ import { NeedsConfirmationError, historySafe, classify } from './sensitive.js';
 import { Butler, isSessionNote } from './butler.js';
 import { buildBackup, encryptBackup, decryptBackup, validateBackup, applyPlan, describeReport, LIMITS } from './backup.js';
 import { loadSettings, saveSettings } from './settings.js';
-import { createVoice } from './voice.js?v=2.9.4';
+import { createVoice } from './voice.js?v=2.9.8';
 import { createIPhoneRecorder } from './iphone-voice.js?v=2.9.5';
 import { getAIEndpoint, setAIEndpoint, askAI } from './ai.js';
 import { getWeatherBriefing } from './weather.js';
@@ -423,7 +423,14 @@ try { const saved=JSON.parse(localStorage.getItem(PLAN_KEY)||'[]'); if(Array.isA
 // Appointment dates use the user's device-local clock; never guess from the weather city.
 const localTimeZone=()=>Intl.DateTimeFormat().resolvedOptions().timeZone||'device local time';
 const localDate=(d=new Date())=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+// AUREN clock: timestamps use the device clock; Dallas display is DST-aware.
+const BUTLER_ZONE = 'America/Chicago';
+function dallasHour(now=new Date()){return Number(new Intl.DateTimeFormat('en-US',{timeZone:BUTLER_ZONE,hour:'numeric',hourCycle:'h23'}).format(now));}
+function timeOfDay(now=new Date()){const h=dallasHour(now);return h<5?'night':h<12?'morning':h<17?'afternoon':h<21?'evening':'night';}
+function butlerGreeting(now=new Date()){const part=timeOfDay(now);return part==='night'?'Good evening':`Good ${part}`;}
+
 $('planDate').value=localDate();
+if(Intl.DateTimeFormat().resolvedOptions().timeZone !== BUTLER_ZONE){console.info('AUREN: device timezone differs from Dallas; appointment input uses device local time.');}
 let pendingPlan=null;
 let planningOffer=null;
 let lastPlanningOfferAt=0;
@@ -469,6 +476,12 @@ function checkReminders(){
  const now=Date.now();let changed=false;
  for(const r of reminders){const at=new Date(r.at).getTime();if(r.fired||!Number.isFinite(at)||at>now)continue;
  r.fired=true;changed=true;
+ // A stale reminder encountered after browser sleep/open must not sound like a new alert.
+ // It is marked delivered/missed to prevent unexpected immediate announcements.
+ if(now-at>90000){
+   showStatus('Missed reminder: '+r.text+' (scheduled earlier).','info');
+   continue;
+ }
  // Clearly mark a due reminder even if the user is in another section.
  showStatus('Reminder: '+r.text,'info');
  if(document.visibilityState==='visible'){
@@ -481,7 +494,8 @@ function checkReminders(){
  if(changed){try{saveReminders();}catch(e){showStatus('Reminder could not be recorded: '+e.message,'error');}}
  renderUpNext();
 }
-setInterval(()=>{checkReminders();upNextIndex++;renderUpNext();},12000);
+setInterval(()=>{checkReminders();upNextIndex++;renderUpNext();},5000);
+window.addEventListener('pageshow',checkReminders);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkReminders();});
 let pendingReminder=null;
 function findReminder(t){const words=t.toLowerCase();return reminders.find(r=>!r.fired&&words.includes(r.text.toLowerCase()))||null;}
@@ -574,7 +588,7 @@ function weekSummary(date){
  if(!items.length)return 'There are no plans saved for this week. That is only what is in this planner.';
  const groups=new Map();for(const p of items){const name=weekdayNames[parseISO(p.date).getDay()];if(!groups.has(name))groups.set(name,[]);groups.get(name).push(`${p.title} at ${formatClock(p.time)}`);}
  const spoken=[...groups].map(([day,entries])=>`${day}: ${entries.slice(0,3).join(', ')}${entries.length>3?', and more':''}`).join('. ');
- return `This week you have ${items.length} ${items.length===1?'plan':'plans'}. ${spoken}. Does that sound correct?`;
+ return `This week you have ${items.length} ${items.length===1?'plan':'plans'}. ${spoken}.`;
 }
 function requestedScope(t){return /\b(?:this week|next week|my week|the week|weekly|whole week)\b/i.test(t)?'week':'day';}
 function weekOrDaySummary(date,scope){return scope==='week'?weekSummary(date):planSummary(date);}
@@ -722,28 +736,13 @@ const briefingPlayer = (() => {
       else chunks.push(sentence);
       return chunks;
     }, []);
-  const controls = document.createElement('div');
-  controls.className = 'row';
-  controls.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-top:12px';
-  const pauseButton = document.createElement('button');
-  const resumeButton = document.createElement('button');
-  const repeatButton = document.createElement('button');
-  for (const btn of [pauseButton,resumeButton,repeatButton]) btn.type='button';
-  pauseButton.textContent='Pause briefing';
-  resumeButton.textContent='Resume briefing';
-  repeatButton.textContent='Replay briefing';
-  resumeButton.className=repeatButton.className='ghost';
+  // Only orb click or spoken commands control the briefing. No extra UI buttons.
   const note = document.createElement('small');
   note.setAttribute('role','status');
-  note.style.display='block';
-  note.style.marginTop='5px';
-  controls.append(pauseButton,resumeButton,repeatButton);
+  note.style.display='block'; note.style.marginTop='5px';
   const target=$('playBriefing');
-  if(target?.parentNode){ target.insertAdjacentElement('afterend',controls);controls.insertAdjacentElement('afterend',note); }
+  if(target?.parentNode) target.insertAdjacentElement('afterend',note);
   function render(){
-    controls.hidden=!segments.length;
-    pauseButton.hidden=!playing;
-    resumeButton.hidden=playing || position>=segments.length;
     note.textContent=!segments.length?'':playing?'Briefing playing — you can navigate elsewhere or interrupt it.':
       position>=segments.length?'Briefing finished. Replay whenever you like.':
       `Briefing paused at part ${position+1} of ${segments.length}.`;
@@ -793,7 +792,6 @@ const briefingPlayer = (() => {
     }
     return false;
   }
-  pauseButton.onclick=pause;resumeButton.onclick=resume;repeatButton.onclick=replay;
   render();
   return {start,pause,resume,replay,ask,get active(){return playing;},get available(){return segments.length>0;},get position(){return position;}};
 })();
@@ -810,6 +808,12 @@ $('playBriefing').onclick=async()=>{
   // Prime speech during the click, BEFORE any asynchronous weather request.
   voice.primeAudio();
   prepareSpokenReview();
+  // Start Mac microphone on the *briefing button gesture*, if permission was already granted.
+  // Safari may refuse concurrent recognition/synthesis; the orb always remains the fallback.
+  if (!aurenIOS && capabilities.listen && !voice.microphoneActive) {
+    voice.setInterruptionsEnabled(interruptToggle.checked);
+    try { voice.startListening(); } catch (err) { console.warn('Optional briefing interruption unavailable',err); }
+  }
   const date=localDate();
   const summary=weekOrDaySummary(date,briefingScope);
   const today=new Date();
@@ -826,7 +830,7 @@ $('playBriefing').onclick=async()=>{
   catch(error) { console.warn('Weather briefing unavailable:',error); result={success:false}; }
   if(weatherStatus)weatherStatus.textContent=result?.success?'Weather: '+result.display:'Weather unavailable — schedule still works.';
   const weather=result?.success?' '+result.spoken:'';
-  const briefingText = `Good morning. ${summary}${extra}${weather}`;
+  const briefingText = `${butlerGreeting()}. ${summary}${extra}${weather}`.replace(/(?:Would you like|Shall I|Do you want)[^.!?]*[?]/gi,'').trim();
   latestBriefingContext = { text: briefingText.slice(0, 1200), at: Date.now() };
   await addMessage('auren', briefingText, {silent:true});
   briefingPlayer.start(briefingText);
@@ -1098,7 +1102,7 @@ async function memoryDisputeReply(text) {
 
 // ---------- v2.6 Advanced Butler Intelligence (device-local, zero extra AI calls) ----------
 const BUTLER_PREF_KEY = 'auren_butler_preferences_v26';
-let butlerPreferences = { preferredWindow: 'any', suggestions: true };
+let butlerPreferences = { preferredWindow: 'any', suggestions: false };
 try {
   const saved = JSON.parse(localStorage.getItem(BUTLER_PREF_KEY) || '{}');
   if (['morning', 'afternoon', 'evening', 'any'].includes(saved.preferredWindow)) butlerPreferences.preferredWindow = saved.preferredWindow;
@@ -1283,7 +1287,7 @@ $('chatForm').onsubmit = e => { e.preventDefault(); const v = $('chatInput').val
 
 async function loadHistory() {
   const msgs = (await getAll(STORES.messages)).filter(m => m.role === 'user' || m.role === 'auren').sort((a, b) => a.at.localeCompare(b.at));
-  if (!msgs.length) return addMessage('auren', "I'm here when you need me. Tap the orb to talk, or open settings for your memories.");
+  if (!msgs.length) return addMessage('auren', "At your service.", {silent:true});
   msgs.forEach(m => drawMessage(m));
 }
 
