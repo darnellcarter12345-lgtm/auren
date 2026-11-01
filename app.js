@@ -131,10 +131,11 @@ $('orbControl').addEventListener('click', () => {
       // Stop the reply first, then listen for the correction on this same user gesture.
       voice.stopSpeaking();
       voice.startListening();
-    } else if (voice.awake) {
-      voice.setWakeMode(true); // sleep; keep wake phrase on where supported
+    } else if (voice.awake && voice.microphoneActive) {
+      voice.setWakeMode(true); // deliberate tap while active: return to wake-only mode
     } else {
-      voice.startListening(); // awaken immediately, without waiting for a wake phrase
+      // Also recovers an iPhone session whose UI says awake but mic has stalled.
+      voice.startListening();
     }
     syncVoiceUI();
   } catch (error) {

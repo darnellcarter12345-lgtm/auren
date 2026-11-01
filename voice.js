@@ -18,12 +18,15 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     clearWatchdog();
     recognizerWatchdog = setInterval(() => {
       if (!active || !recognition || !permittedStart || !pageVisible() || speaking || responding || phraseParts.length) return;
-      if (Date.now() - lastRecognizerActivity < 16000) return;
+      // A quiet wake listener is not necessarily stalled. Give iOS time to listen.
+      if (Date.now() - lastRecognizerActivity < (mobileWebKit ? 28000 : 24000)) return;
       // Some WebKit recognizers stall without firing onend. Restart at most a
       // few times, then ask for a fresh tap rather than looping indefinitely.
-      if (++stalledRestarts > 3) {
+      if (++stalledRestarts > 2) {
         clearWatchdog(); errorStop = true;
-        report('Safari stopped speech recognition. Tap the orb to reactivate it.');
+        // Keep the UI honest: a recognizer stuck on iPhone is not an active mic.
+        ++token; abort();
+        report('iPhone speech recognition is stuck. Tap the orb once to reconnect. You can also dictate into Text chat.');
         return;
       }
       ++token; abort(); clearWatchdog();
@@ -378,11 +381,14 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     catch { currentUtterance = null; speaking = false; report('Speech output unavailable.'); if (!responding) listenSoon(); }
   }
   function startListening() {
-    if (!Recognition) { report('This browser cannot transcribe speech directly. On iPhone, use the keyboard microphone in Text chat.'); return false; }
-    if (conversation && !wakeMode) { stopListening(); return false; }
-    clearPhrase(); errorStop = false; stalledRestarts = 0; permittedStart = true; wakeMode = true; conversation = true; desiredMode = 'conversation';
-    clearTimeout(idleTimer); if (speaking) stopSpeaking();
-    scheduleIdle(); startEngine(); // Must run synchronously in the user's click on Safari.
+    if (!Recognition) { report('Speech recognition is unavailable here. Use the iPhone keyboard microphone in Text chat.'); return false; }
+    // Explicit taps must recover even when Safari's previous session is wedged
+    // and AUREN's conversation state still says "awake".
+    cancelTimers(); ++token; abort();
+    clearPhrase(); errorStop = false; stalledRestarts = 0; restartFailures = 0;
+    permittedStart = true; wakeMode = true; conversation = true; desiredMode = 'conversation';
+    if (speaking) stopSpeaking();
+    scheduleIdle(); startEngine(); // Synchronous user activation, required by WebKit.
     return true;
   }
   function stopListening() {
@@ -427,7 +433,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     get awake() { return conversation; },
     get enabled() { return enabled; },
     get interruptionsEnabled() { return interruptionsEnabled; },
-    get microphoneActive() { return engineRunning; },
+    get microphoneActive() { return engineRunning && active && !errorStop; },
     setInterruptionsEnabled(value) {
       interruptionsEnabled = !!value;
       // Switching OFF immediately halts microphone recognition during playback.

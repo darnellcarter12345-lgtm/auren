@@ -1,1 +1,7 @@
-Back up your previous files. Replace app.js, voice.js, and weather.js in your GitHub repository root, then commit and refresh. Browser restrictions can still require a new tap after inactivity/backgrounding.
+AUREN v2.5.5 iPhone Recovery (built on v2.5.4)
+Replace app.js and voice.js ONLY. Do not replace weather.js.
+This fixes stale awake-state/orb recovery and limits automatic mic restart attempts.
+Safari iOS cannot promise hands-free wake-word activation or listening in background.
+After installing, test on iPhone Safari with screen unlocked; tap orb, speak, wait for response, ask follow-up.
+When recognition hangs, tap orb once to reconnect.
+Fallback: open Text chat and tap the microphone on the iPhone keyboard.
