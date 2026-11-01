@@ -1,14 +1,16 @@
-AUREN v2.6 — FREE Weather Intelligence
+AUREN v2.6 — Advanced Butler Intelligence
 
-Replace app.js and weather.js in your GitHub repo.
-Keep voice.js from v2.5.5 and all other files unchanged.
-No Cloudflare Worker changes. No AI Gateway or paid search.
+Based on AUREN v2.6 Free Weather Intelligence app.js.
+BACK UP your existing app.js, then replace ONLY app.js in your GitHub repository.
+Keep existing weather.js from Free Weather Intelligence and voice.js from iPhone Recovery.
+Commit changes and refresh. Do not clear website data or browser storage.
 
-Test in Text chat first:
-- What is the weather tomorrow?
-- What about around 4 PM?
-- Would that be good for a walk?
-- What about the wind?
-- Give me more details.
+New spoken/text commands:
+- Do I have scheduling conflicts this week?
+- What is my busiest day this week?
+- When am I free tomorrow?
+- I prefer mornings.
+- What are my scheduling preferences?
+- Stop suggesting things. / Enable suggestions.
 
-The forecast is cached for 10 minutes. iPhone microphone reliability is a separate issue.
+Notes: checks device-local planner only; never modifies appointments without approval; preferences stored in localStorage; no new API or AI costs.

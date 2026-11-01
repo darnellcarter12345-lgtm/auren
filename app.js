@@ -731,6 +731,78 @@ async function memoryDisputeReply(text) {
   return `I have this saved in memory: “${best.memory.text.slice(0, 240)}”. That only tells me what is stored, not whether you actually said it or whether it is still accurate. Would you like me to correct or delete that memory?`;
 }
 
+// ---------- v2.6 Advanced Butler Intelligence (device-local, zero extra AI calls) ----------
+const BUTLER_PREF_KEY = 'auren_butler_preferences_v26';
+let butlerPreferences = { preferredWindow: 'any', suggestions: true };
+try {
+  const saved = JSON.parse(localStorage.getItem(BUTLER_PREF_KEY) || '{}');
+  if (['morning', 'afternoon', 'evening', 'any'].includes(saved.preferredWindow)) butlerPreferences.preferredWindow = saved.preferredWindow;
+  if (typeof saved.suggestions === 'boolean') butlerPreferences.suggestions = saved.suggestions;
+} catch { /* Keep defaults; never delete saved data. */ }
+function saveButlerPreferences() {
+  try { localStorage.setItem(BUTLER_PREF_KEY, JSON.stringify(butlerPreferences)); }
+  catch (error) { showStatus('Butler preference could not be saved: '+error.message, 'error'); }
+}
+function smartButlerReply(utterance) {
+  const t = String(utterance || '').trim().toLowerCase();
+  if (/\b(?:stop (?:suggesting|making suggestions)|no (?:more )?suggestions|don't suggest|do not suggest)\b/.test(t)) {
+    butlerPreferences.suggestions = false; saveButlerPreferences();
+    return 'Certainly. I will stop offering unsolicited planning suggestions. You can still ask for advice whenever you wish.';
+  }
+  if (/\b(?:start suggesting|enable suggestions|suggestions on|offer suggestions again)\b/.test(t)) {
+    butlerPreferences.suggestions = true; saveButlerPreferences();
+    return 'Certainly. I will offer occasional planning suggestions when they seem useful.';
+  }
+  const preference = t.match(/\b(?:i (?:usually )?prefer|schedule (?:my )?(?:plans|appointments|meetings) (?:in|for)|my preferred time is)\s+(?:the\s+)?(morning|afternoon|evening)s?\b/);
+  if (preference && !/\b(?:don't|do not|never)\b/.test(t)) {
+    butlerPreferences.preferredWindow = preference[1]; saveButlerPreferences();
+    return `Understood. I'll favour ${preference[1]} openings when suggesting times. You can change that preference whenever you like.`;
+  }
+  if (/\b(?:no time preference|any time is fine|no preferred time|clear (?:my )?time preference)\b/.test(t)) {
+    butlerPreferences.preferredWindow = 'any'; saveButlerPreferences();
+    return 'Certainly. I will consider all daytime openings equally.';
+  }
+  if (/\b(?:what (?:are|is) my (?:scheduling|planning|time) preferences|when do i prefer to schedule|are suggestions (?:on|off))\b/.test(t)) {
+    return `Your preferred scheduling period is ${butlerPreferences.preferredWindow === 'any' ? 'not set' : butlerPreferences.preferredWindow}. Planning suggestions are ${butlerPreferences.suggestions ? 'on' : 'off'}. These preferences are saved on this device.`;
+  }
+  const askingConflicts = /\b(?:do i have|are there|check|find|show|any)\b.*\b(?:conflicts|overlaps|double.bookings)\b|\b(?:conflicts|overlaps|double.bookings)\b.*\b(?:schedule|planner|appointments)\b/.test(t);
+  const askingBusy = /\b(?:busiest day|most busy day|which day (?:am i|is) busiest)\b/.test(t);
+  const askingFree = /\b(?:when (?:am i|will i be) free|free time|free slot|available (?:time|times|slots)|when can i (?:fit|schedule)|find (?:me )?(?:an? )?(?:opening|slot))\b/.test(t);
+  if (!askingConflicts && !askingBusy && !askingFree) return null;
+  const scopeDate = parseDateIntent(t) || localDate();
+  const isWeek = askingBusy || /\b(?:week|weekly)\b/.test(t);
+  const items = isWeek ? weekItems(scopeDate) : plansFor(scopeDate);
+  if (askingBusy) {
+    const week = weekItems(scopeDate), totals = new Map();
+    for (const p of week) totals.set(p.date, (totals.get(p.date) || 0) + Math.max(1, Number(p.duration) || 60));
+    if (!totals.size) return 'There are no plans in your planner this week, so I cannot identify a busiest day.';
+    const peak = Math.max(...totals.values());
+    const days = [...totals].filter(([,minutes])=>minutes===peak).map(([day])=>readableDate(day));
+    return `${days.length>1?'Your busiest days are':'Your busiest day is'} ${days.join(' and ')}, with ${Math.round(peak / 60 * 10) / 10} hours scheduled. This is based only on plans saved in AUREN.`;
+  }
+  if (askingConflicts) {
+    const pairs=[];
+    for (let i=0;i<items.length;i++) for (let j=i+1;j<items.length;j++) {
+      if (overlaps(items[i],items[j])) pairs.push(`${items[i].title} and ${items[j].title} on ${readableDate(items[i].date)}`);
+    }
+    return pairs.length ? `I found ${pairs.length} overlap${pairs.length===1?'':'s'}: ${pairs.slice(0,3).join('; ')}${pairs.length>3?'; and others':''}. Would you like help moving an appointment?` : `I found no overlapping appointments ${isWeek?'this week':'on '+readableDate(scopeDate)} in your saved planner.`;
+  }
+  // Choose a free opening for a one-hour activity, using local saved appointments only.
+  const window = butlerPreferences.preferredWindow;
+  const limits = window === 'morning' ? [8*60,12*60] : window === 'afternoon' ? [12*60,17*60] : window === 'evening' ? [17*60,21*60] : [9*60,20*60];
+  const date = scopeDate;
+  const today = date === localDate();
+  let start = limits[0];
+  if (today) {const now = new Date(); start = Math.max(start, Math.ceil((now.getHours()*60+now.getMinutes()+15)/15)*15);}
+  const occupied = plansFor(date);
+  while (start + 60 <= limits[1]) {
+    const candidate={date,time:`${String(Math.floor(start/60)).padStart(2,'0')}:${String(start%60).padStart(2,'0')}`,duration:60};
+    if (!occupied.some(event=>overlaps(candidate,event))) return `You have a one-hour opening on ${readableDate(date)} at ${formatClock(candidate.time)}, based on your saved plans. Shall I help you schedule something there?`;
+    start += 15;
+  }
+  return `I couldn't find a full free hour ${window==='any'?'between 9 AM and 8 PM':'in your preferred '+window+' hours'} on ${readableDate(date)}. Would you like to try a different day?`;
+}
+
 let recentWeatherScope = null;
 let recentWeatherAt = 0;
 let recentWeatherHour = null;
@@ -738,6 +810,12 @@ async function send(text) {
   if (voice.available().speak && !voice.enabled) { voice.setEnabled(true); $('speakReplies').checked = true; }
   await addMessage('user', text, { ephemeral: isSessionNote(text) });
   try {
+    // Explicit preferences and schedule insights are device-local, and never consume AI credits.
+    // Do not intercept replies to a pending confirmation or reminder.
+    if (!pendingPlan && !pendingReminder && !planClarification) {
+      const butlerReply = smartButlerReply(text);
+      if (butlerReply !== null) { await addMessage('auren', butlerReply); return; }
+    }
     // Weather intelligence: answer from the free hourly forecast, not a canned AI reply.
     // Follow-ups are scoped to the last weather conversation for a short time.
     const cleaned = text.trim();
@@ -778,7 +856,7 @@ async function send(text) {
     const planResponse = reminderResponse || await planSpeech(text);
     const memoryDispute = isLocal || planResponse ? null : await memoryDisputeReply(text);
     const planningSuggestion = !isLocal && !planResponse && !memoryDispute && !pendingPlan && !planningOffer
-      && Date.now()-lastPlanningOfferAt>PLANNING_OFFER_COOLDOWN_MS ? planningOpportunity(text) : null;
+      && butlerPreferences.suggestions && Date.now()-lastPlanningOfferAt>PLANNING_OFFER_COOLDOWN_MS ? planningOpportunity(text) : null;
     if (planResponse) {
       await addMessage('auren', planResponse);
     } else if (isLocal) {
