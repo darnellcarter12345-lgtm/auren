@@ -1,1 +1,10 @@
-AUREN v2.3 Smart Scheduling: Replace app.js only in your existing v2.2.7 project. Keep all other files unchanged. Refresh after committing. Test conflicts and spoken follow-ups in your browser.
+AUREN v2.3.2 — iPhone Voice + One Confirmation
+
+Replace ONLY app.js and voice.js in the GitHub repository root.
+Keep index.html, styles.css, and the Cloudflare Worker unchanged.
+
+Fix: When AUREN proposes a conflict-free alternative (e.g. 4 PM) and you say yes, it saves the plan immediately rather than asking you to confirm the same plan again. Regular new plans still ask once before saving.
+
+Voice: Retains v2.3.1 iPhone-compatible voice handling. On iPhone, tap the golden orb and grant microphone access in Safari. Background listening is subject to Safari restrictions.
+
+After committing, refresh AUREN and test on phone and computer.

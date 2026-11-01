@@ -76,7 +76,7 @@ const capabilities = voice.available();
 $('micBtn').disabled = !capabilities.listen;
 $('speakReplies').disabled = !capabilities.speak;
 $('stopSpeech').disabled = !capabilities.speak;
-$('voiceStatus').textContent = capabilities.listen ? 'Tap the orb once to activate voice. Safari may require this after each visit.' : 'Microphone recognition unavailable in this browser; typing works.';
+$('voiceStatus').textContent = capabilities.listen ? 'Tap the orb once to activate voice. Safari may require this after each visit.' : 'Browser voice recognition unavailable. On iPhone, use the keyboard microphone in Text chat.';
 $('micBtn').onclick = () => {
   if (voice.listening) voice.stopListening();
   else voice.startListening();
@@ -121,7 +121,7 @@ $('orbControl').addEventListener('click', () => {
   if (now - lastOrbTap < 220) return; // suppress accidental double-taps only
   lastOrbTap = now;
   if (!capabilities.listen) {
-    showStatus('Microphone recognition is unavailable here. You can still type in Text chat.', 'error');
+    showStatus('Voice recognition is unavailable in this browser. On iPhone, open Text chat and use the keyboard microphone to dictate.', 'error');
     return;
   }
   try {
@@ -465,8 +465,13 @@ async function planSpeech(text){const t=text.trim();
  }
  if(pendingPlan&&pendingPlan.suggestedTime&&!pendingPlan.conflictAcknowledged){
   if(/^(?:yes|yeah|sure|okay|use that|that works|please do)\b/i.test(t)){
-   pendingPlan.time=pendingPlan.suggestedTime;pendingPlan.suggestedTime=null;pendingPlan.conflictAcknowledged=true;
-   return `Certainly. Shall I ${changeDescription(pendingPlan)}?`;
+   // The user has already approved the offered free time. That single "yes"
+   // is authorization to complete the pending action; do not ask twice.
+   pendingPlan.time=pendingPlan.suggestedTime;
+   pendingPlan.suggestedTime=null;
+   pendingPlan.conflictAcknowledged=true;
+   // Fall through to the ordinary confirmed-action handler below.
+
   }
   const alternate=extractLooseTime(t);
   if(alternate&&alternate!=='ambiguous'){pendingPlan.time=alternate;const conflict=conflictAdvice(pendingPlan);return conflict||`Shall I ${changeDescription(pendingPlan)}?`;}
