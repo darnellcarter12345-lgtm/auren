@@ -1,7 +1,14 @@
-AUREN v2.5.5 iPhone Recovery (built on v2.5.4)
-Replace app.js and voice.js ONLY. Do not replace weather.js.
-This fixes stale awake-state/orb recovery and limits automatic mic restart attempts.
-Safari iOS cannot promise hands-free wake-word activation or listening in background.
-After installing, test on iPhone Safari with screen unlocked; tap orb, speak, wait for response, ask follow-up.
-When recognition hangs, tap orb once to reconnect.
-Fallback: open Text chat and tap the microphone on the iPhone keyboard.
+AUREN v2.6 — FREE Weather Intelligence
+
+Replace app.js and weather.js in your GitHub repo.
+Keep voice.js from v2.5.5 and all other files unchanged.
+No Cloudflare Worker changes. No AI Gateway or paid search.
+
+Test in Text chat first:
+- What is the weather tomorrow?
+- What about around 4 PM?
+- Would that be good for a walk?
+- What about the wind?
+- Give me more details.
+
+The forecast is cached for 10 minutes. iPhone microphone reliability is a separate issue.

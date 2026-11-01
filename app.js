@@ -733,28 +733,38 @@ async function memoryDisputeReply(text) {
 
 let recentWeatherScope = null;
 let recentWeatherAt = 0;
+let recentWeatherHour = null;
 async function send(text) {
   if (voice.available().speak && !voice.enabled) { voice.setEnabled(true); $('speakReplies').checked = true; }
   await addMessage('user', text, { ephemeral: isSessionNote(text) });
   try {
-    // Weather questions use the live weather service rather than the general AI.
-    // Do not steal scheduling, reminder, or memory commands that mention weather.
-    const weatherQuestion =
-      (/\b(weather|forecast|temperature|raining|rain|snow|snowing|degrees|windy|wind|humidity|humid|precipitation)\b/i.test(text) ||
-       (recentWeatherScope && Date.now()-recentWeatherAt<90000 && /^(?:what about|and|how about|tell me more|more details|go into detail)/i.test(text.trim()))) &&
-      !/^(?:please\s+)?(?:remind|schedule|plan|add|move|reschedule|change|delete|remove|remember|forget|set\s+(?:a\s+)?reminder)\b/i.test(text.trim());
-    if (weatherQuestion) {
+    // Weather intelligence: answer from the free hourly forecast, not a canned AI reply.
+    // Follow-ups are scoped to the last weather conversation for a short time.
+    const cleaned = text.trim();
+    const weatherFresh = recentWeatherScope && Date.now() - recentWeatherAt < 120000;
+    const explicitWeather = /\b(weather|forecast|temperature|raining|rain|snow|snowing|degrees|windy|wind|humidity|humid|precipitation|uv index|sun exposure)\b/i.test(cleaned);
+    const contextualWeather = weatherFresh && /^(?:what about|how about|and |at |around |is it|will it|would it|tell me more|more details|go into|explain|what if|what's it like|can i|could i)\b/i.test(cleaned);
+    const otherAction = /^(?:please\s+)?(?:remind|schedule|plan|add|move|reschedule|change|delete|remove|remember|forget|set\s+(?:a\s+)?reminder)\b/i.test(cleaned);
+    if ((explicitWeather || contextualWeather) && !otherAction) {
       const city = localStorage.getItem('auren_weather_city') || 'Dallas';
-      const scope = /\b(tomorrow)\b/i.test(text)
-        ? 'tomorrow'
-        : /\b(week|weekly|next\s+7\s+days|seven\s+days)\b/i.test(text)
-          ? 'week'
-          : (recentWeatherScope && Date.now()-recentWeatherAt<90000 ? recentWeatherScope : 'day');
-      recentWeatherScope = scope; recentWeatherAt = Date.now();
-      const weather = await getWeatherBriefing(city, scope, text);
+      const scope = /\btomorrow\b/i.test(cleaned) ? 'tomorrow'
+        : /\b(week|weekly|next\s+7\s+days|seven\s+days)\b/i.test(cleaned) ? 'week'
+        : (weatherFresh ? recentWeatherScope : 'day');
+      // A short question such as 'what about the wind?' inherits the last forecast day.
+      // 'What about 4 PM?' inherits the topic, but not an imaginary AM/PM value.
+      const hourText = cleaned.match(/\b(?:at|around|about|by)\s+(\d{1,2})(?::\d{2})?\s*(?:am|pm)\b/i);
+      const currentHour = hourText ? hourText[0] : null;
+      const inherited = !currentHour && recentWeatherHour && contextualWeather
+        && !/\b(today|tomorrow|week|morning|afternoon|evening|tonight)\b/i.test(cleaned)
+        ? ` ${recentWeatherHour}` : '';
+      recentWeatherScope = scope;
+      recentWeatherAt = Date.now();
+      if (currentHour) recentWeatherHour = currentHour;
+      else if (/\b(today|tomorrow|week|morning|afternoon|evening|tonight)\b/i.test(cleaned)) recentWeatherHour = null;
+      const weather = await getWeatherBriefing(city, scope, cleaned + inherited);
       await addMessage('auren', weather.success
         ? weather.spoken
-        : `I'm unable to retrieve the forecast for ${city} right now. Please try again shortly.`);
+        : `I couldn't retrieve the forecast for ${city} just now. Please try again shortly.`);
       return;
     }
     // Verified save/delete/project operations remain local. Other conversation goes to AI.
