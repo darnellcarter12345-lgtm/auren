@@ -1,3 +1,4 @@
+// AUREN v2.26 — Reliable profile, direct name recall, seamless Settings.
 // AUREN v2.25 — Reliable nearby discovery, spoken results and contextual follow-ups
 // AUREN v2.24 — Name-aware wake routing, respectful butler identity, no name correction
 // AUREN v2.23 — Nearby Places visible loading, results, and fallback
@@ -262,7 +263,7 @@ async function activateScreen(screen) {
   $('panelToggle').textContent = inSettings ? '✕' : '⚙';
   if (screen === 'memory') await renderMemories();
   if (screen === 'projects') await renderProjects();
-  if (inSettings) await renderStorageInfo();
+  if (inSettings) { refreshPersonalProfile(); paintPersonal(); await renderStorageInfo(); }
   if (screen === 'planner') renderDay();
   window.scrollTo({top:0,behavior:'instant'});
 }
@@ -1345,6 +1346,7 @@ async function contextForAI(question) {
 }
 
 async function askWithMemory(question) {
+  refreshPersonalProfile();
   const context = await contextForAI(question);
   // Read live local state, not a stale snapshot of the planner.
   const today = localDate();
@@ -1390,7 +1392,18 @@ let personalProfile={name:'',address:'sir',customAddress:'',gender:'prefer-not-t
 let personalSignals={};
 try {const saved=JSON.parse(localStorage.getItem(PERSONAL_PROFILE_KEY)||'null');if(saved&&typeof saved==='object')personalProfile={...personalProfile,...saved};}catch{}
 try {const saved=JSON.parse(localStorage.getItem(PERSONAL_SIGNALS_KEY)||'{}');if(saved&&typeof saved==='object')personalSignals=saved;}catch{}
-function savePersonalProfile(){try{localStorage.setItem(PERSONAL_PROFILE_KEY,JSON.stringify(personalProfile));}catch{showStatus('Your preferences could not be saved on this browser.','error');}}
+function savePersonalProfile(){
+ try {
+  localStorage.setItem(PERSONAL_PROFILE_KEY,JSON.stringify(personalProfile));
+  const checked=JSON.parse(localStorage.getItem(PERSONAL_PROFILE_KEY)||'null');
+  if(!checked || checked.name!==personalProfile.name || checked.address!==personalProfile.address)throw new Error('Browser did not confirm the save');
+  return true;
+ }catch(error){showStatus('Your profile was not saved: '+error.message,'error');return false;}
+}
+function refreshPersonalProfile(){
+ try {const saved=JSON.parse(localStorage.getItem(PERSONAL_PROFILE_KEY)||'null');if(saved&&typeof saved==='object')Object.assign(personalProfile,saved);}catch{}
+}
+
 function savePersonalSignals(){try{localStorage.setItem(PERSONAL_SIGNALS_KEY,JSON.stringify(personalSignals));}catch{}}
 function preferredAddress(){const a=personalProfile.address;return a==='name'?personalProfile.name:a==='custom'?personalProfile.customAddress:a==='none'?'':a;}
 function personalTitle(){const v=preferredAddress();return v?v.trim():'';}
@@ -1410,17 +1423,50 @@ const personalSave=document.createElement('button');personalSave.textContent='Sa
 const personalNotice=document.createElement('p');personalNotice.className='hint';
 function paintPersonal(){nameField.value=personalProfile.name||'';addressSelect.value=personalProfile.address||'sir';customAddress.value=personalProfile.customAddress||'';genderSelect.value=personalProfile.gender||'prefer-not-to-say';learningCheck.checked=!!personalProfile.learnInterests;customAddress.hidden=addressSelect.value!=='custom';}
 addressSelect.onchange=()=>{customAddress.hidden=addressSelect.value!=='custom';};
-personalSave.onclick=()=>{personalProfile.name=nameField.value.trim().slice(0,45);personalProfile.address=addressSelect.value;personalProfile.customAddress=customAddress.value.trim().slice(0,32);personalProfile.gender=genderSelect.value;personalProfile.learnInterests=learningCheck.checked;personalProfile.onboarded=true;savePersonalProfile();personalNotice.textContent=`Saved. I'll use ${personalTitle()||'no title'} when natural.`;personalWelcome.hidden=true;};
+personalSave.onclick=()=>{
+ personalProfile.name=nameField.value.trim().slice(0,45);
+ personalProfile.address=addressSelect.value;
+ personalProfile.customAddress=customAddress.value.trim().slice(0,32);
+ personalProfile.gender=genderSelect.value;
+ personalProfile.learnInterests=learningCheck.checked;
+ personalProfile.onboarded=true;
+ const saved=savePersonalProfile();
+ personalNotice.textContent=saved?`Saved and checked. ${personalProfile.name?`Your name is ${personalProfile.name}. `:''}I'll address you as ${personalTitle()||'you'}.`:'Could not save. Check Safari website storage settings.';
+ if(saved)personalWelcome.hidden=true;
+};
 const personalClear=document.createElement('button');personalClear.type='button';personalClear.className='ghost';personalClear.textContent='Clear learned interests';
 personalClear.onclick=()=>{personalSignals={};savePersonalSignals();personalNotice.textContent='Interest observations cleared. Saved memories are managed separately in Memory.';};
 personalCard.append(personalHeading,personalExplainer,nameField,addressSelect,customAddress,genderSelect,learningRow,personalSave,personalClear,personalNotice);
 $('settings').insertBefore(personalCard,$('settings').firstElementChild);paintPersonal();
+// Compact profile: essential controls first; optional fields available on demand.
+personalHeading.textContent='Your profile';
+personalExplainer.textContent='Your name and how AUREN addresses you. Stored only in this browser.';
+nameField.placeholder='Your name';
+personalSave.textContent='Save profile';
+const personalExtras=document.createElement('details');personalExtras.className='auren-profile-optional';
+const extrasTitle=document.createElement('summary');extrasTitle.textContent='More personal preferences';personalExtras.append(extrasTitle,genderSelect,learningRow,personalClear);
+personalCard.replaceChildren(personalHeading,personalExplainer,nameField,addressSelect,customAddress,personalSave,personalNotice,personalExtras);
+personalCard.style.cssText='margin:10px auto;padding:18px;border:1px solid rgba(199,168,104,.32);border-radius:16px;';
+const themeCard=document.createElement('section');themeCard.className='card';themeCard.id='aurenThemeSettings';
+const themeHeading=document.createElement('h3');themeHeading.textContent='Appearance';
+const themeHint=document.createElement('p');themeHint.className='hint';themeHint.textContent='Choose a look. Changes save automatically.';
+const themePicker=document.createElement('select');themePicker.setAttribute('aria-label','AUREN appearance');
+for(const [value,label] of [['classic','Classic gold'],['slate','Slate blue'],['emerald','Emerald'],['rose','Rose gold']])themePicker.append(new Option(label,value));
+const themeStyle=document.createElement('style');themeStyle.textContent=`body[data-auren-theme="slate"]{--gold:#a5bde9;--accent:#a5bde9}body[data-auren-theme="emerald"]{--gold:#8fd7b8;--accent:#8fd7b8}body[data-auren-theme="rose"]{--gold:#e6b6a3;--accent:#e6b6a3}`;
+document.head.append(themeStyle);
+const THEME_KEY='auren_appearance_v226';
+function applyAurenTheme(value){const theme=['classic','slate','emerald','rose'].includes(value)?value:'classic';document.body.dataset.aurenTheme=theme;themePicker.value=theme;try{localStorage.setItem(THEME_KEY,theme);}catch{}}
+applyAurenTheme(localStorage.getItem(THEME_KEY)||'classic');
+themePicker.onchange=()=>applyAurenTheme(themePicker.value);
+themeCard.append(themeHeading,themeHint,themePicker);personalCard.insertAdjacentElement('afterend',themeCard);
+
 const personalWelcome=document.createElement('div');personalWelcome.className='card';personalWelcome.id='aurenWelcome';personalWelcome.style.cssText='box-sizing:border-box;width:min(92%,680px);margin:12px auto;padding:14px;border:1px solid rgba(199,168,104,.55);border-radius:14px;background:#25262a;color:#f0dfbb;text-align:center;';
 const welcomeText=document.createElement('p');welcomeText.textContent='Welcome to AUREN. What would you like me to call you? You may use your name, Sir, Ma’am, or any title. Gender is optional and never assumed.';
 const welcomeSetup=document.createElement('button');welcomeSetup.type='button';welcomeSetup.textContent='Set my name and preferences';welcomeSetup.onclick=()=>{void activateScreen('settings');nameField.focus();};
 const welcomeLater=document.createElement('button');welcomeLater.type='button';welcomeLater.className='ghost';welcomeLater.textContent='Maybe later';welcomeLater.onclick=()=>{personalProfile.onboarded=true;savePersonalProfile();personalWelcome.hidden=true;};
 personalWelcome.append(welcomeText,welcomeSetup,welcomeLater);orbButton.insertAdjacentElement('afterend',personalWelcome);personalWelcome.hidden=!!personalProfile.onboarded;
 function personalCommand(text){
+ refreshPersonalProfile();
  const t=String(text||'').trim();let m;
  if((m=t.match(/^(?:please\s+)?(?:call me|start calling me|you can call me|my name is)\s+([\p{L}\p{N} .'_-]{1,45})[.!?]*$/iu))){
   const v=m[1].trim().replace(/[.!?]+$/,'');
@@ -1434,7 +1480,10 @@ function personalCommand(text){
   personalProfile.gender=/prefer/i.test(m[1])?'prefer-not-to-say':/^non/i.test(m[1])?'nonbinary':m[1].toLowerCase();savePersonalProfile();paintPersonal();
   return 'Your optional gender setting is updated. Your preferred name and title stay unchanged unless you ask me to change them.';
  }
- if(/^(?:what do you call me|what(?:'s| is) my preferred name|how should you address me)[?!.]*$/i.test(t))return `Your preferred name is ${personalProfile.name||'not set'}. Your form of address is ${personalTitle()||'no title'}.`;
+ if(/^(?:what(?:'s| is) my name|do you (?:know|remember) my name|who am i|tell me my name|what name (?:did i|have i) (?:give|saved|set)|what(?:'s| is) my nickname|what do you call me|what(?:'s| is) my preferred name|how should you address me)[?!. ]*$/i.test(t)){
+  if(!personalProfile.name)return 'I do not have your name saved yet. You can enter it in Settings under Your profile.';
+  return /nickname|what do you call me|address me/i.test(t)?`I call you ${personalTitle()||personalProfile.name}. Your saved name is ${personalProfile.name}.`:`Your name is ${personalProfile.name}.`;
+ }
  if(/\b(?:stop learning my interests|turn (?:off|on) interest learning|stop suggesting memories|start learning my interests)\b/i.test(t)){
   personalProfile.learnInterests=/\b(?:start|on)\b/i.test(t);savePersonalProfile();paintPersonal();return personalProfile.learnInterests?'I can suggest interests after repeated mentions. I will ask before saving them.':'Interest learning suggestions are off.';
  }
@@ -1644,6 +1693,14 @@ function locationOn(){
 }
 locationButton.addEventListener('click',()=>{if(locationApproved||locationPending)locationOff();else locationOn();});
 locationPanel.append(locationTitle,locationDesc,locationButton,locationStatus);$('settings').append(locationPanel);
+locationTitle.textContent='Location';locationDesc.textContent='Allow location only when you want nearby suggestions. Toggle anytime.';
+const voiceDetails=document.createElement('details');voiceDetails.className='card';
+const voiceSummary=document.createElement('summary');voiceSummary.textContent='Voice & listening';voiceSummary.style.cursor='pointer';
+voiceCard.replaceWith(voiceDetails);voiceDetails.append(voiceSummary,voiceCard);
+locationPanel.insertAdjacentElement('afterend',voiceDetails);
+// Keep primary settings in a predictable order without removing any existing controls.
+$('settings').prepend(personalCard,themeCard,locationPanel,voiceDetails);
+
 // Location toggle belongs exclusively in Settings. No permanent Home status card.
 const locationPermissionBar=document.createElement('div');
 locationPermissionBar.id='aurenLocationPermissionBar';
