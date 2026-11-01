@@ -148,14 +148,14 @@ async function answerText(request, env) {
   const message = typeof body.message === 'string' ? body.message.trim().slice(0, 1200) : '';
   if (!message) return reply({ error: 'Message required' }, 400);
   const recent = Array.isArray(body.recent)
-    ? body.recent.slice(-8)
+    ? body.recent.slice(-10)
       .filter(item => item && ['user', 'assistant'].includes(item.role) && typeof item.content === 'string')
       .map(item => ({ role: item.role, content: item.content.slice(0, 500) }))
     : [];
   const memories = boundedStrings(body.memories, 8, 300);
   const session = boundedStrings(body.session, 5, 200);
-  const deviceContext = boundedStrings(body.deviceContext, 6, 1800);
-  const context = recent.slice(-6).map(item => item.content).join(' ');
+  const deviceContext = boundedStrings(body.deviceContext, 10, 1300);
+  const context = recent.slice(-10).map(item => item.content).join(' ');
   const wantsNews = !PRIVATE_ACTION.test(message) &&
     (NEWS_REQUEST.test(message) || (NEWS_FOLLOWUP.test(message) && HISTORY_NEWS.test(context)));
   let items = [];
