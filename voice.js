@@ -4,7 +4,7 @@
 export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpoken }) {
   const Recognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   const synth = window.speechSynthesis || null;
-  let recognition = null, active = false, wakeMode = false, conversation = false;
+  let recognition = null, active = false, engineRunning = false, wakeMode = false, conversation = false;
   let speaking = false, responding = false, enabled = false, permittedStart = false;
   let token = 0, restartTimer = null, idleTimer = null, errorStop = false;
   let desiredMode = 'off';
@@ -53,7 +53,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   const report = text => onStatus?.(text);
   const available = () => ({ listen: !!Recognition, speak: !!(synth && window.SpeechSynthesisUtterance) });
   const cancelTimers = () => { clearTimeout(restartTimer); clearTimeout(idleTimer); };
-  const abort = () => { const old = recognition; recognition = null; active = false; if (old) try { old.abort(); } catch {} };
+  const abort = () => { const old = recognition; recognition = null; active = false; engineRunning = false; if (old) try { old.abort(); } catch {} };
   function looksLikeUser(text) {
     const normalized = String(text || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
     const output = spokenText.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -119,6 +119,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     const id = ++token;
     const r = new Recognition(); recognition = r;
     r.lang = 'en-GB'; r.continuous = false; r.interimResults = true; r.maxAlternatives = 5;
+    r.onstart = () => { if (id === token) { engineRunning = true; report(speaking ? 'Listening for an interruption…' : (conversation ? 'Listening…' : 'Say “Hey Auren” to speak')); } };
     r.onresult = event => {
       if (id !== token) return;
       const finalResults = [];
@@ -189,11 +190,11 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     };
     r.onend = () => {
       if (id !== token) return;
-      recognition = null; active = false;
+      recognition = null; active = false; engineRunning = false;
       if (!responding && !errorStop) listenSoon(450);
     };
     try { r.start(); active = true; report(conversation ? 'Listening…' : 'Say “Hey Auren” to speak'); }
-    catch { active = false; recognition = null; report('Could not start listening. Tap the orb to retry.'); }
+    catch { active = false; engineRunning = false; recognition = null; report('Safari could not start microphone recognition. Tap the orb to retry.'); }
   }
   async function deliver(text) {
     try { report('Thinking…'); await onTranscript?.(text); }
@@ -240,7 +241,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     };
     u.onend = () => { if (currentUtterance !== u) return; spokenText = ''; onSpoken?.(text, text); if (currentUtterance === u) currentUtterance = null; speaking = false; report(wakeMode ? 'Listening — ask a follow-up, or say “Hey Auren”' : (conversation ? 'Listening for your next question…' : 'Tap the orb to speak')); scheduleIdle(); if (!responding) listenSoon(250); };
     u.onerror = () => { if (currentUtterance !== u) return; spokenText = ''; if (currentUtterance === u) currentUtterance = null; speaking = false; report('Voice output stopped; text remains available.'); if (!responding) listenSoon(420); };
-    try { synth.speak(u); report('AUREN speaking…'); if (interruptionsEnabled && conversation && !active && !responding) listenSoon(250); }
+    try { synth.speak(u); report('AUREN speaking…'); if (interruptionsEnabled && conversation && !active && !responding) listenSoon(150); }
     catch { currentUtterance = null; speaking = false; report('Speech output unavailable.'); if (!responding) listenSoon(); }
   }
   function startListening() {
@@ -283,6 +284,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     get wakeMode() { return wakeMode; },
     get enabled() { return enabled; },
     get interruptionsEnabled() { return interruptionsEnabled; },
+    get microphoneActive() { return engineRunning; },
     setInterruptionsEnabled(value) {
       interruptionsEnabled = !!value;
       // Switching OFF immediately halts microphone recognition during playback.

@@ -155,6 +155,53 @@ syncInterruptionsHelp();
 voiceCard.append(interruptRow, interruptHelp);
 $('wakeBtn').textContent = 'Enable “Hey Auren”';
 $('settings').insertBefore(voiceCard, $('settings').firstElementChild);
+// A clear customer-facing Settings screen. Advanced data tools are retained but collapsed.
+// Never remove the existing DOM nodes: the application attaches handlers to them below.
+const settingsPanel = $('settings');
+const aiConnectionCard = aiEndpointInput.closest('.card');
+const aiReady = !!getAIEndpoint();
+if (aiReady) {
+  // The connection is already saved in this browser. Hide technical setup and
+  // the disconnect button; no one needs to touch it during ordinary use.
+  aiConnectionCard.hidden = true;
+  aiConnectionCard.style.display = 'none';
+} else {
+  aiConnectionCard.querySelector('h3').textContent = 'Finish setup';
+  aiConnectionCard.querySelector('p').textContent = 'AUREN needs its AI connection before it can answer general questions.';
+  $('clearAIEndpoint').hidden = true;
+}
+const simpleConnection = document.createElement('p');
+simpleConnection.className = 'hint';
+simpleConnection.textContent = aiReady ? 'AI connection ready' : 'AI connection not yet set up';
+voiceCard.append(simpleConnection);
+const privateDetails = document.createElement('details');
+privateDetails.className = 'card';
+privateDetails.id = 'dataPrivacyDetails';
+const privateTitle = document.createElement('summary');
+privateTitle.textContent = 'Your data & backups';
+privateTitle.style.cursor = 'pointer';
+privateTitle.style.color = 'var(--gold)';
+privateTitle.style.padding = '4px 0';
+privateDetails.append(privateTitle);
+const dataIntro = document.createElement('p');
+dataIntro.className = 'hint';
+dataIntro.textContent = 'AUREN remembers information on this device. Here you can save a copy, restore it, or manage privacy.';
+privateDetails.append(dataIntro);
+// Keep the cards and their IDs intact, preserving all memory/backup handlers.
+const storageCards = [...settingsPanel.querySelectorAll(':scope > .card')].filter(card => card !== voiceCard && card !== aiConnectionCard);
+for (const card of storageCards) privateDetails.append(card);
+settingsPanel.append(privateDetails);
+// Avoid exposing dangerous deletion controls to casual clicks.
+const deleteSection = privateDetails.querySelector('.danger');
+if (deleteSection) {
+  const deleteDetails = document.createElement('details');
+  const deleteSummary = document.createElement('summary');
+  deleteSummary.textContent = 'Erase device data (advanced)';
+  deleteSummary.style.cursor = 'pointer';
+  deleteDetails.append(deleteSummary, deleteSection);
+  privateDetails.append(deleteDetails);
+}
+
 const oldWakeClick = $('wakeBtn').onclick;
 $('wakeBtn').onclick = () => {
   oldWakeClick();
