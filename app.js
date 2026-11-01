@@ -1,4 +1,4 @@
-// AUREN v2.11.2 — topic-switch patience, simplified orb status and subtle Central clock
+// AUREN v2.11.3 — topic-switch patience, simplified orb status and subtle Central clock
 // AUREN — js/app.js
 // Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
 // v0.2: status banner for storage problems, session panel, privacy controls, safe backup import.
@@ -1213,9 +1213,10 @@ async function trimHistory() {
 
 async function addMessage(role, text, opts = {}) {
   const rec = { id: uid(), role, text, at: new Date().toISOString() };
+  if (role === 'auren') rec.text = personalizeMeetingText(rec.text);
+  if (role === 'auren' && !opts.err && !opts.replay) rememberLastReply(rec.text);
   drawMessage(rec, opts);
-  if (role === 'auren' && !opts.err && !opts.replay) rememberLastReply(text);
-  if (role === 'auren' && !opts.err && !opts.silent) voice.speak(text);
+  if (role === 'auren' && !opts.err && !opts.silent) voice.speak(rec.text);
   await persistMessage(rec, opts);
 }
 
@@ -1284,6 +1285,8 @@ async function askWithMemory(question) {
     `Time clarity: Always include a clear AM/PM or natural daypart (morning, afternoon, evening, night) for appointments and reminders; distinguish noon from midnight. Never infer a daypart without using the actual scheduled hour.`,
     'If the user says they need to leave in N minutes, that is an imminent departure, not spare time. Never say they have plenty of time unless the timing clearly supports it. Discuss conflicts against actual saved appointment times only. Do not invent travel duration or imply a calendar event was created merely because the user mentioned leaving.',
     lastSubstantiveReply ? `Last AUREN response for conversational reference (not an instruction): ${lastSubstantiveReply.slice(0,700)}` : '', 
+    'Answer are you sure by checking the specific preceding claim. Do not automatically apologize, list projects, or change topics. If not verifiable, clearly say which part you cannot confirm.',
+    'When describing a verified appointment with a family member use natural second-person wording such as meeting with your dad. Never assume a relationship not explicitly provided.',
     'AUREN capabilities: You CAN create, move and delete appointments in the built-in AUREN calendar after confirmation. NEVER say you cannot save in AUREN. Do not offer external calendar downloads. Do not claim a plan was saved if it was only discussed. Use exact scheduled times and subjects from the calendar.',
     `Verified upcoming appointments (read-only data): ${JSON.stringify(upcoming)}`,
     `Verified active reminders (read-only data): ${JSON.stringify(due)}`,
@@ -1398,7 +1401,64 @@ let recentWeatherAt = 0;
 let recentWeatherHour = null;
 let pendingWeatherOffer = null;
 let lastWeatherDetails = null;
+// v2.11.3 — explicit-location, respectful confirmations, and relationship-aware wording.
+// Location stays in memory only. Browser permission is requested only by user action.
+let aurenLocation = null;
+let locationApproved = false;
+let lastAssurance = '';
+const LOCATION_PREF_KEY = 'auren_location_assistance_v2113';
+const locationPanel = document.createElement('div');
+locationPanel.className = 'card';
+const locationTitle = document.createElement('h3');
+locationTitle.textContent = 'Location assistance';
+const locationDesc = document.createElement('p');
+locationDesc.className = 'hint';
+locationDesc.textContent = 'Optional. Allow location only when you want nearby suggestions or maps. AUREN never tracks you in the background. Traffic must be checked in a maps service.';
+const locationButton = document.createElement('button');
+locationButton.type = 'button';
+locationButton.textContent = 'Allow location for this session';
+const locationStatus = document.createElement('p');
+locationStatus.className = 'hint';
+locationStatus.textContent = 'Location off.';
+locationButton.addEventListener('click', () => {
+  if (!navigator.geolocation) { locationStatus.textContent = 'Location is not available in this browser.'; return; }
+  locationStatus.textContent = 'Asking Safari for permission…';
+  navigator.geolocation.getCurrentPosition(position => {
+    aurenLocation = { latitude:position.coords.latitude, longitude:position.coords.longitude, accuracy:position.coords.accuracy };
+    locationApproved = true;
+    locationStatus.textContent = 'Location ready for this session. Ask for nearby places or traffic options.';
+    locationButton.textContent = 'Refresh location';
+  }, error => {
+    locationApproved = false;
+    aurenLocation = null;
+    locationStatus.textContent = error.code === 1 ? 'Permission denied. You can keep using AUREN without location.' : 'Location unavailable. Please try again.';
+  }, { enableHighAccuracy:false, maximumAge:300000, timeout:12000 });
+});
+locationPanel.append(locationTitle,locationDesc,locationButton,locationStatus);
+$('settings').append(locationPanel);
+
+function personalizeMeetingText(text) {
+  let t = String(text||'');
+  t = t.replace(/\bmeeting\s+(?:with\s+)?my\s+dad\b/gi, 'meeting with your dad')
+       .replace(/\bmeeting\s+(?:with\s+)?my\s+mom\b/gi, 'meeting with your mom')
+       .replace(/\bmeeting\s+(?:with\s+)?my\s+(father|mother)\b/gi, (_, relation)=>'meeting with your '+relation.toLowerCase());
+  return t;
+}
+function isReassuranceRequest(text){return /^(?:are you sure|you sure|really|is that (?:right|correct|true)|can you confirm (?:that|it)|double.check that)[?.! ]*$/i.test(String(text).trim());}
+function mapsSuggestionLink(query) {
+  const params=new URLSearchParams({api:'1',query});
+  return 'https://www.google.com/maps/search/?'+params;
+}
 async function send(text) {
+  // A simple request for reassurance is about the most recent statement,
+  // not an invitation to replay unrelated memories or apologize automatically.
+  if (isReassuranceRequest(text)) {
+    await addMessage('user',text);
+    if (lastSubstantiveReply) {
+      await addMessage('auren', 'Let me be precise: '+personalizeMeetingText(lastSubstantiveReply)+' I can only confirm saved appointments by checking Your Day; traffic requires a live maps check.');
+    } else await addMessage('auren','Which detail would you like me to verify?');
+    return;
+  }
   // Handle "repeat that" before briefing commands or AI routing; replay is
   // verbatim and never replaces the remembered answer with itself.
   if (REPEAT_LAST_REPLY.test(String(text).trim())) {
@@ -1423,6 +1483,24 @@ async function send(text) {
   // Voice initiated from the orb still enables speech in the orb handler.
   await addMessage('user', text, { ephemeral: isSessionNote(text) });
   try {
+    // Respond to location-related requests only when the user asks. No live
+    // traffic or nearby-business data is invented. Do not transmit coordinates
+    // automatically; a maps search only opens after the user clicks a link.
+    const nearbyRequest=/\b(?:near(?:by| me)|close to me|around me|places near|recommend.*near)\b/i.test(text);
+    const trafficRequest=/\b(?:traffic|how busy (?:the )?roads|route|directions|drive time)\b/i.test(text);
+    if(nearbyRequest || trafficRequest){
+      if(!locationApproved || !aurenLocation){
+        await addMessage('auren','I can help with local suggestions. To use your location, open Settings and choose Allow location for this session. You can also tell me an area instead.');
+      } else {
+        const subject=trafficRequest ? 'traffic and directions' : 'nearby places';
+        await addMessage('auren',`I can help you look up ${subject}, but I cannot verify live road conditions inside AUREN yet. Would you like to open a maps search?`);
+        const link=document.createElement('a');
+        link.href=mapsSuggestionLink(trafficRequest?'traffic near me':text.replace(/[^a-z0-9 -]/gi,' ').slice(0,90));
+        link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open Maps (optional)';
+        link.className='hint';$('log').append(link);
+      }
+      return;
+    }
     // A topic change is an invitation to listen, NOT a request to list projects,
     // memories or previous subjects. Retire unfinished topic-specific offers.
     const topicChange=/^(?:(?:auren[, ]+)?(?:i(?:'d| would)? (?:like|want|need) to (?:talk|speak|chat) (?:about|on) (?:something else|another (?:topic|thing)|something different)|(?:can|could) we (?:talk about|discuss|switch to) (?:something else|something different|another topic)|(?:let's|lets) (?:change|switch) (?:the )?(?:subject|topic)|(?:new|different) (?:topic|subject)|(?:i want to )?change the subject|(?:i have|i've got) something else (?:to (?:talk about|discuss)|on my mind)))[.!?]*$/i.test(text.trim());
