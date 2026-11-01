@@ -21,8 +21,8 @@ export async function askAI(message, memories = [], session = [], recent = [], d
         message: String(message).slice(0, 1200),
         memories: memories.slice(0, 8).filter(m=>!m.sensitive).map(m => String(m.text || '').slice(0, 300)),
         session: context.map(x => x.slice(0, 200)),
-        deviceContext: deviceContext.filter(x => typeof x === 'string').slice(0, 6).map(x => x.slice(0, 1800)),
-        recent: recent.slice(-8)
+        deviceContext: deviceContext.filter(x => typeof x === 'string').slice(0, 10).map(x => x.slice(0, 1300)),
+        recent: recent.slice(-10)
       }), signal: controller.signal
     });
     const data = await response.json().catch(() => ({}));
