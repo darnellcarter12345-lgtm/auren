@@ -1198,7 +1198,7 @@ function drawMessage(rec, opts = {}) {
   }
   $('log').append(d); $('log').scrollTop = $('log').scrollHeight;
   // Replies appear in the separate live panel and chat log, not the upcoming-events ticker.
-  if(rec.role==='auren' && !voice.speaking) { speechPanelText.textContent='AUREN: '+rec.text; }
+  if(rec.role==='auren' && !voice.speaking) { speechPanelText.textContent='AUREN: '+((String(rec.text).trim().match(/^[sS]*?[.!?](?=s|$)/)||[])[0] || String(rec.text).slice(0,220)); }
 }
 
 // What goes to disk is redacted: sensitive/blocked text and session notes are never kept in history.
@@ -2089,3 +2089,49 @@ async function renderStorageInfo() {
     await loadHistory(); await renderMemories(); await renderProjects(); renderSession(); await renderStorageInfo();
   } catch (e) { showStatus('Could not load saved data: ' + e.message, 'error'); }
 })();
+
+
+// AUREN v2.14.1: discreet home screen and one-sentence live replies.
+(function aurenCleanScreen() {
+  const simpleSentence = (text) => {
+    const s=String(text||'').trim();
+    const match=s.match(/^[\s\S]*?[.!?](?=\s|$)/);
+    return match ? match[0].trim() : s.slice(0,220);
+  };
+  const live=document.getElementById('aurenSpeechPanel');
+  if (live) {
+    live.style.maxHeight='90px';
+    live.style.overflow='hidden';
+    const t=live.querySelector('div');
+    if(t){
+      let writing=false;
+      const obs=new MutationObserver(()=>{
+        if(writing)return;
+        const v=t.textContent||'';
+        if(!/^AUREN:\s*/.test(v))return;
+        const changed='AUREN: '+simpleSentence(v.replace(/^AUREN:\s*/,''));
+        if(changed!==v){writing=true;t.textContent=changed;writing=false;}
+      });
+      obs.observe(t,{childList:true,characterData:true,subtree:true});
+    }
+  }
+  // Home-screen location controls are hidden. Settings' location controls remain available.
+  const hideHomeLocation=()=>{
+    const home=document.getElementById('chat');
+    if(!home)return;
+    for(const el of home.querySelectorAll('button,p,div,section')){
+      if(el.hidden||el.dataset.aurenLocationHidden)return;
+      const own=(el.childElementCount===0 ? el.textContent||'' : '').trim();
+      if(/^(?:Location is ON for this tab\.?|Location is OFF for this tab\.?|Turn location OFF|Enable location|Turn location ON)$/i.test(own)){
+        // Don't hide the main chat log or its ancestor containers.
+        const card=el.closest('.card');
+        if(card&&card.closest('#chat')&&card!==home){card.hidden=true;card.dataset.aurenLocationHidden='true';}
+        else {el.hidden=true;el.dataset.aurenLocationHidden='true';}
+      }
+    }
+  };
+  hideHomeLocation();
+  const home=document.getElementById('chat');
+  if(home){let pending=false;new MutationObserver(()=>{if(pending)return;pending=true;queueMicrotask(()=>{pending=false;hideHomeLocation();});}).observe(home,{childList:true,subtree:true});}
+})();
+
