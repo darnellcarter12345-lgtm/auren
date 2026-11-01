@@ -209,7 +209,20 @@ $('micBtn').onclick = () => {
   else voice.startListening();
   syncVoiceUI();
 };
-$('speakReplies').onchange = () => voice.setEnabled($('speakReplies').checked);
+// v2.16.1: spoken replies persist across reloads, with a direct Safari audio test.
+const AUREN_SPEECH_PREF='auren_speech_replies_v2161';
+let speechWanted=true;
+try { const v=localStorage.getItem(AUREN_SPEECH_PREF); if(v!==null) speechWanted=v==='true'; } catch {}
+$('speakReplies').checked=capabilities.speak && speechWanted;
+voice.setEnabled($('speakReplies').checked);
+$('speakReplies').onchange=()=>{
+  const on=$('speakReplies').checked;
+  voice.setEnabled(on);
+  if(on) voice.primeAudio();
+  try {localStorage.setItem(AUREN_SPEECH_PREF,String(on));} catch {}
+  showStatus(on?'Spoken replies enabled.':'Spoken replies disabled.','info');
+};
+
 $('stopSpeech').onclick = () => voice.stopSpeaking();
 
 // Voice-first dashboard and optional wake phrase (foreground only).
@@ -317,6 +330,17 @@ const voiceDescription = document.createElement('p');
 voiceDescription.className = 'hint';
 voiceDescription.textContent = 'One automatically selected British-butler voice. The sound depends on which voices Safari and macOS provide.';
 voiceCard.append(voiceHeading, voiceDescription);
+const voiceTestButton=document.createElement('button');
+voiceTestButton.type='button';voiceTestButton.textContent='Test AUREN voice';
+voiceTestButton.onclick=()=>{
+  if(!capabilities.speak){showStatus('This browser does not support spoken replies.','error');return;}
+  $('speakReplies').checked=true;voice.setEnabled(true);
+  try{localStorage.setItem(AUREN_SPEECH_PREF,'true');}catch{}
+  voice.primeAudio();
+  voice.speak('At your service. Voice playback is working.');
+};
+voiceCard.append(voiceTestButton);
+
 // Interruptions are off by default to prevent nearby conversations from
 // cutting off AUREN. The setting is local to this browser and persists.
 const INTERRUPTIONS_KEY = 'auren_interruptions_enabled_v1';
@@ -1183,6 +1207,32 @@ function rememberLastReply(text) {
   const value=String(text||'').trim();
   if(value && value !== lastSubstantiveReply) lastSubstantiveReply=value;
 }
+// v2.16.2 — reliable access to Text Chat & History from the home screen.
+const chatHistoryShortcut=document.createElement('button');
+chatHistoryShortcut.type='button';
+chatHistoryShortcut.id='aurenOpenChatHistory';
+chatHistoryShortcut.textContent='Text chat & history';
+chatHistoryShortcut.className='ghost';
+chatHistoryShortcut.style.cssText='display:block;margin:14px auto;padding:10px 18px;border:1px solid rgba(199,168,104,.45);border-radius:12px;color:#e8d9bd;background:#22252b;';
+const shortcutHost=document.querySelector('.home-shortcuts') || orbButton;
+shortcutHost.insertAdjacentElement('afterend',chatHistoryShortcut);
+chatHistoryShortcut.addEventListener('click',async()=>{
+  await activateScreen('chat');
+  const details=$('conversationDetails');
+  if(details){details.open=true;details.hidden=false;details.style.display='block';details.scrollIntoView({behavior:'smooth',block:'start'});}
+  const field=$('chatInput');
+  if(field)field.focus({preventScroll:true});
+});
+// Remind users when local chat-history saving is disabled, without changing their privacy setting.
+const historyDetails=$('conversationDetails');
+if(historyDetails){
+  const historyHelp=document.createElement('p');
+  historyHelp.className='hint';historyHelp.id='aurenHistorySaveHint';
+  historyHelp.textContent=settings.saveHistory?'Saved history on this browser is enabled.':'History saving is OFF in Settings. Current chat still works, but messages may not remain after refreshing.';
+  historyDetails.insertBefore(historyHelp,historyDetails.querySelector('#log'));
+  $('saveHistory')?.addEventListener('change',()=>{historyHelp.textContent=$('saveHistory').checked?'Saved history on this browser is enabled.':'History saving is OFF in Settings. Current chat still works, but messages may not remain after refreshing.';});
+}
+
 // ---------- chat ----------
 function drawMessage(rec, opts = {}) {
   const d = el('div', `msg ${rec.role}${opts.err ? ' err' : ''}`, rec.text);
@@ -1341,7 +1391,7 @@ const personalWelcome=document.createElement('div');personalWelcome.className='c
 const welcomeText=document.createElement('p');welcomeText.textContent='Welcome to AUREN. What would you like me to call you? You may use your name, Sir, Ma’am, or any title. Gender is optional and never assumed.';
 const welcomeSetup=document.createElement('button');welcomeSetup.type='button';welcomeSetup.textContent='Set my name and preferences';welcomeSetup.onclick=()=>{void activateScreen('settings');nameField.focus();};
 const welcomeLater=document.createElement('button');welcomeLater.type='button';welcomeLater.className='ghost';welcomeLater.textContent='Maybe later';welcomeLater.onclick=()=>{personalProfile.onboarded=true;savePersonalProfile();personalWelcome.hidden=true;};
-personalWelcome.append(welcomeText,welcomeSetup,welcomeLater);locationQuickPanel.insertAdjacentElement('beforebegin',personalWelcome);personalWelcome.hidden=!!personalProfile.onboarded;
+personalWelcome.append(welcomeText,welcomeSetup,welcomeLater);orbButton.insertAdjacentElement('afterend',personalWelcome);personalWelcome.hidden=!!personalProfile.onboarded;
 function personalCommand(text){
  const t=String(text||'').trim();let m;
  if((m=t.match(/^(?:please\s+)?(?:call me|start calling me|you can call me|my name is)\s+([\p{L}\p{N} .'_-]{1,45})[.!?]*$/iu))){
@@ -1581,7 +1631,7 @@ locationQuickDisable.type='button';locationQuickDisable.textContent='Turn locati
 locationQuickDisable.onclick=()=>locationOff();
 locationQuickPanel.append(locationQuickStatus,locationQuickEnable,locationQuickDisable);
 // Position under the orb, always visible on the assistant home screen.
-orbButton.insertAdjacentElement('afterend',locationQuickPanel);
+$('settings').append(locationQuickPanel); locationQuickPanel.hidden=true; locationQuickPanel.style.display='none';
 const locationPermissionBar=document.createElement('div');
 locationPermissionBar.id='aurenLocationPermissionBar';
 locationPermissionBar.hidden=true;
@@ -1628,7 +1678,7 @@ function mapsSuggestionLink(query) {
   return 'https://www.google.com/maps/search/?'+params;
 }
 async function send(text) {
-  if (await aurenPlaces.handle(text)) return;
+  if (typeof aurenPlaces !== 'undefined' && await aurenPlaces.handle(text)) return;
   // Location commands take priority over AI. Only a direct button tap triggers Safari's GPS prompt.
   const clean=String(text||'').trim();
   const localPersonal=personalCommand(clean);
@@ -1900,7 +1950,7 @@ async function answerConfirm(token, yes, label) {
   try { await presentResult(await butler.answer(token, yes)); }
   catch (e) { await addMessage('auren', 'I regret to say that failed: ' + e.message, { err: true }); showStatus(e.message, 'error'); }
 }
-$('chatForm').onsubmit = e => { e.preventDefault(); const v = $('chatInput').value.trim(); if (v) { $('chatInput').value = ''; safe(send)(v); } };
+$('chatForm').onsubmit = e => { e.preventDefault(); const v = $('chatInput').value.trim(); if (v) { if($('speakReplies').checked) voice.primeAudio(); $('chatInput').value = ''; safe(send)(v); } };
 
 async function loadHistory() {
   const msgs = (await getAll(STORES.messages)).filter(m => m.role === 'user' || m.role === 'auren').sort((a, b) => a.at.localeCompare(b.at));
