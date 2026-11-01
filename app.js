@@ -1,4 +1,4 @@
-// AUREN v2.11.3 — topic-switch patience, simplified orb status and subtle Central clock
+// AUREN v2.16.4 — startup reference repair; topic-switch patience, simplified orb status and subtle Central clock
 // AUREN — js/app.js
 // Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
 // v0.2: status banner for storage problems, session panel, privacy controls, safe backup import.
@@ -1563,14 +1563,14 @@ function locationPaint(){
  locationButton.textContent=active?'Turn location OFF':'Turn location ON';
  locationButton.setAttribute('aria-pressed',String(active));
  locationStatus.textContent=locationPending?'Waiting for Safari permission…':locationApproved?'Location ON for this tab. Turn it OFF whenever you like.':'Location OFF. No coordinates being held.';
- locationQuickStatus.textContent=locationPending?'Requesting Safari location permission…':locationApproved?'Location is ON for this tab.':'Location is OFF.';
- locationQuickEnable.hidden=active;
- locationQuickDisable.hidden=!active;
+
+
+
  if(locationApproved) locationPermissionBar.hidden=true;
 }
 function locationOff(){
  locationRequestSequence++;locationApproved=false;locationPending=false;aurenLocation=null;pendingLocationIntent=null;
- locationPermissionBar.hidden=true;nearbyResultPanel.hidden=true;nearbyResultLink.removeAttribute('href');locationPaint();
+ locationPermissionBar.hidden=true;nearbyResultPanel.hidden=true;nearbyResultLink.removeAttribute('href');aurenPlaces.clear();locationPaint();
 }
 function nearbySearchTerm(request){
  const t=String(request||'').trim();
