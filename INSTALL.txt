@@ -1,7 +1,9 @@
-AUREN v1.4.7 — Interrupt Timing Fix
+AUREN v2.0.3 Smarter Memory — built on the v2.0.2 combined update.
 
-Upload app.js and voice.js to your existing GitHub repository root.
+GitHub: replace app.js and ai.js in repository root. Leave index.html, styles.css, voice.js and other files as they are.
 
-Interruptions must be enabled in Settings. With it off, AUREN intentionally finishes speaking.
-When enabled, AUREN attempts to keep listening during its replies; Safari can block simultaneous speech recognition and playback. Early recognition uses two matching interim updates or a wake phrase where supported.
-This addresses a specific restart timing bug and is not a guarantee of perfect hands-free barge-in.
+Optional recommended: deploy cloudflare-worker.js through the Cloudflare dashboard Worker code editor (NOT as a GitHub Pages script) to improve the actual AI instructions. Keep Workers AI binding AI unchanged. Worker is still a personal prototype; Origin is NOT authentication.
+
+Test: Save "I enjoy trading" in Memory, refresh, ask AUREN "What are my interests?" and "What should I focus on today?". Saved information should be used; unsaved facts should not be guessed.
+
+No new memories are created without consent. Sensitive memories are not sent to AI. Browsers can still clear IndexedDB; export backups regularly.

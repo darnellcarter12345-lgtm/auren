@@ -330,6 +330,39 @@ function memoryCandidate(text) {
   return t;
 }
 
+// Build a compact personal profile from verified, non-sensitive saved memories.
+// Keyword-only lookup previously omitted broad interests when a question used different words.
+async function contextForAI(question) {
+  const all = (await Mem.listMemories()).filter(m => {
+    if (m.sensitive || !m.text) return false;
+    const scan = classify([m.text, ...(m.tags || [])].join(' '));
+    return !scan.blocked.length && !scan.sensitive.length;
+  });
+  const matches = await Mem.searchMemories(question, 8);
+  const generic = /\b(me|my|mine|myself|about me|you know|recommend|suggest|focus|priorit|interests|preferences|goals|what should i|what do you know)\b/i.test(question);
+  const preferred = generic
+    ? all.filter(m => ['preference', 'interest', 'goal', 'routine'].includes(m.category))
+    : all.filter(m => ['preference', 'interest', 'goal'].includes(m.category));
+  const chosen = [];
+  const add = m => { if (m && !chosen.some(x => x.id === m.id)) chosen.push(m); };
+  // Always send some stable preferences, as well as question-related facts.
+  matches.slice(0, 3).forEach(add);
+  preferred.slice(0, 5).forEach(add);
+  matches.forEach(add);
+  return {
+    memories: chosen.slice(0, 8),
+    session: butler.listSession().map(n => n.text).slice(0, 5)
+  };
+}
+
+async function askWithMemory(question) {
+  const context = await contextForAI(question);
+  const answer = await askAI(question, context.memories, context.session, aiRecent);
+  aiRecent.push({role:'user', content:question.slice(0,500)}, {role:'assistant', content:answer.slice(0,500)});
+  if (aiRecent.length > 12) aiRecent.splice(0, aiRecent.length - 12);
+  return answer;
+}
+
 async function send(text) {
   if (voice.available().speak && !voice.enabled) { voice.setEnabled(true); $('speakReplies').checked = true; }
   await addMessage('user', text, { ephemeral: isSessionNote(text) });
@@ -342,10 +375,7 @@ async function send(text) {
       const candidate = memoryCandidate(text);
       const alreadySaved = (await Mem.listMemories()).some(m => m.text.toLowerCase() === candidate.toLowerCase());
       if (alreadySaved) {
-        const context = await butler.getContext(text);
-        const answer = await askAI(text, context.memories.filter(m => !m.sensitive), context.session, aiRecent);
-        aiRecent.push({role:'user', content:text.slice(0,500)}, {role:'assistant', content:answer.slice(0,500)});
-        if (aiRecent.length > 12) aiRecent.splice(0, aiRecent.length - 12);
+        const answer = await askWithMemory(text);
         await addMessage('auren', answer);
       } else {
         // AUREN asks permission before adding a lasting fact; no data leaves the browser.
@@ -354,11 +384,7 @@ async function send(text) {
       }
     } else {
       $('latestReply').textContent = 'Thinking…';
-      const context = await butler.getContext(text);
-      // Sensitive records never go to the third-party model automatically.
-      const answer = await askAI(text, context.memories.filter(m => !m.sensitive), context.session, aiRecent);
-      aiRecent.push({role:'user', content:text.slice(0,500)}, {role:'assistant', content:answer.slice(0,500)});
-      if (aiRecent.length > 12) aiRecent.splice(0, aiRecent.length - 12);
+      const answer = await askWithMemory(text);
       await addMessage('auren', answer);
     }
   } catch (e) {

@@ -18,7 +18,7 @@ export async function askAI(message, memories = [], session = [], recent = []) {
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message: message.slice(0, 1200), memories: memories.slice(0, 5).map(m => m.text.slice(0, 300)), session: session.slice(0, 5).map(x => x.slice(0, 200)), recent: recent.slice(-6) }),
+      body: JSON.stringify({ message: message.slice(0, 1200), memories: memories.slice(0, 8).map(m => m.text.slice(0, 300)), session: session.slice(0, 5).map(x => x.slice(0, 200)), recent: recent.slice(-6) }),
       signal: controller.signal
     });
     const data = await response.json().catch(() => ({}));
