@@ -11,6 +11,7 @@ import { Butler, isSessionNote } from './butler.js';
 import { buildBackup, encryptBackup, decryptBackup, validateBackup, applyPlan, describeReport, LIMITS } from './backup.js';
 import { loadSettings, saveSettings } from './settings.js';
 import { createVoice } from './voice.js?v=2.9.4';
+import { createIPhoneRecorder } from './iphone-voice.js?v=2.9.5';
 import { getAIEndpoint, setAIEndpoint, askAI } from './ai.js';
 import { getWeatherBriefing } from './weather.js';
 
@@ -21,8 +22,9 @@ const settings = loadSettings();
 const HISTORY_LIMIT = 200;
 const aiRecent = [];
 const aiEndpointInput = $('aiEndpoint');
+window.addEventListener('auren:ai-endpoint-updated', () => { aiEndpointInput.value = getAIEndpoint(); });
 aiEndpointInput.value = getAIEndpoint();
-$('saveAIEndpoint').onclick = () => { try { setAIEndpoint(aiEndpointInput.value); showStatus('AUREN AI connection saved on this browser.', 'ok'); } catch (e) { showStatus(e.message, 'error'); } };
+$('saveAIEndpoint').onclick = () => { try { setAIEndpoint(aiEndpointInput.value); window.dispatchEvent(new Event('auren:ai-endpoint-changed')); showStatus('AUREN AI connection saved on this browser.', 'ok'); } catch (e) { showStatus(e.message, 'error'); } };
 $('clearAIEndpoint').onclick = () => { setAIEndpoint(''); aiEndpointInput.value = ''; showStatus('AI connection removed.', 'info'); };
 let storageOk = false, sinceTrim = 0;
 // Compact voice subtitles: fixed two lines, with older words rolling away.
@@ -93,11 +95,39 @@ const voice = createVoice({
   onStatus: msg => {
     $('voiceStatus').textContent = msg;
     // Derive appearance from the actual microphone mode, never a status phrase.
-    queueMicrotask(() => syncVoiceUI());
+    if (!aurenIOS) queueMicrotask(() => syncVoiceUI());
   }
 });
+// iPhone uses direct audio capture, not Safari SpeechRecognition.
+const aurenIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+const iphoneRecorder = aurenIOS ? createIPhoneRecorder({
+  endpoint: getAIEndpoint,
+  onStatus: (message, state) => {
+    $('voiceStatus').textContent = message;
+    $('heroState').textContent = message;
+    $('heroState').hidden = state === 'idle';
+    document.body.dataset.voiceState = state;
+    if (state === 'listening') $('aurenHeadline').textContent = 'I’m listening.';
+    else if (state === 'processing') $('aurenHeadline').textContent = 'One moment.';
+    else if (state === 'error') $('aurenHeadline').textContent = 'Voice connection needs attention.';
+    else $('aurenHeadline').textContent = 'At your service.';
+  },
+  onText: async transcript => {
+    $('chatInput').value = transcript;
+    showCaption(transcript, 'YOU');
+    voice.setEnabled(true);
+    $('speakReplies').checked = true;
+    await send(transcript);
+  }
+}) : null;
+async function toggleIPhoneRecorder() {
+  if (!iphoneRecorder) return;
+  // This function must be invoked directly by a real tap.
+  if (iphoneRecorder.recording) await iphoneRecorder.stop();
+  else iphoneRecorder.start();
+}
 function syncVoiceUI() {
-  const listening = voice.listening;
+  const listening = aurenIOS ? iphoneRecorder.recording : voice.listening;
   $('micBtn').textContent = listening ? '■ Stop listening' : '🎙 Speak to AUREN';
   $('micBtn').setAttribute('aria-pressed', String(listening));
   $('wakeBtn').textContent = voice.wakeMode ? '■ Stop “Hey Auren”' : 'Enable “Hey Auren”';
@@ -118,11 +148,12 @@ function syncVoiceUI() {
 }
 
 const capabilities = voice.available();
-$('micBtn').disabled = !capabilities.listen;
+$('micBtn').disabled = aurenIOS ? !navigator.mediaDevices?.getUserMedia : !capabilities.listen;
 $('speakReplies').disabled = !capabilities.speak;
 $('stopSpeech').disabled = !capabilities.speak;
 $('voiceStatus').textContent = capabilities.listen ? 'Tap the orb once to activate voice. Safari may require this after each visit.' : 'Browser voice recognition unavailable. On iPhone, use the keyboard microphone in Text chat.';
 $('micBtn').onclick = () => {
+  if (aurenIOS) { void toggleIPhoneRecorder(); return; }
   if (voice.listening) voice.stopListening();
   else voice.startListening();
   syncVoiceUI();
@@ -170,6 +201,7 @@ $('panelToggle').addEventListener('click', (event) => {
 let lastOrbTap = 0;
 const orbButton = $('orbControl');
 function activateOrb(event) {
+  if (aurenIOS) { void toggleIPhoneRecorder(); return; }
   const now = Date.now();
   // Use the native click gesture, including on iPhone Safari.
   if (now - lastOrbTap < 300) return;
@@ -198,86 +230,16 @@ function activateOrb(event) {
 // Safari needs a native user click for microphone activation; intercepting
 // touchstart can prevent the standard permission flow on iPhones.
 orbButton.addEventListener('click', activateOrb);
-// iPhone: a single deliberate tap requests mic permission and starts voice.
-// When Web Speech is unavailable, offer native iOS dictation instead of a dead orb.
-const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
-  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
-let microphonePermission = 'unknown';
-if (isIOS) {
-  const allowMic = document.createElement('button');
-  allowMic.type = 'button';
-  allowMic.className = 'ghost';
-  allowMic.textContent = 'Enable microphone & talk';
-  allowMic.setAttribute('aria-label', 'Allow microphone and start speaking to AUREN');
-  allowMic.style.marginTop = '12px';
-  const dictate = document.createElement('button');
-  dictate.type = 'button';
-  dictate.className = 'ghost';
-  dictate.textContent = 'Use iPhone dictation';
-  dictate.style.margin = '12px 0 0 8px';
-  dictate.hidden = capabilities.listen;
-  dictate.onclick = () => {
-    voice.stopListening();
-    void activateScreen('chat').then(() => {
-      const input = $('chatInput');
-      input.focus();
-      showStatus('Tap the microphone on your iPhone keyboard, dictate your message, then press Send.', 'info');
-    });
-  };
-  allowMic.onclick = () => {
-    // IMPORTANT: call SpeechRecognition.start() synchronously within the tap.
-    // Awaiting getUserMedia() first loses Safari's user gesture, which causes
-    // the brief Listening -> Idle flash even though the tap registered.
-    voice.primeAudio();
-    voice.setEnabled(true);
-    $('speakReplies').checked = true;
-    const started = voice.startListening();
-    syncVoiceUI();
-    if (started) {
-      allowMic.textContent = 'Retry listening';
-      showStatus('Starting iPhone speech recognition. Speak now; AUREN will report if Safari closes the session.', 'info');
-    } else {
-      dictate.hidden = false;
-      showStatus('Safari could not start speech recognition. Use iPhone dictation or check microphone permission.', 'error');
-    }
-  };
-  // Separate permission diagnostic. Does not claim to enable speech recognition.
-  const checkMic = document.createElement('button');
-  checkMic.type = 'button';
-  checkMic.className = 'ghost';
-  checkMic.textContent = 'Check mic permission';
-  checkMic.style.margin = '12px 0 0 8px';
-  checkMic.onclick = async () => {
-    if (!navigator.mediaDevices?.getUserMedia) {
-      showStatus('Safari cannot access microphone capture. Check iPhone Safari permissions.', 'error');
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach(track => track.stop());
-      microphonePermission = 'granted';
-      showStatus('Microphone capture works. Now tap the orb to test speech recognition (a separate Safari feature).', 'ok');
-    } catch (error) {
-      microphonePermission = 'denied';
-      showStatus('Microphone capture blocked: ' + (error.name || 'permission denied') + '. Check Safari Website Settings.', 'error');
-    }
-  };
-  orbButton.insertAdjacentElement('afterend', allowMic);
-  allowMic.insertAdjacentElement('afterend', checkMic);
-  checkMic.insertAdjacentElement('afterend', dictate);
-  // A failed Web Speech session must not strand users with an inert orb.
-  const voiceStatus = $('voiceStatus');
-  if (voiceStatus) {
-    const observer = new MutationObserver(() => {
-      const msg = voiceStatus.textContent || '';
-      if (/unavailable|blocked|stuck|stopped|ended listening|recognition issue|speech recognition needs|could not start|microphone could not start/i.test(msg)) {
-        dictate.hidden = false;
-        allowMic.textContent = microphonePermission === 'granted' ? 'Retry microphone & talk' : 'Enable microphone & talk';
-      }
-    });
-    observer.observe(voiceStatus, { childList: true, characterData: true, subtree: true });
-  }
+// iPhone direct recording: tap the orb or the microphone button to start;
+// tap again to stop, transcribe, and receive a spoken reply.
+if (aurenIOS) {
+  const micHint = document.createElement('p');
+  micHint.className = 'hint';
+  micHint.textContent = 'iPhone: tap the orb to record, then tap again to send your voice message.';
+  orbButton.insertAdjacentElement('afterend', micHint);
+  $('voiceStatus').textContent = 'Ready. Tap the orb to allow microphone access and start recording.';
 }
+
 // Voice preview is intentionally removed: one voice, one simple main control.
 $('wakeBtn').onclick = () => {
   if (capabilities.speak) voice.setEnabled(true);
