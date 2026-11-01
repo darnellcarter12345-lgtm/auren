@@ -5,7 +5,7 @@ import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.10.0/fireba
 import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut, setPersistence, browserLocalPersistence } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
 
 const firebaseConfig = {
-  apiKey: 'AIzaSyB5up3qmH2miZHOOHl64vCe9O6maXKMRPU',
+  apiKey: 'apiKey: "AIzaSyB5up3qmH2miZHO0H164vCe9O6maXKMRPU",',
   authDomain: 'auren-90588.firebaseapp.com',
   projectId: 'auren-90588',
   storageBucket: 'auren-90588.firebasestorage.app',
