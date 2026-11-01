@@ -1,1 +1,5 @@
-AUREN v2.5 — replace app.js, voice.js, index.html; ADD weather.js. Keep other modules unchanged. Open site in Safari on iPhone and tap orb once to initiate browser voice. iOS has no Always Allow toggle for continuous web speech; audio and microphone are separate. Weather defaults to Dallas (change Weather city in Settings). No GPS permission is requested.
+AUREN v2.5.1 — Speech pause fix
+Replace ONLY voice.js in your GitHub repository.
+Keep app.js, index.html, styles.css, weather.js and Cloudflare Worker unchanged.
+Refresh the site; test on iPhone and Mac.
+This waits for ~1.35s of silence on iPhone or ~1.05s on desktop after final fragments before submitting the request. Safari may end recognition or limit simultaneous listening and speaking.

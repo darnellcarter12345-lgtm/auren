@@ -15,6 +15,25 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   let speaking = false, responding = false, enabled = false, permittedStart = false;
   let token = 0, restartTimer = null, idleTimer = null, errorStop = false;
   let desiredMode = 'off';
+  // Aggregate recognition fragments until the speaker pauses naturally.
+  let phraseParts = [], phraseTimer = null;
+  const PHRASE_PAUSE_MS = mobileWebKit ? 1350 : 1050;
+  function clearPhrase() { clearTimeout(phraseTimer); phraseTimer = null; phraseParts = []; }
+  function queuePhrase(text) {
+    if (!text) return;
+    phraseParts.push(text.trim());
+    schedulePhrase();
+  }
+  function schedulePhrase() {
+    clearTimeout(phraseTimer);
+    if (!phraseParts.length) return;
+    phraseTimer = setTimeout(() => {
+      phraseTimer = null;
+      const text = phraseParts.join(' ').trim();
+      phraseParts = [];
+      if (text) processPhrase(text);
+    }, PHRASE_PAUSE_MS);
+  }
   let currentUtterance = null;
   let fixedVoice = null;
   let audioPrimed = false;
@@ -65,7 +84,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   }
   const report = text => onStatus?.(text);
   const available = () => ({ listen: !!Recognition, speak: !!(synth && window.SpeechSynthesisUtterance) });
-  const cancelTimers = () => { clearTimeout(restartTimer); clearTimeout(idleTimer); };
+  const cancelTimers = () => { clearTimeout(restartTimer); clearTimeout(idleTimer); clearPhrase(); };
   const abort = () => { const old = recognition; recognition = null; active = false; engineRunning = false; if (old) try { old.abort(); } catch {} };
   function looksLikeUser(text) {
     const normalized = String(text || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -140,6 +159,50 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     const rest = mobileWebKit ? Math.max(0, 650 - (Date.now() - lastStart)) : 0;
     restartTimer = setTimeout(startEngine, Math.max(delay, rest));
   }
+  function processPhrase(transcript) {
+    if (responding || !transcript) return;
+      if (speaking) {
+        if (!interruptionsEnabled) return;
+        // Safari may hear its own speakers. Only interrupt for a clear, distinct
+        // utterance; a wake phrase always counts. Others need 3+ words and
+        // must not be a fragment of what AUREN is currently saying.
+        const cleaned = transcript.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+        const output = spokenText.toLowerCase().replace(/[^a-z0-9 ]/g, '');
+        const wake = detectWake(transcript);
+        if (!wake && (cleaned.split(/\s+/).length < 3 || output.includes(cleaned))) return;
+        interruptSpeech();
+        onInterim?.('');
+        // Continue below through the exact same transcript pipeline as orb mode.
+      }
+      const detected = detectWake(transcript);
+      const visibleTranscript = detected ? normalizeWakeDisplay(transcript) : transcript;
+      if (wakeMode && !conversation && !detected) { onInterim?.(''); return; }
+      clearTimeout(idleTimer);
+      responding = true;
+      onInterim?.('');
+      if (detected) {
+        conversation = true;
+        if (!detected.command) {
+          responding = false;
+          // The recognizer finalized a standalone wake phrase after a pause.
+          // Acknowledge briefly, then resume listening for the actual request.
+          // A wake phrase with a command goes straight to deliver() instead.
+          onHeard?.('Hey Auren');
+          if (enabled && available().speak) {
+            speak('Yes?');
+          } else {
+            report('Listening — go ahead…');
+          }
+          scheduleIdle();
+          return;
+        }
+        onHeard?.(visibleTranscript);
+        deliver(detected.command);
+      } else if (conversation) {
+        onHeard?.(visibleTranscript);
+        deliver(transcript);
+      } else responding = false;
+  }
   function startEngine() {
     if (desiredMode === 'off' || active || (speaking && (!conversation || !interruptionsEnabled)) || responding || errorStop || (!conversation && !wakeMode) || !permittedStart) return;
     if (!pageVisible()) return;
@@ -170,53 +233,19 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
           interruptionCandidate = comparable;
           if (interruptionSamples >= 2 || detectWake(preview)) interruptSpeech();
         }
-        if (!speaking && (!wakeMode || conversation || detectWake(preview))) onInterim?.(normalizeWakeDisplay(preview));
+        if (phraseParts.length) schedulePhrase();
+        if (!speaking && (!wakeMode || conversation || detectWake(preview))) onInterim?.(normalizeWakeDisplay([...phraseParts, preview].join(' ')));
       }
-      if (!finalResults.length || responding) return;
-      const alternatives = finalResults.flatMap(item => Array.from(item).map(a => a.transcript?.trim()).filter(Boolean));
-      const transcript = alternatives[0] || '';
-      if (!transcript) return;
-      if (speaking) {
-        if (!interruptionsEnabled) return;
-        // Safari may hear its own speakers. Only interrupt for a clear, distinct
-        // utterance; a wake phrase always counts. Others need 3+ words and
-        // must not be a fragment of what AUREN is currently saying.
-        const cleaned = transcript.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
-        const output = spokenText.toLowerCase().replace(/[^a-z0-9 ]/g, '');
-        const wake = alternatives.map(detectWake).find(Boolean);
-        if (!wake && (cleaned.split(/\s+/).length < 3 || output.includes(cleaned))) return;
-        interruptSpeech();
-        onInterim?.('');
-        // Continue below through the exact same transcript pipeline as orb mode.
-      }
-      const detected = alternatives.map(detectWake).find(Boolean);
-      const visibleTranscript = detected ? normalizeWakeDisplay(alternatives.find(a => detectWake(a)) || transcript) : transcript;
-      if (wakeMode && !conversation && !detected) { onInterim?.(''); return; }
-      clearTimeout(idleTimer);
-      responding = true;
-      onInterim?.('');
-      if (detected) {
-        conversation = true;
-        if (!detected.command) {
-          responding = false;
-          // The recognizer finalized a standalone wake phrase after a pause.
-          // Acknowledge briefly, then resume listening for the actual request.
-          // A wake phrase with a command goes straight to deliver() instead.
-          onHeard?.('Hey Auren');
-          if (enabled && available().speak) {
-            speak('Yes?');
-          } else {
-            report('Listening — go ahead…');
-          }
-          scheduleIdle();
-          return;
+      if (responding) return;
+      // Final means 'this recognizer segment ended', not 'the speaker is done'.
+      // Keep gathering words until a short pause, including on iPhone.
+      if (finalResults.length) {
+        for (let i = 0; i < finalResults.length; i++) {
+          const item = finalResults[i];
+          const finalText = item[0]?.transcript?.trim();
+          if (finalText) queuePhrase(finalText);
         }
-        onHeard?.(visibleTranscript);
-        deliver(detected.command);
-      } else if (conversation) {
-        onHeard?.(visibleTranscript);
-        deliver(transcript);
-      } else responding = false;
+      }
     };
     r.onerror = e => {
       if (id !== token) return;
@@ -238,6 +267,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       if (id !== token) return;
       recognition = null; active = false; engineRunning = false;
       if (!responding && !errorStop) {
+        // Keep the final speech fragment pending while recognition restarts.
         // Back off failed sessions; do not hammer microphone permissions on iOS.
         const delay = mobileWebKit ? Math.min(2000, 500 + restartFailures * 300) : 230;
         listenSoon(delay);
@@ -299,7 +329,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     // can interrupt. Spoken-voice echo is filtered in the recognition handler.
     if (!conversation || !interruptionsEnabled) abort();
     if (synth) synth.cancel();
-    speaking = true; interrupted = false; spokenText = text;
+    clearPhrase(); speaking = true; interrupted = false; spokenText = text;
     interruptionCandidate = ''; interruptionSamples = 0;
     const u = new SpeechSynthesisUtterance(text);
     currentUtterance = u; // Keep a strong reference; Safari may drop async utterances.
@@ -321,7 +351,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   function startListening() {
     if (!Recognition) { report('This browser cannot transcribe speech directly. On iPhone, use the keyboard microphone in Text chat.'); return false; }
     if (conversation && !wakeMode) { stopListening(); return false; }
-    errorStop = false; permittedStart = true; wakeMode = true; conversation = true; desiredMode = 'conversation';
+    clearPhrase(); errorStop = false; permittedStart = true; wakeMode = true; conversation = true; desiredMode = 'conversation';
     clearTimeout(idleTimer); if (speaking) stopSpeaking();
     scheduleIdle(); startEngine(); // Must run synchronously in the user's click on Safari.
     return true;
@@ -335,14 +365,14 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     if (!value) { stopListening(); return false; }
     if (!Recognition) { report('Wake phrase unavailable here. On iPhone, use the keyboard microphone in Text chat.'); return false; }
     // This must be called by a user interaction to receive microphone permission.
-    errorStop = false; permittedStart = true; wakeMode = true; conversation = false; desiredMode = 'wake';
+    clearPhrase(); errorStop = false; permittedStart = true; wakeMode = true; conversation = false; desiredMode = 'wake';
     cancelTimers(); if (speaking) stopSpeaking();
     startEngine(); // Safari requires this within the user's activation.
     if (active) report('Listening for “Hey Auren” while this page is active.');
     return true;
   }
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { clearTimeout(restartTimer); ++token; abort(); report('Voice paused while AUREN is in the background.'); }
+    if (document.hidden) { clearPhrase(); clearTimeout(restartTimer); ++token; abort(); report('Voice paused while AUREN is in the background.'); }
     else if (permittedStart && (wakeMode || conversation) && !errorStop) {
       // Foreground resume is best effort; if Safari requires another gesture, tap orb.
       listenSoon(mobileWebKit ? 650 : 350);
