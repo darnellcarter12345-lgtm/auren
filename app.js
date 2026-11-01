@@ -1666,6 +1666,17 @@ function mapsSuggestionLink(query) {
 }
 async function send(text) {
   if (await aurenPlaces.handle(text)) return;
+  // Ordinary web searches are distinct from GPS place searches.
+  const webRequest=String(text||'').trim().match(/^(?:auren[, ]+)?(?:can you |could you |please )?(?:search (?:the )?(?:web|internet|google) (?:for )?|look (?:up|online for) |google )(.{3,140})[.!?]*$/i);
+  if(webRequest && !/\b(?:near me|nearby|around me|closest|where should i go)\b/i.test(webRequest[1])) {
+    const query=webRequest[1].trim();
+    await addMessage('user',text);
+    await addMessage('auren',`I can open web results for ${query}, but cannot directly read them inside AUREN yet. Select the link to search.`);
+    const row=document.createElement('p');
+    const link=document.createElement('a');link.href='https://www.google.com/search?q='+encodeURIComponent(query);link.target='_blank';link.rel='noopener noreferrer';link.textContent='Search the web for '+query;
+    row.append(link);$('log')?.append(row);
+    return;
+  }
   // Location commands take priority over AI. Only a direct button tap triggers Safari's GPS prompt.
   const clean=String(text||'').trim();
   const localPersonal=personalCommand(clean);
@@ -1691,12 +1702,8 @@ async function send(text) {
    else {await addMessage('auren','Click Enable location now to switch on location for this tab. Safari controls the permission prompt.');offerLocationButton();}
    return;
   }
-  if(locationRelevant(clean)){
-   await addMessage('user',clean);
-   if(locationApproved&&aurenLocation){showNearbyResults(clean);await addMessage('auren','I’ve prepared a nearby Maps search for you below. Opening Google Maps is optional; I cannot verify listings inside AUREN.');}
-   else {pendingLocationIntent=clean.slice(0,180);await addMessage('auren','I can use your approximate location to help find nearby places. Would you like to enable location? You can also give me a city instead.');offerLocationButton();}
-   return;
-  }
+  // Smart Places owns nearby discovery and its permission/results flow.
+  // Route GPS-free traffic/directions requests to a map link only when requested.
   // A simple request for reassurance is about the most recent statement,
   // not an invitation to replay unrelated memories or apologize automatically.
   if (isReassuranceRequest(text)) {
@@ -2135,10 +2142,11 @@ aurenPlaces = (() => {
   const no=/^(?:no|nope|no thanks|not now|cancel)[.!? ]*$/i;
   const done=/^(?:done|finished|i(?:'m| am) done|that's all|end search|close results|stop searching)[.!? ]*$/i;
   const repeat=/^(?:repeat|repeat that|say that again|show (?:them|those|the places|results) again|what were the places)[.!? ]*$/i;
+  const broadPlaceIntent=/\b(?:find|show|suggest|recommend|search|look for|looking for|take me to|i want|i need|could use|want to find)\b[\s\S]{0,80}\b(?:place(?:s)?|somewhere|restaurant(?:s)?|eat|food|dinner|lunch|breakfast|coffee|cafe|shop(?:ping)?|store(?:s)?|park(?:s)?|gym(?:s)?|museum(?:s)?|library|barber|salon|hotel|gas station|car wash|mechanic|movie|theater|arcade|bowling|pharmacy|mcdonald'?s|starbucks|walmart|target)\b|\b(?:anything (?:fun )?to do|what(?:'s| is) (?:around|near) me|something to do|somewhere to go|places around here|where to go|places (?:for|to) (?:eat|visit|shop))\b/i;
   const placeIntent=/\b(?:where (?:should|can|could) (?:i|we) (?:go|eat|shop|visit)|(?:find|show|suggest|recommend|look up|search for)\s+(?:me\s+)?(?:some\s+|a\s+|an\s+|the\s+|nearby\s+|closest\s+|good\s+|best\s+)*(?:places?|locations?|spots?|things to do|restaurants?|food|cafes?|coffee shops?|mcdonald'?s|chick.fil.a|starbucks|parks?|gyms?|stores?|shops?|museums?|libraries|theaters?|cinemas?|bowling|hiking|pharmacies|gas stations?|hotels?|barbers?|salons?|car washes?|mechanics?|dealerships?|bookstores?|arcades?|grocery stores?|supermarkets?|walmart|target)|(?:near me|nearby|closest to me|around me|in my area))\b/i;
   const panel=document.createElement('section');panel.id='aurenSmartPlacesV215';panel.className='card';panel.style.cssText='margin:12px auto;width:min(92%,680px);padding:14px;border:1px solid rgba(199,168,104,.38);border-radius:14px;background:#191b20;color:#ebd9b2;display:none';
   const heading=document.createElement('strong'), content=document.createElement('div'), actions=document.createElement('div');actions.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-top:12px';panel.append(heading,content,actions);
-  const log=$('log'); log?.parentElement?.append(panel);
+  const log=$('log'); (log?.parentElement||$('chat')||document.body).append(panel);
   const action=(label,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=fn;actions.append(b);return b;};
   const show=(title,message)=>{heading.textContent=title;content.replaceChildren();if(message){const p=document.createElement('p');p.textContent=message;content.append(p);}actions.replaceChildren();panel.style.display='block';};
   const hide=()=>{panel.style.display='none';content.replaceChildren();actions.replaceChildren();};
@@ -2186,10 +2194,11 @@ aurenPlaces = (() => {
     if(phase==='confirm-done'&&yes.test(t)){await addMessage('user',t);clear();await addMessage('auren','Search finished. Temporary search coordinates cleared.');return true;}
     if(phase==='confirm-done'&&no.test(t)){await addMessage('user',t);displayResults();return true;}
     if((phase==='results'||phase==='confirm-done')&&repeat.test(t)){await addMessage('user',t);displayResults(true);return true;}
+    if(phase==='results'&&/\b(?:closest|nearest|first one|second one|third one|which one|how far|list (?:them|those)|what (?:did you find|are the options))\b/i.test(t)){await addMessage('user',t);displayResults(true);return true;}
     if(phase==='results'&&done.test(t)){await addMessage('user',t);finish();await addMessage('auren','Are you done with this search?');return true;}
-    if(phase==='consent'&&yes.test(t)){await addMessage('user',t);await addMessage('auren','Choose Allow location and search to let Safari ask for permission.');return true;}
+    if(phase==='consent'&&yes.test(t)){await addMessage('user',t);show('Ready to search','Tap Allow location & search to share your approximate location with the free place-search service. Safari may request location access.');action('Allow location & search',enable);action('Not now',clear);await addMessage('auren','Ready. Select Allow location & search to begin finding actual places.');return true;}
     if(phase==='consent'&&no.test(t)){await addMessage('user',t);clear();await addMessage('auren','Of course. I will not use your location.');return true;}
-    if(placeIntent.test(t)){await addMessage('user',t);request(t);await addMessage('auren','I can look up nearby places for you. Would you like me to use your location?');return true;}
+    if(placeIntent.test(t)||broadPlaceIntent.test(t)){await addMessage('user',t);request(t);await addMessage('auren','I can look up nearby places for you. Would you like me to use your location?');return true;}
     return false;
   }
   function onReturn(){if(!mapPending||returned||Date.now()-lastMapClick<1000||Date.now()-lastMapClick>20*60*1000||document.hidden)return;returned=true;mapPending=false;
