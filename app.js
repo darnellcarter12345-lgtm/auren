@@ -1,4 +1,4 @@
-// AUREN v2.9.8 — restrained butler, clock-safe reminders, conversational briefings
+// AUREN v2.9.9 — relative reminders and respectful uncertainty handling
 // AUREN — js/app.js
 // Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
 // v0.2: status banner for storage problems, session panel, privacy controls, safe backup import.
@@ -531,9 +531,54 @@ function linkedReminderForLastEvent(text) {
  return `Shall I set a reminder ${minutes} minutes before ${event.title}?`;
 }
 
+// Convert human relative durations into a bounded number of minutes.
+// Examples: "in 10 minutes", "in half an hour", "in 2 hours", "in an hour".
+function relativeReminderMinutes(text) {
+ const t=String(text||'').toLowerCase();
+ if (/\bin\s+(?:half an hour|half (?:a|an) hour|30 minutes?)\b/.test(t)) return 30;
+ if (/\bin\s+(?:a|an|one)\s+hour\b/.test(t)) return 60;
+ if (/\bin\s+(?:a|one)\s+minute\b/.test(t)) return 1;
+ const match=t.match(/\bin\s+(\d{1,4})\s*(minutes?|mins?|hours?|hrs?)\b/);
+ if(!match)return null;
+ const minutes=Number(match[1]) * (/^(?:h|hour)/.test(match[2])?60:1);
+ return Number.isSafeInteger(minutes)&&minutes>=1&&minutes<=10080?minutes:null;
+}
+function relativeReminderSubject(text) {
+ return String(text).replace(/^(?:please\s+)?(?:remind me|set (?:a )?reminder)\s*/i,'')
+  .replace(/\bin\s+(?:half an hour|half (?:a|an) hour|30 minutes?|(?:a|an|one)\s+hour|(?:a|one)\s+minute|\d{1,4}\s*(?:minutes?|mins?|hours?|hrs?))\b/i,'')
+  .replace(/^(?:to|about|that|for)\s+/i,'').trim().replace(/[.!?]+$/,'').trim();
+}
+function saveRelativeReminder(subject, at) {
+ const item={id:uid(),text:subject.slice(0,200),at:new Date(at).toISOString(),fired:false};
+ reminders.push(item);
+ try {saveReminders();} catch(error) {reminders=reminders.filter(r=>r.id!==item.id);return 'I could not save that reminder. Please try again.';}
+ refreshUpNext();
+ return `Reminder set for ${new Date(at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}.`;
+}
+function respectfulUncertainty(text) {
+ const t=String(text||'').trim().toLowerCase().replace(/[.!?]+$/,'');
+ if (!/^(?:idk|i don['’]t know|not sure|i'm not sure|i am not sure|no idea|i dunno)$/.test(t)) return null;
+ if(pendingReminder || pendingPlan || planClarification || planningOffer) {
+   pendingReminder=null; pendingPlan=null; planClarification=null; planningOffer=null;
+   return 'That is quite all right. We can leave it undecided for now.';
+ }
+ return 'Of course. There is no need to decide right now.';
+}
+
 function reminderSpeech(t){
  const text=t.trim();
  if(pendingReminder){
+  if(pendingReminder.kind==='relative-subject'){
+   if(/^(?:no|cancel|nevermind|never mind|not now)\b/i.test(text)){pendingReminder=null;return 'Of course. Nothing was scheduled.';}
+   if(/^(?:remind me|set (?:a )?reminder)\b/i.test(text))pendingReminder=null;
+   else {
+    const draft=pendingReminder; pendingReminder=null;
+    const subject=text.replace(/^(?:to|about|that|for)\s+/i,'').trim();
+    if(!subject)return 'What would you like me to remind you about?';
+    if(draft.at<=Date.now())return 'That time has passed. Please choose another reminder time.';
+    return saveRelativeReminder(subject,draft.at);
+   }
+  }
   if(/^(?:yes|yeah|yep|sure|correct|confirm|do it|please do|go ahead)\b/i.test(text)){
    const p=pendingReminder;pendingReminder=null;
    if(p.kind==='linked'){const event=plans.find(e=>e.id===p.eventId);return event?eventReminder(event,p.minutes):'That appointment no longer exists. No reminder was saved.';}
@@ -551,6 +596,15 @@ function reminderSpeech(t){
  }
  if(!/^(?:please\s+)?(?:remind me|set (?:a )?reminder)\b/i.test(text))return null;
  const linked=linkedReminderForLastEvent(text);if(linked!==null)return linked;
+ const relativeMinutes=relativeReminderMinutes(text);
+ if(relativeMinutes!==null){
+  const at=Date.now()+relativeMinutes*60000;
+  const subject=relativeReminderSubject(text);
+  if(!subject){ pendingReminder={kind:'relative-subject',at};return 'Of course. What should I remind you about?'; }
+  return saveRelativeReminder(subject,at);
+ }
+ if(/\bin\s+\d+\s*(?:minute|hour|mins?|hrs?)\b/i.test(text))
+   return 'Please choose a reminder between one minute and seven days from now.';
  const before=text.match(/\b(\d{1,3})\s*(minutes?|hours?)\s+before\s+(?:my\s+|the\s+)?(.+?)(?:[.!?]|$)/i);
  if(before){
   const offset=Number(before[1])*(before[2].toLowerCase().startsWith('hour')?60:1);
@@ -1188,6 +1242,9 @@ async function send(text) {
   // Voice initiated from the orb still enables speech in the orb handler.
   await addMessage('user', text, { ephemeral: isSessionNote(text) });
   try {
+    // Uncertainty is not a scheduling commitment or a reason to pressure the user.
+    const unsure = respectfulUncertainty(text);
+    if(unsure){await addMessage('auren',unsure);return;}
     // Explicit preferences and schedule insights are device-local, and never consume AI credits.
     // Do not intercept replies to a pending confirmation or reminder.
     if (!pendingPlan && !pendingReminder && !planClarification) {
