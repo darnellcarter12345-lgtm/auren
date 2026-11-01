@@ -1082,8 +1082,20 @@ async function planSpeech(text){
  const raw=String(text||'').trim();
  const capability=plannerCapabilityReply(raw);
  if(capability)return capability;
+ // Treat 'schedule me' as a request to create an appointment for the signed-in user.
+ // This never saves anything until the regular planner confirmation is accepted.
+ const scheduleForMe = raw.match(/^(?:(?:hey\s+)?auren[,! ]*)?(?:(?:can|could|would|will) you\s+|please\s+)?(?:schedule|book|put|add)\s+me\s*(?:for\s+)?(.*)$/i);
+ if (scheduleForMe && !scheduleForMe[1].trim()) {
+   planClarification = {kind:'subject'};
+   return 'Certainly. What would you like me to schedule you for, and what day and time?';
+ }
  const normalized=normalizedPlannerRequest(raw);
- const t=normalized||raw;
+ let t=scheduleForMe ? 'schedule '+scheduleForMe[1].trim() : (normalized||raw);
+ if (planClarification?.kind === 'subject') {
+   if (/^(?:cancel|never mind|not now|no thanks)\b/i.test(raw)) {planClarification=null;return 'No appointment has been scheduled.';}
+   if (!/^(?:schedule|book|add|put|plan)\b/i.test(t)) t='schedule '+raw;
+   planClarification=null;
+ }
  if(planningOffer){
    if(/^(?:no|not now|maybe later|never mind|nah)\b/i.test(t)){planningOffer=null;return 'Of course. I shall leave your schedule as it is.';}
    if(/^(?:yes|yeah|sure|okay|please|let.s|sounds good)\b/i.test(t)){planningOffer=null;return 'Certainly. What would you like to make time for, and when?';}
@@ -2152,10 +2164,41 @@ aurenPlaces = (() => {
   const action=(label,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=fn;actions.append(b);return b;};
   const show=(title,message)=>{heading.textContent=title;content.replaceChildren();if(message){const p=document.createElement('p');p.textContent=message;content.append(p);}actions.replaceChildren();panel.style.display='block';};
   const hide=()=>{panel.style.display='none';content.replaceChildren();actions.replaceChildren();};
-  const clear=()=>{requestId++;phase='idle';pending='';coords=null;results=[];mapPending=false;returned=false;hide();};
+  const clear=()=>{requestId++;phase='idle';pending='';coords=null;results=[];mapPending=false;returned=false;hide();closePopup();};
+  // Temporary, request-only Maps overlay. No persistent location card on Home.
+  const mapOverlay=document.createElement('div');mapOverlay.id='aurenMapsTemporaryOverlay';
+  mapOverlay.style.cssText='position:fixed;inset:0;z-index:11000;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;padding:18px;box-sizing:border-box;';
+  const mapCard=document.createElement('section');mapCard.style.cssText='width:min(100%,480px);max-height:82vh;overflow:auto;background:#1d2026;border:1px solid #c7a868;border-radius:18px;padding:22px;color:#eee0be;box-shadow:0 18px 60px #0009;';
+  const mapTitle=document.createElement('h3');mapTitle.textContent='AUREN · Nearby places';mapTitle.style.margin='0 0 12px';
+  const mapText=document.createElement('p');mapText.style.lineHeight='1.5';
+  const mapChoices=document.createElement('div');mapChoices.style.cssText='display:flex;gap:9px;flex-wrap:wrap;flex-direction:column;margin-top:14px;';
+  mapCard.append(mapTitle,mapText,mapChoices);mapOverlay.append(mapCard);document.body.append(mapOverlay);
+  const popupButton=(label,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.style.cssText='border-radius:10px;padding:12px;cursor:pointer;';b.onclick=fn;mapChoices.append(b);return b;};
+  function closePopup(){mapOverlay.style.display='none';mapChoices.replaceChildren();}
+  function showPopup(message,places=[]){
+    mapText.textContent=message;mapChoices.replaceChildren();mapOverlay.style.display='flex';
+    const top=places.slice(0,4);
+    for(const r of top)popupButton(r.name+' · '+r.km.toFixed(1)+' km · Open in Google Maps',()=>openMap(mapLink(r)));
+    if(!coords)popupButton('Allow location & find nearby options',enable);
+    popupButton(top.length?'See more in Google Maps':'Open Google Maps search',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
+    popupButton('Not now / Close',closePopup);
+    popupButton('Finish this search',finish);
+  }
   const distanceKm=(a,b,c,d)=>{const R=6371,rad=x=>x*Math.PI/180,dl=rad(c-a),dn=rad(d-b),v=Math.sin(dl/2)**2+Math.cos(rad(a))*Math.cos(rad(c))*Math.sin(dn/2)**2;return 2*R*Math.atan2(Math.sqrt(v),Math.sqrt(1-v));};
   const mapLink=(r)=>'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(r.lat+','+r.lon+' '+r.name);
-  function openMap(url){lastMapClick=Date.now();mapPending=true;returned=false;window.open(url,'_blank','noopener,noreferrer');}
+  function openMap(url){lastMapClick=Date.now();mapPending=true;returned=false;closePopup();const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener noreferrer';document.body.append(a);a.click();a.remove();}
+  // Put the actual clickable Maps link in Text Chat instead of hiding it in Settings.
+  // Construct the URL locally; location coordinates reach Google only if the person clicks it.
+  function appendMapsLink(query, label='Open results in Google Maps') {
+    const url='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(query);
+    const wrap=document.createElement('div');wrap.className='msg auren';
+    const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';
+    link.textContent=label;link.style.cssText='color:#e6c581;text-decoration:underline;font-weight:600;';
+    link.addEventListener('click',()=>{lastMapClick=Date.now();mapPending=true;returned=false;});
+    wrap.append(link);$('log')?.append(wrap);if($('log'))$('log').scrollTop=$('log').scrollHeight;
+    return url;
+  }
+  function mapsQuery(){return pending+(coords?' near '+coords.lat.toFixed(5)+','+coords.lon.toFixed(5):' near me');}
   function classifyQuery(input){
     const q=input.toLowerCase();
     const categories=[[/mcdonald|chick.fil|starbucks|walmart|target|costco|whole foods|kroger|walgreens|cvs|best buy|home depot|lowe.s|dunkin|burger king|taco bell/, 'brand'],[/restaurant|eat|dinner|lunch|breakfast|food|pizza|burger|sushi|taco/, 'eat'],[/coffee|cafe|latte|espresso/, 'coffee'],[/park|nature|trail|hike|outdoor/, 'park'],[/gym|fitness|workout/, 'gym'],[/movie|cinema|theater/, 'cinema'],[/museum|gallery|art/, 'museum'],[/library|book/, 'library'],[/bowling|arcade|entertainment|fun|things to do|where should i go|where can i go|places to go/, 'activity'],[/gas|fuel|petrol/, 'gas'],[/pharmacy|drugstore/, 'pharmacy'],[/hotel|lodging/, 'hotel'],[/car wash|detail/, 'carwash'],[/mechanic|auto repair/, 'mechanic'],[/store|shop|mall|buy|grocery|supermarket/, 'shop'],[/barber|haircut|salon/, 'salon']];
@@ -2166,11 +2209,15 @@ aurenPlaces = (() => {
   function selectors(q){const {category,branded}=classifyQuery(q);if(branded)return {regex:'["name"~"'+branded.replace(/'/g,"'?").replace(/\./g,'.')+'",i]',radius:8500};
     const rules={eat:'["amenity"~"restaurant|fast_food|cafe"]',coffee:'["amenity"="cafe"]',park:'["leisure"~"park|nature_reserve|garden"]',gym:'["leisure"="fitness_centre"]',cinema:'["amenity"="cinema"]',museum:'["tourism"~"museum|gallery|attraction"]',library:'["amenity"="library"]',activity:'["tourism"~"attraction|museum|gallery|viewpoint"]',gas:'["amenity"="fuel"]',pharmacy:'["amenity"="pharmacy"]',hotel:'["tourism"~"hotel|motel|guest_house"]',carwash:'["amenity"="car_wash"]',mechanic:'["shop"="car_repair"]',shop:'["shop"]',salon:'["shop"~"hairdresser|beauty"]'};return {regex:rules[category]||rules.activity,radius:5000};}
   function displayResults(announce=false){
-    phase='results';show('Nearby places',results.length?'Public OpenStreetMap listings. Distances are straight-line estimates; hours, ratings and availability are not verified.':'No matching places were returned. Try another category or open Google Maps.');
+    phase='results';showPopup(results.length?'Here are nearby locations I found. Choose one or open the full search in Google Maps.':'I could not verify nearby listings. You can still open a Google Maps search.',results);show('Nearby places',results.length?'Public OpenStreetMap listings. Distances are straight-line estimates; hours, ratings and availability are not verified.':'No matching places were returned. Try another category or open Google Maps.');
     for(const r of results){const p=document.createElement('p');p.style.margin='10px 0';const strong=document.createElement('strong');strong.textContent=r.name;const note=document.createElement('span');note.textContent=' · '+r.km.toFixed(1)+' km away'+(r.address?' · '+r.address:'');const b=document.createElement('button');b.type='button';b.textContent='View in Google Maps';b.onclick=()=>openMap(mapLink(r));p.append(strong,note,document.createTextNode(' '),b);content.append(p);}
     action('Search all on Google Maps',()=>{const q=pending+' near '+coords.lat+','+coords.lon;openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q));});
     action('Repeat places',()=>displayResults(true));action('Finish search',finish);
-    if(announce)void addMessage('auren',results.length?`I found ${results.length} nearby places, including ${results.slice(0,3).map(x=>x.name).join(', ')}. Their distances are approximate. You can view directions in Google Maps or ask for more options.`:'The public place search did not return a match. Open Settings and select Search all on Google Maps for more options.');
+    if(announce){
+      void addMessage('auren',results.length?`I found ${results.length} nearby places, including ${results.slice(0,3).map(x=>x.name).join(', ')}. Distances are approximate. I've provided Google Maps links in Text Chat.`:'I could not find matching public listings. You can still see search options in Google Maps.');
+      for(const r of results.slice(0,3))appendMapsLink(r.lat+','+r.lon+' '+r.name,'View '+r.name+' in Google Maps');
+      appendMapsLink(mapsQuery(),'See all options in Google Maps');
+    }
   }
   function finish(){phase='confirm-done';show('Finish searching?','Are you done with this search? I will clear its temporary coordinates once you confirm.');action('Yes, finish',()=>{clear();void addMessage('auren','Search finished. I cleared the temporary search coordinates.');});action('No, keep searching',()=>displayResults());}
   async function lookup(){
@@ -2185,12 +2232,21 @@ aurenPlaces = (() => {
       const seen=new Set();results=(data.elements||[]).map(e=>{const t=e.tags||{},lat=e.lat??e.center?.lat,lon=e.lon??e.center?.lon;const name=t.name||t.brand||'',address=[t['addr:housenumber'],t['addr:street'],t['addr:city']].filter(Boolean).join(' ');return {name,address,lat,lon,km:Number.isFinite(lat)&&Number.isFinite(lon)?distanceKm(coords.lat,coords.lon,lat,lon):Infinity};}).filter(r=>r.name&&Number.isFinite(r.km)).sort((a,b)=>a.km-b.km).filter(r=>{const key=r.name.toLowerCase()+'-'+Math.round(r.lat*1000)+'-'+Math.round(r.lon*1000);if(seen.has(key))return false;seen.add(key);return true;}).slice(0,6);
       displayResults(true);return;
     }catch(err){if(seq!==requestId)return;}}
-    show('Live lookup unavailable','The free map database is unavailable right now. The Google Maps option is ready below.');phase='results';action('Search Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(pending+' near '+coords.lat+','+coords.lon)));action('Finish search',finish);
-    void addMessage('auren','The free nearby listing service is unavailable. I prepared a Google Maps search in Settings under Nearby Places. You can open it there, or try the lookup again later.');
+    show('Live lookup unavailable','The free map database is unavailable right now. The Google Maps option is ready below.');phase='results';showPopup('The free listings service is unavailable. You can still open the requested Google Maps search.');action('Search Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(pending+' near '+coords.lat+','+coords.lon)));action('Finish search',finish);
+    void addMessage('auren','The free nearby listings service is unavailable. Here is a Google Maps search for your requested place.');appendMapsLink(mapsQuery());
   }
   function enable(){if(!navigator.geolocation){show('Location unavailable','Your browser does not support location sharing.');return;}const seq=++requestId;phase='locating';show('Allow location','Safari may ask for access. Your location will only be used for this nearby search.');
     navigator.geolocation.getCurrentPosition(pos=>{if(seq!==requestId)return;coords={lat:pos.coords.latitude,lon:pos.coords.longitude};void lookup();},()=>{if(seq!==requestId)return;phase='consent';show('Location not available','Check your Safari location permission, or search manually in Google Maps.');action('Try again',enable);action('Cancel',clear);},{enableHighAccuracy:false,maximumAge:0,timeout:12000});}
-  function request(text){requestId++;pending=text;coords=null;results=[];phase='consent';show('Find places near you?','Would you like to use your location for this search? The search service receives coordinates only if you approve.');action('Allow location & search',enable);action('Not now',clear);}
+  function request(text){
+    requestId++;pending=text;coords=null;results=[];
+    // An optional working Maps search should exist even if the free lookup fails.
+    appendMapsLink(pending+' near me','Search '+pending.slice(0,65)+' in Google Maps');
+    if(locationApproved&&aurenLocation){
+      coords={lat:aurenLocation.latitude,lon:aurenLocation.longitude};
+      showPopup('Searching nearby locations. You can open Google Maps now, or wait for AUREN to list available places.');void lookup();return;
+    }
+    phase='consent';showPopup('Would you like to use your location to find nearby places? You can still open Maps without sharing GPS with AUREN.');show('Find places near you?','Would you like to use your location for this search? The search service receives coordinates only if you approve.');action('Allow location & search',enable);action('Not now',clear);
+  }
   async function handle(text){const t=String(text||'').trim();
     if(/\b(?:turn|switch|disable|stop|clear|forget)\b.*\blocation\b/i.test(t)&&/off|disable|stop|clear|forget/i.test(t)){clear();return false;}
     if(phase==='confirm-done'&&yes.test(t)){await addMessage('user',t);clear();await addMessage('auren','Search finished. Temporary search coordinates cleared.');return true;}
@@ -2198,13 +2254,22 @@ aurenPlaces = (() => {
     if((phase==='results'||phase==='confirm-done')&&repeat.test(t)){await addMessage('user',t);displayResults(true);return true;}
     if(phase==='results'&&/\b(?:closest|nearest|first one|second one|third one|which one|how far|list (?:them|those)|what (?:did you find|are the options))\b/i.test(t)){await addMessage('user',t);displayResults(true);return true;}
     if(phase==='results'&&done.test(t)){await addMessage('user',t);finish();await addMessage('auren','Are you done with this search?');return true;}
-    if(phase==='consent'&&yes.test(t)){await addMessage('user',t);show('Ready to search','Tap Allow location & search to share your approximate location with the free place-search service. Safari may request location access.');action('Allow location & search',enable);action('Not now',clear);await addMessage('auren','Ready. Open Settings → Nearby Places and select Allow location & search to begin.');return true;}
+    if(phase==='consent'&&yes.test(t)){
+      await addMessage('user',t);
+      if(locationApproved&&aurenLocation){coords={lat:aurenLocation.latitude,lon:aurenLocation.longitude};await lookup();}
+      else {show('Ready to search','Click Allow location & search in Settings to approve Safari location access.');action('Allow location & search',enable);action('Not now',clear);await addMessage('auren','I can search near you. Approve location in Settings, or use the Google Maps link already in Text Chat.');}
+      return true;
+    }
     if(phase==='consent'&&no.test(t)){await addMessage('user',t);clear();await addMessage('auren','Of course. I will not use your location.');return true;}
-    if(placeIntent.test(t)||broadPlaceIntent.test(t)){await addMessage('user',t);request(t);await addMessage('auren','I can search for places nearby. Open Settings → Nearby Places and select Allow location & search, or tell me no. Location access is optional.');return true;}
+    if(placeIntent.test(t)||broadPlaceIntent.test(t)){
+      await addMessage('user',t);request(t);
+      await addMessage('auren',locationApproved&&aurenLocation?'Searching nearby places now. I also provided a Google Maps link in Text Chat.':'I added a Google Maps search link to Text Chat. If you want AUREN to list nearby places itself, you can approve location in Settings.');
+      return true;
+    }
     return false;
   }
   function onReturn(){if(!mapPending||returned||Date.now()-lastMapClick<1000||Date.now()-lastMapClick>20*60*1000||document.hidden)return;returned=true;mapPending=false;
-    if(phase==='results'){void addMessage('auren','Welcome back. How did your Maps search go? Would you like more options, or are you finished searching?');}}
+    if(phase==='results'||phase==='searching'||phase==='consent'){void addMessage('auren','Welcome back. How did your Maps search go? Would you like another option, or are you finished?');showPopup('Welcome back. Would you like another place or are you finished searching?',results);}}
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)setTimeout(onReturn,450);});window.addEventListener('focus',()=>setTimeout(onReturn,450));
   // Location permissions and standing status stay in Settings; results are temporary and belong by the chat.
   return {handle,clear};
