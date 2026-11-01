@@ -734,6 +734,24 @@ async function send(text) {
   if (voice.available().speak && !voice.enabled) { voice.setEnabled(true); $('speakReplies').checked = true; }
   await addMessage('user', text, { ephemeral: isSessionNote(text) });
   try {
+    // Weather questions use the live weather service rather than the general AI.
+    // Do not steal scheduling, reminder, or memory commands that mention weather.
+    const weatherQuestion =
+      /\b(weather|forecast|temperature|raining|rain|snow|snowing|degrees|windy|humidity)\b/i.test(text) &&
+      !/^(?:please\s+)?(?:remind|schedule|plan|add|move|reschedule|change|delete|remove|remember|forget|set\s+(?:a\s+)?reminder)\b/i.test(text.trim());
+    if (weatherQuestion) {
+      const city = localStorage.getItem('auren_weather_city') || 'Dallas';
+      const scope = /\b(tomorrow)\b/i.test(text)
+        ? 'tomorrow'
+        : /\b(week|weekly|next\s+7\s+days|seven\s+days)\b/i.test(text)
+          ? 'week'
+          : 'day';
+      const weather = await getWeatherBriefing(city, scope);
+      await addMessage('auren', weather.success
+        ? weather.spoken
+        : `I'm unable to retrieve the forecast for ${city} right now. Please try again shortly.`);
+      return;
+    }
     // Verified save/delete/project operations remain local. Other conversation goes to AI.
     // Only verified local actions bypass AI. General questions about the user,
     // interests, and recommendations should reach the AI with saved memory context.
