@@ -1628,7 +1628,7 @@ function mapsSuggestionLink(query) {
   return 'https://www.google.com/maps/search/?'+params;
 }
 async function send(text) {
-  if (await aurenNearby.handle(text)) return;
+  if (await aurenPlaces.handle(text)) return;
   // Location commands take priority over AI. Only a direct button tap triggers Safari's GPS prompt.
   const clean=String(text||'').trim();
   const localPersonal=personalCommand(clean);
@@ -2136,91 +2136,74 @@ async function renderStorageInfo() {
   if(home){let pending=false;new MutationObserver(()=>{if(pending)return;pending=true;queueMicrotask(()=>{pending=false;hideHomeLocation();});}).observe(home,{childList:true,subtree:true});}
 })();
 
-
-// AUREN v2.14.2: minimal home screen, faster sentence captions and opt-in nearby search.
-const aurenNearby = (() => {
-  let pending = '', results = [], coords = null, phase = 'idle', seq = 0;
-  const yes = /^(yes|yeah|yep|sure|okay|ok|go ahead|use my location|please do|enable it)[.! ]*$/i;
-  const no = /^(no|no thanks|not now|cancel|nope)[.! ]*$/i;
-  const done = /^(done|finished|i.m done|that.s all|end search|close results|stop searching)[.! ]*$/i;
-  const repeat = /^(repeat|repeat that|say that again|show them again|show results again|what were the places)[.!? ]*$/i;
-  const nearby = /\b(?:find (?:me )?(?:a |some )?(?:place(?:s)? to eat|restaurants?|cafes?|coffee|pizza|food|things to do|places to go)|where (?:should|can) i (?:go|eat)|(?:restaurants?|cafes?|food|coffee|pizza|shops?|parks?|places) (?:near me|nearby)|near me|around me)\b/i;
-  const queryType = s => /coffee|cafe/i.test(s)?'cafe':/pizza/i.test(s)?'pizza':/park|outside/i.test(s)?'park':/shop|store/i.test(s)?'shop':/thing|place to go|where .* go/i.test(s)?'attraction':'restaurant';
-  const panel = document.createElement('section'); panel.id='aurenNearbyResults'; panel.style.cssText='margin:12px auto;width:min(92%,680px);padding:14px;border:1px solid rgba(199,168,104,.38);border-radius:14px;background:#191b20;color:#ebd9b2;display:none';
-  const title=document.createElement('strong'), content=document.createElement('div'), actions=document.createElement('div');actions.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-top:10px'; panel.append(title,content,actions);
-  const log=$('log'); if(log)log.parentElement?.append(panel);
-  const button=(name,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=name;b.addEventListener('click',fn);actions.append(b);};
-  const show=(heading,body)=>{title.textContent=heading;content.replaceChildren();if(body)content.append(document.createTextNode(body));actions.replaceChildren();panel.style.display='block';};
+// AUREN v2.15 SMART PLACES: opt-in, any-category place search, safe Maps return flow.
+const aurenPlaces = (() => {
+  let phase='idle', pending='', coords=null, results=[], requestId=0, lastMapClick=0, mapPending=false, returned=false;
+  const yes=/^(?:yes|yep|yeah|sure|okay|ok|go ahead|please do|use my location|enable it)[.!? ]*$/i;
+  const no=/^(?:no|nope|no thanks|not now|cancel)[.!? ]*$/i;
+  const done=/^(?:done|finished|i(?:'m| am) done|that's all|end search|close results|stop searching)[.!? ]*$/i;
+  const repeat=/^(?:repeat|repeat that|say that again|show (?:them|those|the places|results) again|what were the places)[.!? ]*$/i;
+  const placeIntent=/\b(?:where (?:should|can|could) (?:i|we) (?:go|eat|shop|visit)|(?:find|show|suggest|recommend|look up|search for)\s+(?:me\s+)?(?:some\s+|a\s+|an\s+|the\s+|nearby\s+|closest\s+|good\s+|best\s+)*(?:places?|locations?|spots?|things to do|restaurants?|food|cafes?|coffee shops?|mcdonald'?s|chick.fil.a|starbucks|parks?|gyms?|stores?|shops?|museums?|libraries|theaters?|cinemas?|bowling|hiking|pharmacies|gas stations?|hotels?|barbers?|salons?|car washes?|mechanics?|dealerships?|bookstores?|arcades?|grocery stores?|supermarkets?|walmart|target)|(?:near me|nearby|closest to me|around me|in my area))\b/i;
+  const panel=document.createElement('section');panel.id='aurenSmartPlacesV215';panel.className='card';panel.style.cssText='margin:12px auto;width:min(92%,680px);padding:14px;border:1px solid rgba(199,168,104,.38);border-radius:14px;background:#191b20;color:#ebd9b2;display:none';
+  const heading=document.createElement('strong'), content=document.createElement('div'), actions=document.createElement('div');actions.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-top:12px';panel.append(heading,content,actions);
+  const log=$('log'); log?.parentElement?.append(panel);
+  const action=(label,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=fn;actions.append(b);return b;};
+  const show=(title,message)=>{heading.textContent=title;content.replaceChildren();if(message){const p=document.createElement('p');p.textContent=message;content.append(p);}actions.replaceChildren();panel.style.display='block';};
   const hide=()=>{panel.style.display='none';content.replaceChildren();actions.replaceChildren();};
-  const cleanup=()=>{seq++;pending='';coords=null;results=[];phase='idle';hide();};
-  const maps=(name,lat,lon)=>'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(lat+','+lon+' '+name);
-  const normalize=(e)=>{const tags=e.tags||{};return {name:tags.name||tags.brand||'Unnamed place',category:tags.amenity||tags.shop||tags.tourism||'',lat:e.lat??e.center?.lat,lon:e.lon??e.center?.lon};};
-  async function lookup(q){
-    const kind=queryType(q), around='around:3500,'+coords.lat+','+coords.lon;
-    const filters=kind==='cafe'?'["amenity"="cafe"]':kind==='restaurant'?'["amenity"~"restaurant|fast_food|cafe"]':kind==='pizza'?'["cuisine"~"pizza"]':kind==='park'?'["leisure"="park"]':kind==='shop'?'["shop"]':'["tourism"~"attraction|museum|gallery"]';
-    const overpass='[out:json][timeout:12];(node('+around+')'+filters+';way('+around+')'+filters+';);out center 30;';
-    const current=++seq;show('Searching nearby…','AUREN is checking public OpenStreetMap places. GPS is shared with the map lookup only for this approved search.');
-    try {
-      const response=await fetch('https://overpass.kumi.systems/api/interpreter',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:'data='+encodeURIComponent(overpass),signal:AbortSignal.timeout(17000)});
-      if(!response.ok)throw Error('Nearby lookup unavailable');
-      const data=await response.json();if(current!==seq)return;
-      results=(data.elements||[]).map(normalize).filter(x=>x.name!=='Unnamed place'&&Number.isFinite(x.lat)&&Number.isFinite(x.lon)).filter((x,i,arr)=>arr.findIndex(y=>y.name===x.name)===i).slice(0,6);
-      showResults();
-    } catch(e){if(current!==seq)return;show('Nearby lookup unavailable','AUREN could not retrieve nearby listings. You can still search your area in Google Maps.');button('Open Google Maps',()=>window.open('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q+' near '+coords.lat+','+coords.lon),'_blank','noopener'));button('Done',finish);}
+  const clear=()=>{requestId++;phase='idle';pending='';coords=null;results=[];mapPending=false;returned=false;hide();};
+  const distanceKm=(a,b,c,d)=>{const R=6371,rad=x=>x*Math.PI/180,dl=rad(c-a),dn=rad(d-b),v=Math.sin(dl/2)**2+Math.cos(rad(a))*Math.cos(rad(c))*Math.sin(dn/2)**2;return 2*R*Math.atan2(Math.sqrt(v),Math.sqrt(1-v));};
+  const mapLink=(r)=>'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(r.lat+','+r.lon+' '+r.name);
+  function openMap(url){lastMapClick=Date.now();mapPending=true;returned=false;window.open(url,'_blank','noopener,noreferrer');}
+  function classifyQuery(input){
+    const q=input.toLowerCase();
+    const categories=[[/mcdonald|chick.fil|starbucks|walmart|target|costco|whole foods|kroger|walgreens|cvs|best buy|home depot|lowe.s|dunkin|burger king|taco bell/, 'brand'],[/restaurant|eat|dinner|lunch|breakfast|food|pizza|burger|sushi|taco/, 'eat'],[/coffee|cafe|latte|espresso/, 'coffee'],[/park|nature|trail|hike|outdoor/, 'park'],[/gym|fitness|workout/, 'gym'],[/movie|cinema|theater/, 'cinema'],[/museum|gallery|art/, 'museum'],[/library|book/, 'library'],[/bowling|arcade|entertainment|fun|things to do|where should i go|where can i go|places to go/, 'activity'],[/gas|fuel|petrol/, 'gas'],[/pharmacy|drugstore/, 'pharmacy'],[/hotel|lodging/, 'hotel'],[/car wash|detail/, 'carwash'],[/mechanic|auto repair/, 'mechanic'],[/store|shop|mall|buy|grocery|supermarket/, 'shop'],[/barber|haircut|salon/, 'salon']];
+    const category=categories.find(([re])=>re.test(q))?.[1]||'activity';
+    const branded=q.match(/\b(mcdonald'?s|chick.fil.a|starbucks|walmart|target|costco|whole foods|kroger|walgreens|cvs|best buy|home depot|lowe'?s|dunkin|burger king|taco bell)\b/i)?.[1]||'';
+    return {category,branded};
   }
-  function showResults(){
-    phase='results';show('Nearby suggestions',results.length?'Places listed by OpenStreetMap contributors (hours and ratings are not verified):':'No matching places returned from OpenStreetMap. Try a broader search on Google Maps.');
-    for(const r of results){const item=document.createElement('p');item.style.cssText='margin:10px 0';const a=document.createElement('a');a.textContent=r.name+' — View in Google Maps';a.href=maps(r.name,r.lat,r.lon);a.target='_blank';a.rel='noopener noreferrer';item.append(a);content.append(item);}
-    if(!results.length)button('Search Google Maps',()=>window.open('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(pending+' near '+coords.lat+','+coords.lon),'_blank','noopener'));
-    button('Repeat results',showResults);button('Done',finish);
-    void addMessage('auren',results.length?'I found '+results.length+' nearby options. You can view each one in Google Maps. Would you like to repeat the results, or are you finished with this search?':'I could not find matching listings here. Would you like to finish this search?');
+  function selectors(q){const {category,branded}=classifyQuery(q);if(branded)return {regex:'["name"~"'+branded.replace(/'/g,"'?").replace(/\./g,'.')+'",i]',radius:8500};
+    const rules={eat:'["amenity"~"restaurant|fast_food|cafe"]',coffee:'["amenity"="cafe"]',park:'["leisure"~"park|nature_reserve|garden"]',gym:'["leisure"="fitness_centre"]',cinema:'["amenity"="cinema"]',museum:'["tourism"~"museum|gallery|attraction"]',library:'["amenity"="library"]',activity:'["tourism"~"attraction|museum|gallery|viewpoint"]',gas:'["amenity"="fuel"]',pharmacy:'["amenity"="pharmacy"]',hotel:'["tourism"~"hotel|motel|guest_house"]',carwash:'["amenity"="car_wash"]',mechanic:'["shop"="car_repair"]',shop:'["shop"]',salon:'["shop"~"hairdresser|beauty"]'};return {regex:rules[category]||rules.activity,radius:5000};}
+  function displayResults(announce=false){
+    phase='results';show('Nearby places',results.length?'Public OpenStreetMap listings. Distances are straight-line estimates; hours, ratings and availability are not verified.':'No matching places were returned. Try another category or open Google Maps.');
+    for(const r of results){const p=document.createElement('p');p.style.margin='10px 0';const strong=document.createElement('strong');strong.textContent=r.name;const note=document.createElement('span');note.textContent=' · '+r.km.toFixed(1)+' km away'+(r.address?' · '+r.address:'');const b=document.createElement('button');b.type='button';b.textContent='View in Google Maps';b.onclick=()=>openMap(mapLink(r));p.append(strong,note,document.createTextNode(' '),b);content.append(p);}
+    action('Search all on Google Maps',()=>{const q=pending+' near '+coords.lat+','+coords.lon;openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q));});
+    action('Repeat places',()=>displayResults(true));action('Finish search',finish);
+    if(announce)void addMessage('auren',results.length?`I found ${results.length} nearby places, including ${results.slice(0,3).map(x=>x.name).join(', ')}. Their distances are approximate. You can view directions in Google Maps or ask for more options.`:'The public place search did not return a match. I can still open Google Maps for you.');
   }
-  function finish(){phase='finish';show('Finish this search?','Are you done looking at these places?');button('Yes, clear results',()=>{cleanup();void addMessage('auren','Search closed. I have cleared the location used for this search.');});button('No, keep results',showResults);}
-  function geo(){if(!navigator.geolocation){show('Location unavailable','Your browser does not support location.');return;}phase='locating';show('Location permission','Safari may ask for permission. Only your current position is requested.');
-    navigator.geolocation.getCurrentPosition(p=>{coords={lat:p.coords.latitude,lon:p.coords.longitude};phase='search';void lookup(pending);},()=>{phase='consent';show('Location unavailable','You can allow location in Safari or search manually in Google Maps.');button('Try again',geo);button('Cancel',cleanup);},{enableHighAccuracy:false,timeout:12000,maximumAge:0});}
-  function request(q){pending=q;phase='consent';show('Use your location for nearby suggestions?','Allow one location lookup to find local places? AUREN will send coordinates to OpenStreetMap lookup, not to the AI. You can decline.');button('Enable location & find places',geo);button('Not now',cleanup);}
-  async function handle(text){const t=String(text).trim();
-    if(/\b(?:turn|switch|disable|stop|clear|forget)\b.*\blocation\b.*\b(?:off|now)?\b/i.test(t)&&/off|disable|stop|clear|forget/i.test(t)){cleanup();return false;}
-    if(phase==='finish'&&yes.test(t)){cleanup();await addMessage('user',text);await addMessage('auren','Search closed and its location cleared.');return true;}
-    if(phase==='finish'&&no.test(t)){await addMessage('user',text);showResults();return true;}
-    if(phase==='results'&&done.test(t)){await addMessage('user',text);finish();await addMessage('auren','Are you finished with this search?');return true;}
-    if((phase==='results'||phase==='finish')&&repeat.test(t)){await addMessage('user',text);showResults();return true;}
-    if(phase==='consent'&&yes.test(t)){await addMessage('user',text);await addMessage('auren','Select the location button to allow Safari to access your position.');request(pending);return true;}
-    if(phase==='consent'&&no.test(t)){cleanup();await addMessage('user',text);await addMessage('auren','Of course. Location remains off for this search.');return true;}
-    if(nearby.test(t)){await addMessage('user',text);request(t);await addMessage('auren','I can find nearby places if you approve a one-time location lookup. Would you like to use your location?');return true;}
+  function finish(){phase='confirm-done';show('Finish searching?','Are you done with this search? I will clear its temporary coordinates once you confirm.');action('Yes, finish',()=>{clear();void addMessage('auren','Search finished. I cleared the temporary search coordinates.');});action('No, keep searching',()=>displayResults());}
+  async function lookup(){
+    if(!coords)return;const seq=++requestId, {regex,radius}=selectors(pending),around=`around:${radius},${coords.lat},${coords.lon}`;
+    const query=`[out:json][timeout:14];(node(${around})${regex};way(${around})${regex};);out center 60;`;
+    show('Finding places…','Checking nearby locations from OpenStreetMap. Your coordinates are shared with the lookup service only for this search.');phase='searching';
+    const endpoints=['https://overpass.kumi.systems/api/interpreter','https://overpass-api.de/api/interpreter'];
+    for(const endpoint of endpoints){try{
+      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),16000);let response;
+      try{response=await fetch(endpoint,{method:'POST',body:new URLSearchParams({data:query}),signal:controller.signal});}finally{clearTimeout(timer);}
+      if(!response.ok)throw Error('Service unavailable');const data=await response.json();if(seq!==requestId)return;
+      const seen=new Set();results=(data.elements||[]).map(e=>{const t=e.tags||{},lat=e.lat??e.center?.lat,lon=e.lon??e.center?.lon;const name=t.name||t.brand||'',address=[t['addr:housenumber'],t['addr:street'],t['addr:city']].filter(Boolean).join(' ');return {name,address,lat,lon,km:Number.isFinite(lat)&&Number.isFinite(lon)?distanceKm(coords.lat,coords.lon,lat,lon):Infinity};}).filter(r=>r.name&&Number.isFinite(r.km)).sort((a,b)=>a.km-b.km).filter(r=>{const key=r.name.toLowerCase()+'-'+Math.round(r.lat*1000)+'-'+Math.round(r.lon*1000);if(seen.has(key))return false;seen.add(key);return true;}).slice(0,6);
+      displayResults(true);return;
+    }catch(err){if(seq!==requestId)return;}}
+    show('Live lookup unavailable','The free map database is unavailable right now. You can open a search directly in Google Maps.');phase='results';action('Search Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(pending+' near '+coords.lat+','+coords.lon)));action('Finish search',finish);
+    void addMessage('auren','The nearby listing service is unavailable. I can still open Google Maps to search that area.');
+  }
+  function enable(){if(!navigator.geolocation){show('Location unavailable','Your browser does not support location sharing.');return;}const seq=++requestId;phase='locating';show('Allow location','Safari may ask for access. Your location will only be used for this nearby search.');
+    navigator.geolocation.getCurrentPosition(pos=>{if(seq!==requestId)return;coords={lat:pos.coords.latitude,lon:pos.coords.longitude};void lookup();},()=>{if(seq!==requestId)return;phase='consent';show('Location not available','Check your Safari location permission, or search manually in Google Maps.');action('Try again',enable);action('Cancel',clear);},{enableHighAccuracy:false,maximumAge:0,timeout:12000});}
+  function request(text){requestId++;pending=text;coords=null;results=[];phase='consent';show('Find places near you?','Would you like to use your location for this search? The search service receives coordinates only if you approve.');action('Allow location & search',enable);action('Not now',clear);}
+  async function handle(text){const t=String(text||'').trim();
+    if(/\b(?:turn|switch|disable|stop|clear|forget)\b.*\blocation\b/i.test(t)&&/off|disable|stop|clear|forget/i.test(t)){clear();return false;}
+    if(phase==='confirm-done'&&yes.test(t)){await addMessage('user',t);clear();await addMessage('auren','Search finished. Temporary search coordinates cleared.');return true;}
+    if(phase==='confirm-done'&&no.test(t)){await addMessage('user',t);displayResults();return true;}
+    if((phase==='results'||phase==='confirm-done')&&repeat.test(t)){await addMessage('user',t);displayResults(true);return true;}
+    if(phase==='results'&&done.test(t)){await addMessage('user',t);finish();await addMessage('auren','Are you done with this search?');return true;}
+    if(phase==='consent'&&yes.test(t)){await addMessage('user',t);await addMessage('auren','Choose Allow location and search to let Safari ask for permission.');return true;}
+    if(phase==='consent'&&no.test(t)){await addMessage('user',t);clear();await addMessage('auren','Of course. I will not use your location.');return true;}
+    if(placeIntent.test(t)){await addMessage('user',t);request(t);await addMessage('auren','I can look up nearby places for you. Would you like me to use your location?');return true;}
     return false;
   }
-  // The home view stays reserved for the orb. Location controls belong in Settings.
-  const moveLocationControls=()=>{
-    const settings=$('settings');if(!settings)return;
-    // Move the entire original quick-location card instead of leaving an empty card on Home.
-    const locButtons=[...document.querySelectorAll('button')].filter(b=>/^(enable location|turn location off|turn location on)$/i.test((b.textContent||'').trim())&&!settings.contains(b));
-    for(const b of locButtons){const card=b.closest('.card,section');if(card&&!card.contains($('orbControl'))&&!card.contains($('log'))&&!card.contains($('aurenSpeechPanel'))){settings.append(card);}else settings.append(b);}
-    const selectors=['#aurenLocationHome','#aurenLocationBanner','#aurenLocationQuick','#aurenLocationControls'];
-    selectors.forEach(s=>{const e=document.querySelector(s);if(e&& !settings.contains(e))settings.append(e);});
-    for(const e of document.querySelectorAll('body button,body section,body div')){
-      if(settings.contains(e)||panel.contains(e)||e===panel||e.contains($('orbControl'))||e.contains($('log')))continue;
-      const s=e.textContent?.trim()||'';
-      if(e.tagName==='BUTTON'&&/^(enable location|turn location off|location on|location off)$/i.test(s)&&!settings.contains(e))settings.append(e);
-    }
-    for(const e of [...document.querySelectorAll('body p,body section,body div')]){
-      if(settings.contains(e)||panel.contains(e)||e.contains($('orbControl'))||e.contains($('log')))continue;
-      if(e.children.length>2)continue;
-      const v=(e.textContent||'').trim();
-      if(v.length<210 && /^(?:location is on for this tab\.?|auren:\s*location is on for this tab\.)/i.test(v))e.style.display='none';
-    }
-  };
-  moveLocationControls();setTimeout(moveLocationControls,500);
-  // Keep the live panel compact, and advance sentences faster than the old long caption cycle.
-  const live=$('aurenSpeechPanel')?.querySelector('div');
-  if(live){let playback=null,internal=false,last='';const watcher=new MutationObserver(()=>{
-    if(internal)return;const raw=live.textContent||'';if(raw===last)return;last=raw;
-    if(playback)clearInterval(playback);
-    const parts=raw.match(/[^.!?]+[.!?]+(?:[”"']|$)|[^.!?]+$/g)?.map(x=>x.trim()).filter(Boolean)||[];
-    if(parts.length<=1||raw.length<125)return;
-    let index=0;internal=true;live.textContent=parts[0];internal=false;
-    playback=setInterval(()=>{index++;if(index>=parts.length){clearInterval(playback);playback=null;return;}internal=true;live.textContent=parts[index];internal=false;},1150);
-  });watcher.observe(live,{childList:true,characterData:true,subtree:true});}
-  return {handle,cleanup};
+  function onReturn(){if(!mapPending||returned||Date.now()-lastMapClick<1000||Date.now()-lastMapClick>20*60*1000||document.hidden)return;returned=true;mapPending=false;
+    if(phase==='results'){void addMessage('auren','Welcome back. How did your Maps search go? Would you like more options, or are you finished searching?');}}
+  document.addEventListener('visibilitychange',()=>{if(!document.hidden)setTimeout(onReturn,450);});window.addEventListener('focus',()=>setTimeout(onReturn,450));
+  // Location permissions and standing status stay in Settings; results are temporary and belong by the chat.
+  return {handle,clear};
 })();
 
