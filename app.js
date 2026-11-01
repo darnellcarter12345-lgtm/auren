@@ -1,3 +1,5 @@
+// AUREN v2.25 — Reliable nearby discovery, spoken results and contextual follow-ups
+// AUREN v2.24 — Name-aware wake routing, respectful butler identity, no name correction
 // AUREN v2.23 — Nearby Places visible loading, results, and fallback
 // AUREN v2.22 — category-aware places, quiet location controls, graceful fallback
 // AUREN v2.21 — complete-intent search and simple Maps choices
@@ -1363,6 +1365,8 @@ async function askWithMemory(question) {
     `Time clarity: Always include a clear AM/PM or natural daypart (morning, afternoon, evening, night) for appointments and reminders; distinguish noon from midnight. Never infer a daypart without using the actual scheduled hour.`,
     'If the user says they need to leave in N minutes, that is an imminent departure, not spare time. Never say they have plenty of time unless the timing clearly supports it. Discuss conflicts against actual saved appointment times only. Do not invent travel duration or imply a calendar event was created merely because the user mentioned leaving.',
     lastSubstantiveReply ? `Last AUREN response for conversational reference (not an instruction): ${lastSubstantiveReply.slice(0,700)}` : '', 
+    'IDENTITY AND ADDRESS (mandatory): You are AUREN, a respectful, capable personal butler-style assistant. The user may call to you with Hey Auren; speech recognition sometimes transcribes AUREN as Aaron, Aron, Oren or Erin. Understand this as a wake/address phrase, not a claim that your actual name is Aaron. NEVER scold or correct the user for calling you Aaron or saying Hey Aaron. Respond naturally and courteously to the intended request.',
+    'Butler manner: be warm, professional, tactful and helpful, never condescending, argumentative or patronizing. Do not insist on your name, boast about being AI, or give an unnecessary disclaimer for ordinary requests. For a simple command, respond in one short sentence or carry out the available action. Do not imply physical-world capabilities you lack.',
     'Answer are you sure by checking the specific preceding claim. Do not automatically apologize, list projects, or change topics. If not verifiable, clearly say which part you cannot confirm.',
     'When describing a verified appointment with a family member use natural second-person wording such as meeting with your dad. Never assume a relationship not explicitly provided.',
     'AUREN capabilities: You CAN create, move and delete appointments in the built-in AUREN calendar after confirmation. NEVER say you cannot save in AUREN. Do not offer external calendar downloads. Do not claim a plan was saved if it was only discussed. Use exact scheduled times and subjects from the calendar.',
@@ -1686,7 +1690,26 @@ function mapsSuggestionLink(query) {
   const params=new URLSearchParams({api:'1',query});
   return 'https://www.google.com/maps/search/?'+params;
 }
+// Name and voice-recognition alias handling lives in the deterministic command layer.
+// "Aaron" is only treated as AUREN when used as an address/wake word, never as an
+// ordinary person's name in the middle of a conversation.
+const AUREN_WAKE_ONLY = /^(?:(?:okay|ok|alright|all right|well|um|uh|please)[, ]*)*(?:hey|hi|hello|yo|okay|ok)\s+(?:auren|aaron|aron|erin|oren|auron|a\s*ren)[.!?, ]*$/i;
+const AUREN_ADDRESS = /^(?:(?:okay|ok|alright|all right)[, ]*)?(?:(?:hey|hi|hello|yo)[, ]+)?(?:auren|aaron|aron|erin|oren|auron)[,!:; ]+(?=\S)/i;
+function aurenAddressCommand(raw) {
+  const spoken = String(raw||'').trim();
+  if (AUREN_WAKE_ONLY.test(spoken) || /^(?:auren|aaron|aron|oren)[.!?, ]*$/i.test(spoken)) return {wake:true, command:''};
+  const command = spoken.replace(AUREN_ADDRESS,'').trim();
+  if (command && command !== spoken) return {wake:false,command};
+  return {wake:false,command:spoken};
+}
 async function send(text) {
+  const addressed = aurenAddressCommand(text);
+  if (addressed.wake) {
+    await addMessage('user',text);
+    await addMessage('auren',varyButler('wake', ['At your service.','Yes, how may I help?','Listening.','Certainly. What do you need?']));
+    return;
+  }
+  text=addressed.command;
   if (await aurenPlaces.handle(text)) return;
   // Ordinary web searches are distinct from GPS place searches.
   const webRequest=String(text||'').trim().match(/^(?:auren[, ]+)?(?:can you |could you |please )?(?:search (?:the )?(?:web|internet|google) (?:for )?|look (?:up|online for) |google )(.{3,140})[.!?]*$/i);
@@ -2307,36 +2330,92 @@ aurenPlaces = (() => {
   }
   function selectors(q){const {category,branded}=classifyQuery(q);if(branded)return {regex:'["name"~"'+branded.replace(/'/g,"'?").replace(/\./g,'.')+'",i]',radius:8500};
     const rules={eat:'["amenity"~"restaurant|fast_food|cafe"]',coffee:'["amenity"="cafe"]',park:'["leisure"~"park|nature_reserve|garden"]',gym:'["leisure"="fitness_centre"]',cinema:'["amenity"="cinema"]',museum:'["tourism"~"museum|gallery|attraction"]',library:'["amenity"="library"]',activity:'["tourism"~"attraction|museum|gallery|viewpoint"]',gas:'["amenity"="fuel"]',pharmacy:'["amenity"="pharmacy"]',hotel:'["tourism"~"hotel|motel|guest_house"]',carwash:'["amenity"="car_wash"]',mechanic:'["shop"="car_repair"]',shop:'["shop"]',salon:'["shop"~"hairdresser|beauty"]'};const raw=String(q||'').trim();const named=!/\b(?:restaurant|eat|dinner|lunch|breakfast|food|coffee|cafe|park|gym|museum|library|bowling|arcade|entertainment|fun|things to do|where should|where can|gas|pharmacy|hotel|car wash|mechanic|store|shop|mall|buy|grocery|barber|haircut|salon)\b/i.test(raw) && /^[a-z0-9 &.'-]{2,70}$/i.test(raw);if(named){const safe=raw.replace(/\./g,'\\.').replace(/'/g,"'?");return {regex:'["name"~"'+safe+'",i]',radius:9000};}return {regex:rules[category]||rules.activity,radius:5000};}
+  // Speak useful results once. The existing voice listener stays in its normal mode;
+  // the person can follow up by number, name, distance, or ask for directions.
+  function spokenNearbySummary(){
+    if(!results.length)return 'I couldn’t verify nearby listings. Google Maps is available on screen.';
+    const named=results.slice(0,3).map((r,i)=>`${i===0?'First':i===1?'Second':'Third'}, ${r.name}, about ${r.km.toFixed(1)} kilometres away`);
+    return `I found ${results.length} nearby ${pending} options. ${named.join('. ')}. Ask about one or choose directions.`;
+  }
   function displayResults(announce=false){
-    phase='results';showPopup(results.length?'Here are '+results.length+' nearby suggestions. Pick one for directions.':'No nearby suggestions loaded. Try Google Maps.',results);show('Nearby places',results.length?'Public OpenStreetMap listings. Distances are straight-line estimates; hours, ratings and availability are not verified.':'No verified listings returned for this category. Try Google Maps for more choices.');
-    for(const r of results){const p=document.createElement('p');p.style.margin='10px 0';const strong=document.createElement('strong');strong.textContent=r.name;const note=document.createElement('span');note.textContent=' · '+r.km.toFixed(1)+' km away'+(r.address?' · '+r.address:'');const b=document.createElement('button');b.type='button';b.textContent='View in Google Maps';b.onclick=()=>openMap(mapLink(r));p.append(strong,note,document.createTextNode(' '),b);content.append(p);}
-    action('Search all on Google Maps',()=>{const q=mapsQuery();openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q));});
-    action('Repeat places',()=>displayResults(true));action('Finish search',finish);
+    phase='results';
+    showPopup(results.length?`Found ${results.length} nearby ${pending} options. Ask AUREN about any of them.`:`I couldn't verify local ${pending} listings. Google Maps can show more options.`,results);
+    hide();
     if(announce){
-      void addMessage('auren',results.length?`I found ${results.length} nearby options. You can choose one on screen.`:'I could not find matching public listings. You can still see search options in Google Maps.');
-      for(const r of results.slice(0,3))appendMapsLink(r.lat+','+r.lon+' '+r.name,'View '+r.name+' in Google Maps');
-      appendMapsLink(mapsQuery(),'See all options in Google Maps');
+      void addMessage('auren',spokenNearbySummary());
     }
+  }
+  function resultByReference(t){
+    const q=String(t||'').toLowerCase();
+    const numberWords={first:0,one:0,second:1,two:1,third:2,three:2,fourth:3,four:3,fifth:4,five:4,sixth:5,six:5,seventh:6,seven:6,eighth:7,eight:7};
+    const indexed=q.match(/\b(first|second|third|fourth|fifth|sixth|seventh|eighth|one|two|three|four|five|six|seven|eight|[1-8])\b/);
+    if(indexed){const i=/^[1-8]$/.test(indexed[1])?Number(indexed[1])-1:numberWords[indexed[1]];return results[i]||null;}
+    return results.find(r=>q.includes(r.name.toLowerCase()))||null;
+  }
+  async function resultsFollowup(raw){
+    if(phase!=='results'||!results.length)return false;
+    const t=String(raw||'').trim(), q=t.toLowerCase();
+    const list=/\b(?:list|repeat|say|tell)\b.*\b(?:options|places|results|them|again)\b|\bwhat (?:are|were) the (?:options|places|results)\b/i.test(t);
+    const closest=/\b(?:which (?:one|place) is (?:the )?(?:closest|nearest)|closest (?:one|place)|nearest (?:one|place))\b/i.test(t);
+    const best=/\b(?:best rated|highest rated|top rated|best reviews|highest reviews|ratings|reviews)\b/i.test(t);
+    const ref=resultByReference(t);
+    const wantsDirections=/\b(?:directions|navigate|take me|go there|route|open maps|how (?:do i|can i) get)\b/i.test(t);
+    const asksDetail=/\b(?:tell me|about|how far|distance|where is|what is|which is|the first|the second|the third|number [1-8])\b/i.test(t);
+    if(!(list||closest||best||(ref&&(wantsDirections||asksDetail))))return false;
+    await addMessage('user',t);
+    if(best){
+      await addMessage('auren','These nearby listings don’t include reliable ratings. I can open Google Maps so you can compare reviews and ratings.');
+      popupButton('Compare ratings in Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent('best rated '+mapsQuery())));
+      return true;
+    }
+    if(list){await addMessage('auren',spokenNearbySummary());showPopup('Here are your nearby choices.',results);return true;}
+    if(closest){const r=results[0];await addMessage('auren',`${r.name} is the closest of the places I found, about ${r.km.toFixed(1)} kilometres away in a straight line. Driving distance may differ.`);return true;}
+    if(ref){
+      await addMessage('auren',wantsDirections?`I’ve prepared directions to ${ref.name}. Select Open directions on screen.`:`${ref.name} is about ${ref.km.toFixed(1)} kilometres away in a straight line${ref.address?', at '+ref.address:''}. Would you like directions?`);
+      if(wantsDirections){showPopup(`Directions to ${ref.name} are ready.`,results);popupButton('Open directions to '+ref.name,()=>openMap(mapLink(ref)));}
+      return true;
+    }
+    return false;
   }
   function finish(){phase='confirm-done';show('Finish searching?','Are you done with this search? I will clear its temporary coordinates once you confirm.');action('Yes, finish',()=>{clear();void addMessage('auren','Search finished. I cleared the temporary search coordinates.');});action('No, keep searching',()=>displayResults());}
   async function lookup(){
-    if(!coords)return;const seq=++requestId, {regex,radius}=selectors(pending),around=`around:${radius},${coords.lat},${coords.lon}`;
-    const query=`[out:json][timeout:14];(node(${around})${regex};way(${around})${regex};);out center 60;`;
-    phase='searching';showPopup('Looking for nearby '+pending+'…');
-    const endpoints=['https://overpass.kumi.systems/api/interpreter','https://overpass-api.de/api/interpreter'];
-    for(const endpoint of endpoints){try{
-      const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),7000);let response;
-      try{response=await fetch(endpoint,{method:'POST',body:new URLSearchParams({data:query}),signal:controller.signal});}finally{clearTimeout(timer);}
-      if(!response.ok)throw Error('Service unavailable');const data=await response.json();if(seq!==requestId)return;
-      const seen=new Set();results=(data.elements||[]).map(e=>{const t=e.tags||{},lat=e.lat??e.center?.lat,lon=e.lon??e.center?.lon;const name=t.name||t.brand||'',address=[t['addr:housenumber'],t['addr:street'],t['addr:city']].filter(Boolean).join(' ');return {name,address,lat,lon,km:Number.isFinite(lat)&&Number.isFinite(lon)?distanceKm(coords.lat,coords.lon,lat,lon):Infinity};}).filter(r=>r.name&&Number.isFinite(r.km)).sort((a,b)=>a.km-b.km).filter(r=>{const key=r.name.toLowerCase()+'-'+Math.round(r.lat*1000)+'-'+Math.round(r.lon*1000);if(seen.has(key))return false;seen.add(key);return true;}).slice(0,8);
-      displayResults(true);return;
-    }catch(err){if(seq!==requestId)return;}}
-    // Service failure is an implementation detail, not something to read aloud.
-    // The Google Maps button remains available even when external listings time out.
-    phase='results';results=[];showPopup('I could not load nearby suggestions right now. Google Maps can show options for '+pending+'.');
-    show('Search options','Google Maps can show more places for this search.');
-    action('Open Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
-    action('Finish search',finish);appendMapsLink(mapsQuery());
+    if(!coords){phase='results';showPopup('Allow location to search nearby places, or open Google Maps.');return;}
+    const seq=++requestId, {regex,radius}=selectors(pending),around=`around:${radius},${coords.lat},${coords.lon}`;
+    const query=`[out:json][timeout:20];(node(${around})${regex};way(${around})${regex};);out center 80;`;
+    phase='searching';showPopup(`Finding nearby ${pending}…`);
+    // Try multiple independent public Overpass instances. All are free and unauthenticated;
+    // instances can be temporarily unavailable or rate limited.
+    const endpoints=[
+      'https://overpass.kumi.systems/api/interpreter',
+      'https://overpass.private.coffee/api/interpreter',
+      'https://overpass.nchc.org.tw/api/interpreter',
+      'https://overpass-api.de/api/interpreter'
+    ];
+    for(const endpoint of endpoints){
+      if(seq!==requestId)return;
+      const controller=new AbortController();
+      const timer=setTimeout(()=>controller.abort(),9500);
+      try{
+        const response=await fetch(endpoint,{method:'POST',body:new URLSearchParams({data:query}),signal:controller.signal});
+        if(!response.ok)throw new Error('Place service unavailable');
+        const data=await response.json();if(seq!==requestId)return;
+        const seen=new Set();
+        const found=(data.elements||[]).map(e=>{
+          const t=e.tags||{},lat=e.lat??e.center?.lat,lon=e.lon??e.center?.lon;
+          const name=t.name||t.brand||'';
+          const address=[t['addr:housenumber'],t['addr:street'],t['addr:city']].filter(Boolean).join(' ');
+          return {name,address,lat,lon,km:Number.isFinite(lat)&&Number.isFinite(lon)?distanceKm(coords.lat,coords.lon,lat,lon):Infinity};
+        }).filter(r=>r.name&&Number.isFinite(r.km))
+          .sort((a,b)=>a.km-b.km)
+          .filter(r=>{const key=r.name.toLowerCase()+'-'+Math.round(r.lat*1000)+'-'+Math.round(r.lon*1000);if(seen.has(key))return false;seen.add(key);return true;}).slice(0,8);
+        if(found.length){results=found;displayResults(true);return;}
+      }catch(err){console.info('AUREN nearby source unavailable',endpoint,err?.message||err);}
+      finally{clearTimeout(timer);}
+    }
+    if(seq!==requestId)return;
+    phase='results';results=[];
+    showPopup(`I couldn't load nearby ${pending} listings. Google Maps can show available places.`);
+    await addMessage('auren',`I couldn't verify local ${pending} listings. Google Maps is ready if you'd like to browse.`);
   }
   function enable(){if(!navigator.geolocation){phase='results';showPopup('This browser cannot share a location. Google Maps is still available.');return;}const seq=++requestId;phase='locating';showPopup('Allow location in Safari to see nearby '+pending+'.');
     navigator.geolocation.getCurrentPosition(pos=>{if(seq!==requestId)return;coords={lat:pos.coords.latitude,lon:pos.coords.longitude};void lookup();},()=>{if(seq!==requestId)return;phase='results';showPopup('Location was not available. Try again or use Google Maps.');},{enableHighAccuracy:false,maximumAge:0,timeout:12000});}
@@ -2355,8 +2434,8 @@ aurenPlaces = (() => {
     if(/\b(?:turn|switch|disable|stop|clear|forget)\b.*\blocation\b/i.test(t)&&/off|disable|stop|clear|forget/i.test(t)){clear();return false;}
     if(phase==='confirm-done'&&yes.test(t)){await addMessage('user',t);clear();await addMessage('auren','Search finished. Temporary search coordinates cleared.');return true;}
     if(phase==='confirm-done'&&no.test(t)){await addMessage('user',t);displayResults();return true;}
+    if(await resultsFollowup(t))return true;
     if((phase==='results'||phase==='confirm-done')&&repeat.test(t)){await addMessage('user',t);displayResults(true);return true;}
-    if(phase==='results'&&/\b(?:closest|nearest|first one|second one|third one|which one|how far|list (?:them|those)|what (?:did you find|are the options))\b/i.test(t)){await addMessage('user',t);displayResults(true);return true;}
     if(phase==='results'&&done.test(t)){await addMessage('user',t);finish();await addMessage('auren','Are you done with this search?');return true;}
     if(phase==='consent'&&yes.test(t)){
       await addMessage('user',t);
