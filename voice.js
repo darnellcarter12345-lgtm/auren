@@ -1,4 +1,4 @@
-// AUREN v2.9.3: explicit microphone status, bounded iPhone recovery and dictation fallback.
+// AUREN v2.9.4: truthful iPhone microphone state and no silent early-exit loops.
 // SpeechRecognition is browser-dependent and may process microphone audio online.
 // The user must explicitly start voice access at least once; no background/locked-screen listening.
 export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpoken }) {
@@ -42,6 +42,8 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   let lastRecognitionError = '';
   let earlyEndCount = 0;
   let sessionHadResult = false;
+  let sessionConfirmedStart = false;
+  let userTappedAt = 0;
   // Aggregate recognition fragments until the speaker pauses naturally.
   let phraseParts = [], phraseTimer = null;
   const PHRASE_PAUSE_MS = mobileWebKit ? 1350 : 1050;
@@ -239,14 +241,14 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     const id = ++token;
     lastStart = Date.now();
     lastRecognizerActivity = lastStart;
-    sessionHadResult = false; lastRecognitionError = '';
+    sessionHadResult = false; sessionConfirmedStart = false; lastRecognitionError = '';
     const r = new Recognition(); recognition = r;
     r.lang = 'en-GB';
     // iOS speech services tend to work more consistently with individual utterances.
     r.continuous = !mobileWebKit;
     r.interimResults = true;
     r.maxAlternatives = mobileWebKit ? 3 : 5;
-    r.onstart = () => { if (id === token) { engineRunning = true; lastRecognizerActivity = Date.now(); stalledRestarts = 0; armWatchdog(); report(speaking ? 'Listening for an interruption…' : (conversation ? 'Listening…' : 'Say “Hey Auren” to speak')); } };
+    r.onstart = () => { if (id === token) { sessionConfirmedStart = true; engineRunning = true; lastRecognizerActivity = Date.now(); stalledRestarts = 0; armWatchdog(); report(speaking ? 'Listening for an interruption…' : (conversation ? 'Listening…' : 'Say “Hey Auren” to speak')); } };
     r.onresult = event => {
       if (id !== token) return;
       lastRecognizerActivity = Date.now(); stalledRestarts = 0;
@@ -306,26 +308,38 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       // Several iPhone Safari recognizers end immediately without transcription.
       // Stop retrying instead of displaying an endless false 'Listening' state.
       if (mobileWebKit && !sessionHadResult && !responding && !speaking && pageVisible()) {
+        // iOS may stop an empty listening session immediately. It is NOT
+        // evidence that microphone capture or speech-to-text succeeded.
+        if (!sessionConfirmedStart) lastRecognitionError = lastRecognitionError || 'service did not start';
         if (Date.now() - lastStart < 2200 || (lastRecognitionError && lastRecognitionError !== 'no-speech')) {
           earlyEndCount += 1;
         } else {
           earlyEndCount = 0;
         }
-        if (earlyEndCount >= 3) {
+        if (earlyEndCount >= 1) {
           errorStop = true; permittedStart = false; desiredMode = 'off';
           wakeMode = false; conversation = false;
-          report('Safari stopped speech recognition. Tap the orb to retry or use iPhone keyboard dictation in Text chat.');
+          report('Safari ended listening before hearing speech' + (lastRecognitionError ? ' (' + lastRecognitionError + ')' : '') + '. Tap the orb to retry. If this repeats, use iPhone keyboard dictation; microphone permission alone cannot enable unsupported recognition.');
           return;
         }
       }
       if (!responding && !errorStop) {
+        // Safari iPhone does not reliably accept a timer-driven restart, and
+        // repeated restarts create the misleading listening/idle flash.
+        if (mobileWebKit && !sessionHadResult) {
+          errorStop = true; desiredMode = 'off'; wakeMode = false; conversation = false; permittedStart = false;
+          report(lastRecognitionError && lastRecognitionError !== 'no-speech'
+            ? 'iPhone speech recognition stopped: ' + lastRecognitionError + '. Tap the orb to retry; use keyboard dictation if it persists.'
+            : 'Safari stopped listening without a transcript. Tap the orb to try again, or use keyboard dictation.');
+          return;
+        }
         // Keep the final speech fragment pending while recognition restarts.
         // Back off failed sessions; do not hammer microphone permissions on iOS.
         const delay = mobileWebKit ? Math.min(2000, 500 + restartFailures * 300) : 230;
         listenSoon(delay);
       }
     };
-    try { r.start(); active = true; armWatchdog(); report(conversation ? 'Listening…' : 'Say “Hey Auren” to speak'); }
+    try { r.start(); active = true; report('Connecting to iPhone speech recognition…'); }
     catch (err) {
       active = false; engineRunning = false; recognition = null;
       restartFailures = Math.min(restartFailures + 1, 5);
@@ -409,8 +423,9 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     clearPhrase(); errorStop = false; stalledRestarts = 0; restartFailures = 0; earlyEndCount = 0;
     permittedStart = true; wakeMode = true; conversation = true; desiredMode = 'conversation';
     if (speaking) stopSpeaking();
+    userTappedAt = Date.now();
     scheduleIdle(); startEngine(); // Synchronous user activation, required by WebKit.
-    return true;
+    return active;
   }
   function stopListening() {
     wakeMode = false; conversation = false; responding = false; permittedStart = false; desiredMode = 'off';
@@ -448,10 +463,10 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       if (Number.isFinite(Number(rate))) voiceRate = Math.max(0.7, Math.min(1.25, Number(rate)));
       if (Number.isFinite(Number(pitch))) voicePitch = Math.max(0.7, Math.min(1.3, Number(pitch)));
     },
-    get listening() { return desiredMode !== 'off'; },
+    get listening() { return active && engineRunning && !errorStop; },
     get speaking() { return speaking; },
     get wakeMode() { return wakeMode; },
-    get awake() { return conversation; },
+    get awake() { return conversation && active && engineRunning && !errorStop; },
     get enabled() { return enabled; },
     get interruptionsEnabled() { return interruptionsEnabled; },
     get microphoneActive() { return engineRunning && active && !errorStop; },
