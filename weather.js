@@ -1,9 +1,9 @@
-
 /*
  * AUREN Weather Service
  * Live forecasts powered by Open-Meteo
  * No GPS required.
  */
+
 
 const weatherCache = new Map();
 
