@@ -1,3 +1,4 @@
+// AUREN v2.29 — clean voice destinations, device-current-location navigation, useful best-places fallback
 // AUREN v2.28 — reliable Maps directions and no failed-search retry loop
 // AUREN v2.27 — richer nearby cards, relevant choices, transparent ratings.
 // AUREN v2.26 — Reliable profile, direct name recall, seamless Settings.
@@ -2258,6 +2259,10 @@ aurenPlaces = (() => {
     t=t.replace(/^(?:(?:hey|hi|okay|ok)\s+)?auren\s*[,!:.]?\s*/i,'')
        .replace(/^(?:(?:can|could|would|will)\s+you\s+|please\s+|i\s+(?:want|need)\s+(?:you\s+)?to\s+)/i,'')
        .replace(/[.!?]+$/,'').trim();
+    // Handle Safari duplicate transcripts where a business name precedes the command.
+    // e.g. 'McDonald's take me to McDonald's'.
+    const echoed=t.match(/^(.{2,70}?)\s+(?:take|bring|drive|guide|lead)\s+me\s+to\s+(.+)$/i);
+    if(echoed && echoed[2].trim())t='take me to '+echoed[2].trim();
     // Covers speech-recognition insertions: 'take me find directions to Chipotle'.
     const starters=[
       /^(?:take|bring|drive|guide|lead)\s+me\s+(?:(?:to|find|show|get|the|some|directions|direction|route|routes|for)\s+){0,5}(?:to\s+)?(.+)$/i,
@@ -2273,6 +2278,10 @@ aurenPlaces = (() => {
     let dest=m[1].trim().replace(/^(?:(?:me|to|the)\s+)+/i,'')
       .replace(/^(?:nearest|closest|a|an)\s+/i,'')
       .replace(/\s+(?:please|for me|near me|nearby|around me)$/i,'').trim();
+    // Safari sometimes repeats the destination before its command:
+    // 'McDonald's take me to McDonald's' -> 'McDonald's'.
+    dest=dest.replace(/^(.{2,65}?)\s+(?:take|bring|drive|guide|lead)\s+me\s+to\s+(.+)$/i,(_all,first,second)=>second.trim());
+    dest=dest.replace(/^(.{2,65}?)\s+(?:navigate|directions?)\s+to\s+(.+)$/i,(_all,first,second)=>second.trim());
     if(!dest||dest.length<2||dest.length>110)return '';
     // Avoid routing application commands or abstract requests to Google Maps.
     if(/^(?:settings?|text chat|history|the home screen|my (?:schedule|calendar|memories)|sleep|bed|the next sentence|the previous page)$/i.test(dest))return '';
@@ -2347,11 +2356,10 @@ aurenPlaces = (() => {
       const loading=document.createElement('div');loading.setAttribute('role','status');loading.textContent=phase==='locating'?'Waiting for your location permission…':'Finding nearby suggestions…';loading.style.cssText='padding:16px;text-align:center;opacity:.85';mapChoices.append(loading);
     }
     if(navigationTarget && phase!=='searching'&&phase!=='locating'){
-      const directionsURL='https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(navigationTarget)+(coords?'&origin='+encodeURIComponent(coords.lat+','+coords.lon):'');
-      popupButton('Get directions to '+navigationTarget,()=>openMap(directionsURL));
+      popupButton('Directions from my current location to '+navigationTarget,()=>openDirections(navigationTarget));
     }
     if(lookupFailed && !places.length){
-      popupButton('See '+pending+' in Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
+      popupButton('Browse places & genuine reviews in Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
     }
     if(phase!=='searching'&&phase!=='locating'){
       popupButton(lookupFailed?'Retry nearby lookup':places.length?'Search again':'Find nearby suggestions',()=>{
@@ -2360,12 +2368,16 @@ aurenPlaces = (() => {
         enable();
       });
     }
-    if(phase!=='searching'&&phase!=='locating'&&places.length)popupButton('Compare ratings & reviews',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
-    popupButton('Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
+    if(phase!=='searching'&&phase!=='locating')popupButton('See ratings and reviews in Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
+    if(navigationTarget)popupButton('Find other '+navigationTarget+' locations in Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
     const x=document.createElement('button');x.type='button';x.textContent='Close';x.className='ghost';x.style.cssText='align-self:center;padding:6px 12px';x.onclick=closePopup;mapChoices.append(x);
   }
   const distanceKm=(a,b,c,d)=>{const R=6371,rad=x=>x*Math.PI/180,dl=rad(c-a),dn=rad(d-b),v=Math.sin(dl/2)**2+Math.cos(rad(a))*Math.cos(rad(c))*Math.sin(dn/2)**2;return 2*R*Math.atan2(Math.sqrt(v),Math.sqrt(1-v));};
-  const mapLink=(r)=>'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(r.lat+','+r.lon+' '+r.name);
+  // No stored home/address origin: Maps determines device current location when available.
+  // Google's Maps URLs support dir_action=navigate with origin omitted.
+  function directionsURL(destination){return 'https://www.google.com/maps/dir/?api=1&destination='+encodeURIComponent(destination)+'&travelmode=driving&dir_action=navigate';}
+  function openDirections(destination){openMap(directionsURL(destination));}
+  const mapLink=(r)=>directionsURL(r.lat+','+r.lon);
   function openMap(url){returnNotice.style.display='none';lastMapClick=Date.now();mapPending=true;returned=false;closePopup();const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener noreferrer';document.body.append(a);a.click();a.remove();}
   // Put the actual clickable Maps link in Text Chat instead of hiding it in Settings.
   // Construct the URL locally; location coordinates reach Google only if the person clicks it.
@@ -2382,6 +2394,8 @@ aurenPlaces = (() => {
     let q=String(text||'').trim().replace(/^(?:hey\s+)?auren[,.! ]*/i,'').replace(/^(?:(?:please|can you|could you|would you)\s+)/i,'').replace(/[.!?]+$/,'').trim();
     const food=/\b(?:places? to eat|somewhere to eat|restaurants?|food|dinner|lunch|breakfast|brunch|where (?:can|should) i eat)\b/i;
     const types=[[/\b(?:coffee shops?|cafes?|coffee)\b/i,'coffee shops'],[/\b(?:parks?|hiking trails?|outdoors|nature)\b/i,'parks'],[/\b(?:gyms?|fitness centers?|workout places?)\b/i,'gyms'],[/\b(?:museums?|art galleries?)\b/i,'museums'],[/\b(?:libraries|library)\b/i,'libraries'],[/\b(?:movie theaters?|cinemas?|movies)\b/i,'movie theaters'],[/\b(?:stores?|shopping|shops?|malls?)\b/i,'stores'],[/\b(?:gas stations?|fuel stations?)\b/i,'gas stations'],[/\b(?:pharmac(?:y|ies)|drugstores?)\b/i,'pharmacies'],[/\b(?:hotels?|places? to stay)\b/i,'hotels'],[/\b(?:barbers?|haircuts?|salons?)\b/i,'barbers'],[/\b(?:car washes?|auto detailing)\b/i,'car washes'],[/\b(?:mechanics?|auto repairs?)\b/i,'mechanics'],[/\b(?:things to do|somewhere to go|places? to visit|fun activities)\b/i,'things to do']];
+    // Named brands/destinations stay intact instead of being categorized as generic food.
+    if(/^(?:mcdonald'?s|chipotle|starbucks|chick[ -]?fil[ -]?a|taco bell|wendy'?s|burger king|whataburger|subway|dunkin'?|target|walmart)$/i.test(q))return q;
     if(food.test(q))return 'restaurants';
     for(const [pattern,category] of types)if(pattern.test(q))return category;
     q=q.replace(/^(?:find|locate|look for|search for|show|suggest|recommend|take|navigate|go|get|give)\s+(?:me\s+)?(?:directions\s+to\s+|to\s+)?/i,'').replace(/^(?:a|an|the|some|nearby|closest|nearest|good|best)\s+/i,'').replace(/\b(?:near me|nearby|around me|in my area|closest to me)\b/gi,'').trim();
@@ -2502,7 +2516,7 @@ aurenPlaces = (() => {
       coords={lat:aurenLocation.latitude,lon:aurenLocation.longitude};
       phase='consent';showPopup(navigationTarget?'Get directions directly, or choose nearby suggestions.':'Choose how you want to search for '+pending+'.');return;
     }
-    phase='consent';showPopup(navigationTarget?'Get directions directly without needing location or a listings lookup.':'Choose Nearby places to look up local options, or Google Maps to open a map search.');show('Find places near you?','Would you like to use your location for this search? The search service receives coordinates only if you approve.');action('Allow location & search',enable);action('Not now',clear);
+    phase='consent';showPopup(navigationTarget?'Directions use your current device location in Google Maps if location permission is enabled there. No saved home address is used.':'Choose Nearby places to look up local options, or Google Maps to open a map search.');show('Find places near you?','Would you like to use your location for this search? The search service receives coordinates only if you approve.');action('Allow location & search',enable);action('Not now',clear);
   }
   async function handle(text){const t=String(text||'').trim();
     if(incompletePlaceRequest(t)){await addMessage('user',t);await addMessage('auren','What kind of place would you like me to find?');return true;}
@@ -2522,7 +2536,7 @@ aurenPlaces = (() => {
     const destination=destinationFrom(t),named=namedPlaceSearch(t);
     if((destination&&meaningfulSearchTerm(destination))||(named&&meaningfulSearchTerm(named))||placeIntent.test(t)||broadPlaceIntent.test(t)){
       await addMessage('user',t);request(t);
-      await addMessage('auren',locationApproved&&aurenLocation?'Choose Nearby places or Google Maps on screen.':'Choose Nearby places or Google Maps on screen.');
+      await addMessage('auren',destination?'Select directions to open Google Maps from your current location, or browse nearby options.':'Choose nearby suggestions or view actual reviews in Google Maps.');
       return true;
     }
     return false;
