@@ -109,10 +109,17 @@ $('panelToggle').addEventListener('click', (event) => {
 });
 // Direct click actions are synchronous to preserve Safari's microphone gesture permission.
 let lastOrbTap = 0;
-$('orbControl').addEventListener('click', () => {
+let lastTouchOrbTap = 0;
+const orbButton = $('orbControl');
+function activateOrb(event) {
+  if (event?.cancelable && event.type === 'touchstart') event.preventDefault();
   const now = Date.now();
-  if (now - lastOrbTap < 220) return; // suppress accidental double-taps only
+  // iOS sends a synthetic click after touchstart. Run the microphone action
+  // immediately during the user's real touch and ignore the duplicate.
+  if (event?.type === 'click' && now - lastTouchOrbTap < 850) return;
+  if (now - lastOrbTap < 300) return;
   lastOrbTap = now;
+  if (event?.type === 'touchstart') lastTouchOrbTap = now;
   if (!capabilities.listen) {
     showStatus('Voice recognition is unavailable in this browser. On iPhone, open Text chat and use the keyboard microphone to dictate.', 'error');
     return;
@@ -133,7 +140,12 @@ $('orbControl').addEventListener('click', () => {
   } catch (error) {
     showStatus('Could not activate the microphone: ' + (error?.message || 'browser permission denied'), 'error');
   }
-});
+}
+// A real touch gesture starts voice immediately on iPhone. preventDefault
+// prevents long-press selection and the browser's delayed synthetic click.
+orbButton.addEventListener('touchstart', activateOrb, { passive: false });
+// Keep native mouse, keyboard, screen-reader and desktop behavior.
+orbButton.addEventListener('click', activateOrb);
 // Voice preview is intentionally removed: one voice, one simple main control.
 $('wakeBtn').onclick = () => {
   if (capabilities.speak) voice.setEnabled(true);

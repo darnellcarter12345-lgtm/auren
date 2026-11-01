@@ -1,12 +1,1 @@
-AUREN v2.8.2 — Remove moving transcript + iPhone recovery
-
-Replace these COMPLETE files in GitHub main branch:
-1. app.js
-2. styles.css
-3. voice.js
-
-Do not change index.html, weather.js, Cloudflare Worker, or stored user data. Commit and reload.
-
-Test iPhone Safari with device unlocked: orb -> question -> spoken reply -> follow-up; pause and try restart; switch tabs (no spoken navigation). Text chat history stays available.
-
-Safari may still require a manual tap after recognition failure, backgrounding, or audio playback. No always-on background listening promised.
+AUREN v2.8.3 iPhone orb touch fix. Replace complete app.js and styles.css in GitHub. Leave voice.js, weather.js and Cloudflare Worker unchanged. Refresh AUREN in iPhone Safari.
