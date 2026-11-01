@@ -319,19 +319,65 @@ let reviewPending=false;
 function savePlans(){ localStorage.setItem(PLAN_KEY,JSON.stringify(plans)); }
 function formatClock(time){const [h,m]=time.split(':').map(Number);return new Date(2020,0,1,h,m).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});}
 function plansFor(date){return plans.filter(p=>p.date===date).sort((a,b)=>a.time.localeCompare(b.time));}
-function planSummary(date){const items=plansFor(date); if(!items.length)return 'You have nothing scheduled for this day. Would you like to plan something?';const names=items.slice(0,5).map(p=>`${p.title} at ${formatClock(p.time)}`).join(', ');return `You have ${items.length} ${items.length===1?'plan':'plans'}: ${names}${items.length>5?', and others':''}. ${items.length<4?'You appear to have some open time, although I cannot see your other calendars. ':''}Does that sound correct?`;}
+const weekdayNames=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+function parseISO(date){const [y,m,d]=date.split('-').map(Number);return new Date(y,m-1,d,12);}
+function shiftedDate(date,days){const d=parseISO(date);d.setDate(d.getDate()+days);return localDate(d);}
+function weekStart(date){const day=parseISO(date).getDay();return shiftedDate(date,-((day+6)%7));}
+function weekItems(date){const start=weekStart(date),end=shiftedDate(start,6);return plans.filter(p=>p.date>=start&&p.date<=end).sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time));}
+function readableDate(date){return parseISO(date).toLocaleDateString([], {weekday:'long',month:'short',day:'numeric'});}
+let plannerScope='day', briefingScope='day';
+function setScopeButtons(ids,selected){for(const [scope,id] of Object.entries(ids)){const b=$(id);b.classList.toggle('scope-active',scope===selected);b.setAttribute('aria-pressed',String(scope===selected));}}
+function setPlannerScope(scope){plannerScope=scope;setScopeButtons({day:'viewDay',week:'viewWeek'},scope);$('plannerHeading').textContent=scope==='week'?'Your Week':'Your Day';renderDay();}
+function setBriefingScope(scope){briefingScope=scope;setScopeButtons({day:'briefDay',week:'briefWeek'},scope);$('briefingScopeLabel').textContent=scope==='week'?'Your week’s plans':'Today’s plans';}
+$('viewDay').onclick=()=>setPlannerScope('day');$('viewWeek').onclick=()=>setPlannerScope('week');
+$('briefDay').onclick=()=>setBriefingScope('day');$('briefWeek').onclick=()=>setBriefingScope('week');
+function weekSummary(date){
+ const items=weekItems(date);
+ if(!items.length)return 'There are no plans saved for this week. That is only what is in this planner.';
+ const groups=new Map();for(const p of items){const name=weekdayNames[parseISO(p.date).getDay()];if(!groups.has(name))groups.set(name,[]);groups.get(name).push(`${p.title} at ${formatClock(p.time)}`);}
+ const spoken=[...groups].map(([day,entries])=>`${day}: ${entries.slice(0,3).join(', ')}${entries.length>3?', and more':''}`).join('. ');
+ return `This week you have ${items.length} ${items.length===1?'plan':'plans'}. ${spoken}. Does that sound correct?`;
+}
+function requestedScope(t){return /\b(?:this week|next week|my week|the week|weekly|whole week)\b/i.test(t)?'week':'day';}
+function weekOrDaySummary(date,scope){return scope==='week'?weekSummary(date):planSummary(date);}
+function extractWeekdayDate(t,baseDate=localDate()){
+ const lower=t.toLowerCase();const found=lower.match(/\b(?:(next|this|on)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/);
+ if(!found)return null;
+ const names=['sunday','monday','tuesday','wednesday','thursday','friday','saturday'];const day=names.indexOf(found[2]);
+ const base=parseISO(baseDate);const delta=(day-base.getDay()+7)%7;
+ // "next Monday" means the Monday of next week, rather than an ambiguous day within this week.
+ if(found[1]==='next'){const start=weekStart(baseDate);return shiftedDate(start,7+(day+6)%7);}
+ if(found[1]==='this'){return shiftedDate(weekStart(baseDate),(day+6)%7);}
+ return shiftedDate(baseDate,delta);
+}
+function parseDateIntent(t){
+ const lower=t.toLowerCase();if(/\bday after tomorrow\b/.test(lower))return shiftedDate(localDate(),2);
+ if(/\btomorrow\b/.test(lower))return shiftedDate(localDate(),1);
+ if(/\btoday\b/.test(lower))return localDate();
+ const day=extractWeekdayDate(t);if(day)return day;
+ if(/\bnext week\b/.test(lower))return shiftedDate(weekStart(localDate()),7);
+ if(/\bthis week\b/.test(lower))return weekStart(localDate());
+ return null;
+}
+function findMatchingEvent(t){
+ const candidates=plans.filter(p=>t.toLowerCase().includes(p.title.toLowerCase()));
+ if(candidates.length===1)return candidates[0];
+ const current=plansFor($('planDate').value);if(current.length===1)return current[0];
+ return plans.find(p=>p.id===lastDiscussedPlanId)||null;
+}
+function planSummary(date){const items=plansFor(date); if(!items.length)return 'You have nothing scheduled for this day. Would you like to plan something?';const names=items.slice(0,5).map(p=>`${p.title} at ${formatClock(p.time)}`).join(', ');return `You have ${items.length} ${items.length===1?'plan':'plans'}: ${names}${items.length>5?', and others':''}. Does that sound correct?`;}
 function renderDay(){
  const node=$('dayTimeline');
  node.replaceChildren();
- const items=plansFor($('planDate').value);
+ const items=plannerScope==='week'?weekItems($('planDate').value):plansFor($('planDate').value);
  // Voice-first: show only appointments saved for this date, never empty clock rows.
  if(!items.length){
-  node.append(el('div','day-empty','Nothing scheduled.'));
+  node.append(el('div','day-empty',plannerScope==='week'?'Nothing scheduled this week.':'Nothing scheduled.'));
   return;
  }
  for(const p of items){
   const card=el('div','day-event');
-  const label=el('div','day-event-clock',formatClock(p.time));
+  const label=el('div','day-event-clock',(plannerScope==='week'?weekdayNames[parseISO(p.date).getDay()].slice(0,3)+' · ':'')+formatClock(p.time));
   const content=el('div','day-event-content');
   content.append(el('div','day-event-title',p.title));
   const remove=el('button','remove-plan','×');
@@ -355,8 +401,8 @@ $('planForm').onsubmit=async e=>{e.preventDefault();pendingPlan={kind:'add',titl
 function prepareSpokenReview(){if(capabilities.speak){voice.setEnabled(true);$('speakReplies').checked=true;} if(capabilities.listen && !voice.awake)voice.startListening();voice.setReviewMode?.(true);reviewPending=true;}
 function beginReview(){prepareSpokenReview();const date=$('planDate').value;addMessage('auren',planSummary(date));}
 // Spoken review remains available through the daily briefing and natural conversation.
-$('playBriefing').onclick=()=>{prepareSpokenReview();const date=localDate();addMessage('auren',`Good morning. ${planSummary(date)}`);};
-function proposedDay(text){const t=text.toLowerCase(); if(/\btomorrow\b/.test(t)){const d=new Date();d.setDate(d.getDate()+1);return localDate(d);}if(/\btoday\b/.test(t))return localDate();return $('planDate').value||localDate();}
+$('playBriefing').onclick=()=>{prepareSpokenReview();const date=localDate();addMessage('auren',`Good morning. ${weekOrDaySummary(date,briefingScope)}`);};
+function proposedDay(text){return parseDateIntent(text)||$('planDate').value||localDate();}
 function timeFromText(text){
  const m=text.match(/\b(?:at|to|for)\s+(\d{1,2})(?::(\d\d))?\s*(a\.?m\.?|p\.?m\.?)?\b/i);
  if(!m)return null;let h=Number(m[1]),minute=Number(m[2]||0),ampm=(m[3]||'').replaceAll('.','').toLowerCase();
@@ -380,13 +426,19 @@ async function planSpeech(text){const t=text.trim();
   if(p.kind==='move'){const event=plans.find(e=>e.id===p.id);if(!event)return 'That plan no longer exists.';const previous={time:event.time,date:event.date,duration:event.duration};event.time=p.time||event.time;event.date=p.date||event.date;event.duration=p.duration||event.duration;try{savePlans();}catch{Object.assign(event,previous);return 'I could not save that change.';}lastDiscussedPlanId=event.id;$('planDate').value=event.date;renderDay();return `Certainly. Moved ${event.title} to ${formatClock(event.time)} on ${event.date}.`;}
  }
  if(pendingPlan&&/^(no|nope|cancel|don't|do not|never mind)\b/i.test(t)){pendingPlan=null;return 'Of course. I have made no changes.';}
+ if(pendingPlan && /^(?:actually|wait|instead|make (?:it|that)|change (?:it|that))\b/i.test(t)){
+  const date=parseDateIntent(t),time=timeFromText(t);if(time==='ambiguous')return 'Did you mean AM or PM?';
+  if(date)pendingPlan.date=date;if(time)pendingPlan.time=time;if(/\d+\s*(?:hours?|minutes?)/i.test(t))pendingPlan.duration=durationFromText(t);
+  return `Understood. Shall I ${pendingPlan.kind==='add'?'add':pendingPlan.kind==='move'?'move':'change'} ${pendingPlan.title||plans.find(p=>p.id===pendingPlan.id)?.title||'that plan'}${pendingPlan.time?' at '+formatClock(pendingPlan.time):''}${pendingPlan.date?' on '+readableDate(pendingPlan.date):''}?`;
+ }
+
  if(reviewPending && /^(yes|yeah|correct|sounds good|that's correct|all correct)\b/i.test(t)){reviewPending=false;voice.setReviewMode?.(false);return 'Very good. I am here if you need anything adjusted.';}
- if(/\b(?:what(?:'s| is) on|what do i have|go over|review|discuss|read|tell me about)\b.*\b(?:my day|schedule|calendar|plans|today|tomorrow)\b/i.test(t)||/^(?:my schedule|my plans)$/i.test(t)){reviewPending=true;voice.setReviewMode?.(true);return planSummary(proposedDay(t));}
+ if(/\b(?:what(?:'s| is) on|what do i have|go over|review|discuss|read|tell me about|brief(?:ing)?)\b.*\b(?:my day|my week|this week|next week|schedule|calendar|plans|today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(t)||/^(?:my schedule|my plans|my week)$/i.test(t)){reviewPending=true;voice.setReviewMode?.(true);const scope=requestedScope(t);const date=proposedDay(t);if(scope==='week'||parseDateIntent(t)){$('planDate').value=date;setPlannerScope(scope);}return weekOrDaySummary(date,scope);}
  if(/^(?:wait|hold on|that's not right|that isn't right|change that|actually)\b/i.test(t)&&reviewPending){return 'Of course. What would you like me to change?';}
  const add=t.match(/^(?:please\s+)?(?:add|schedule|plan|put|book|set aside)\s+(.+)/i);
- if(add){const time=timeFromText(t);if(time==='ambiguous')return 'Of course. Did you mean AM or PM? Please say the full time again.';if(!time)return 'Certainly. What time should I put that on your schedule? Please include AM or PM.';const title=add[1].replace(/\b(?:tomorrow|today)\b/gi,'').replace(/\b(?:at|for)\s+\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b/gi,'').replace(/\b\d+\s*(?:hours?|minutes?)\b/gi,'').trim().replace(/\s+/g,' ').replace(/[.,]+$/,'');if(!title)return 'What would you like me to call that plan?';pendingPlan={kind:'add',title,date:proposedDay(t),time,duration:durationFromText(t)};return `Shall I add ${title} at ${formatClock(time)}?`;}
- if(/^(?:remove|delete|cancel)\b/i.test(t)&&/\b(?:plan|event|appointment|meeting|that|it|schedule)\b/i.test(t)){const matches=plansFor(proposedDay(t));const event=matches.find(p=>t.toLowerCase().includes(p.title.toLowerCase()))|| (matches.length===1?matches[0]:plans.find(p=>p.id===lastDiscussedPlanId));if(!event)return 'Which event would you like me to remove?';pendingPlan={kind:'delete',id:event.id};return `Shall I remove ${event.title} from your schedule?`;}
- if(/\b(?:move|change|reschedule)\b/i.test(t)){const time=timeFromText(t);const candidates=plansFor(proposedDay(t));const event=candidates.find(p=>t.toLowerCase().includes(p.title.toLowerCase()))||(candidates.length===1?candidates[0]:plans.find(p=>p.id===lastDiscussedPlanId));if(!event)return 'Which event would you like me to change?';if(time==='ambiguous')return 'Did you mean AM or PM? Please include that when giving the new time.';const explicitDate=/\b(today|tomorrow)\b/i.test(t);if(!time&&!explicitDate)return 'What new day or time would you prefer?';pendingPlan={kind:'move',id:event.id,time:time||event.time,date:explicitDate?proposedDay(t):event.date,duration:/\b\d+\s*(?:hours?|minutes?)\b/i.test(t)?durationFromText(t):event.duration};lastDiscussedPlanId=event.id;return `Shall I move ${event.title} to ${formatClock(pendingPlan.time)} on ${pendingPlan.date}?`;}
+ if(add){const time=timeFromText(t);if(time==='ambiguous')return 'Of course. Did you mean AM or PM? Please say the full time again.';if(!time)return 'Certainly. What time should I put that on your schedule? Please include AM or PM.';const title=add[1].replace(/\b(?:tomorrow|today|day after tomorrow|next week|this week|(?:next|this|on)?\s*(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/gi,'').replace(/\b(?:at|for)\s+\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b/gi,'').replace(/\b\d+\s*(?:hours?|minutes?)\b/gi,'').trim().replace(/\s+/g,' ').replace(/[.,]+$/,'');if(!title)return 'What would you like me to call that plan?';pendingPlan={kind:'add',title,date:proposedDay(t),time,duration:durationFromText(t)};return `Shall I add ${title} at ${formatClock(time)}?`;}
+ if(/^(?:remove|delete|cancel)\b/i.test(t)&&/\b(?:plan|event|appointment|meeting|that|it|schedule)\b/i.test(t)){const event=findMatchingEvent(t);if(!event)return 'Which event would you like me to remove?';pendingPlan={kind:'delete',id:event.id};return `Shall I remove ${event.title} from your schedule?`;}
+ if(/\b(?:move|change|reschedule)\b/i.test(t)){const time=timeFromText(t);const event=findMatchingEvent(t);if(!event)return 'Which event would you like me to change?';if(time==='ambiguous')return 'Did you mean AM or PM? Please include that when giving the new time.';const explicitDate=!!parseDateIntent(t);if(!time&&!explicitDate)return 'What new day or time would you prefer?';pendingPlan={kind:'move',id:event.id,time:time||event.time,date:explicitDate?proposedDay(t):event.date,duration:/\b\d+\s*(?:hours?|minutes?)\b/i.test(t)?durationFromText(t):event.duration};lastDiscussedPlanId=event.id;return `Shall I move ${event.title} to ${formatClock(pendingPlan.time)} on ${pendingPlan.date}?`;}
  return null;
 }
 // The planner only changes data after confirmation, not from arbitrary AI text.

@@ -48,7 +48,8 @@
   <main>
     <section id="planner" class="tab auren-screen" aria-label="Your Day">
       <div class="screen-top"><button type="button" class="back-home">← Home</button><span>YOUR DAY</span></div>
-      <h2>Your Day</h2>
+      <h2 id="plannerHeading">Your Day</h2>
+      <div class="scope-chooser" role="group" aria-label="Planner view"><button type="button" id="viewDay" class="scope-active" aria-pressed="true">Day</button><button type="button" id="viewWeek" aria-pressed="false">Week</button></div>
       <label class="date-row">Date <input type="date" id="planDate" aria-label="Choose schedule date"></label>
       <div id="dayTimeline" class="day-timeline" aria-live="polite"></div>
       <div class="plan-actions">
@@ -61,7 +62,8 @@
     <section id="briefing" class="tab auren-screen" aria-label="Daily briefing">
       <div class="screen-top"><button type="button" class="back-home">← Home</button><span>DAILY BRIEFING</span></div>
       <h2>Good morning.</h2>
-      <button id="playBriefing" type="button" class="briefing-play"><span aria-hidden="true">◉</span><span><strong>Hear your briefing</strong><small>Today's plans · Your time</small></span></button>
+      <div class="scope-chooser" role="group" aria-label="Briefing period"><button id="briefDay" type="button" class="scope-active" aria-pressed="true">Today</button><button id="briefWeek" type="button" aria-pressed="false">This week</button></div>
+      <button id="playBriefing" type="button" class="briefing-play"><span aria-hidden="true">◉</span><span><strong>Hear your briefing</strong><small id="briefingScopeLabel">Today’s plans</small></span></button>
     </section>
     <section id="chat" class="tab active">
       <div id="latestReply" class="latest-reply" role="status" aria-live="polite">Ready when you are.</div>

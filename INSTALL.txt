@@ -1,5 +1,2 @@
-AUREN v2.2.6 — Clean Planner
-
-Replace ONLY index.html and app.js in GitHub. Keep all other files unchanged.
-
-Removed the visible 60-minute duration field from manual plan creation and removed duration labels from plan cards. Plans retain a default internal duration for scheduling compatibility. Voice requests specifying a duration still work.
+AUREN v2.2.7 Week Planning and Natural Scheduling
+Replace index.html, styles.css, and app.js in GitHub. Do NOT replace voice.js or AI Worker. Refresh the website. Existing locally stored plans remain unchanged.
