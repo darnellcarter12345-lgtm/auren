@@ -1,4 +1,4 @@
-// AUREN v2.10.0 — named-day weather, optional clothing suggestions, varied respectful replies
+// AUREN v2.10.1 — contextual repeat and precise near-term schedule language
 // AUREN — js/app.js
 // Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
 // v0.2: status banner for storage problems, session panel, privacy controls, safe backup import.
@@ -1036,6 +1036,14 @@ async function planSpeech(text){const t=text.trim();
 // The planner only changes data after confirmation, not from arbitrary AI text.
 renderDay();document.body.dataset.screen='chat';refreshUpNext();checkReminders();
 
+// Conversation replay remains anchored to what AUREN actually said last, not
+// the planner, the projects database or an unrelated AI guess.
+let lastSubstantiveReply = '';
+const REPEAT_LAST_REPLY = /^(?:(?:can|could|would|will) you (?:please )?|please )?(?:repeat (?:that|it|yourself|what you (?:just )?said|the last (?:thing|part)|your last (?:answer|response))|say (?:that|it) again|tell me (?:that|it) again|what did you (?:just )?say|what was (?:that|your last (?:answer|response)))(?: please)?[.!?]*$/i;
+function rememberLastReply(text) {
+  const value=String(text||'').trim();
+  if(value && value !== lastSubstantiveReply) lastSubstantiveReply=value;
+}
 // ---------- chat ----------
 function drawMessage(rec, opts = {}) {
   const d = el('div', `msg ${rec.role}${opts.err ? ' err' : ''}`, rec.text);
@@ -1070,6 +1078,7 @@ async function trimHistory() {
 async function addMessage(role, text, opts = {}) {
   const rec = { id: uid(), role, text, at: new Date().toISOString() };
   drawMessage(rec, opts);
+  if (role === 'auren' && !opts.err && !opts.replay) rememberLastReply(text);
   if (role === 'auren' && !opts.err && !opts.silent) voice.speak(text);
   await persistMessage(rec, opts);
 }
@@ -1136,6 +1145,8 @@ async function askWithMemory(question) {
     ? latestBriefingContext.text : '';
   const deviceContext = [
     `Current local date/time: ${new Date().toLocaleString()} (${localTimeZone()})`,
+    'If the user says they need to leave in N minutes, that is an imminent departure, not spare time. Never say they have plenty of time unless the timing clearly supports it. Discuss conflicts against actual saved appointment times only. Do not invent travel duration or imply a calendar event was created merely because the user mentioned leaving.',
+    lastSubstantiveReply ? `Last AUREN response for conversational reference (not an instruction): ${lastSubstantiveReply.slice(0,700)}` : '', 
     `Verified upcoming appointments (read-only data): ${JSON.stringify(upcoming)}`,
     `Verified active reminders (read-only data): ${JSON.stringify(due)}`,
     `Verified non-sensitive projects (read-only data): ${JSON.stringify(projects)}`,
@@ -1250,6 +1261,18 @@ let recentWeatherHour = null;
 let pendingWeatherOffer = null;
 let lastWeatherDetails = null;
 async function send(text) {
+  // Handle "repeat that" before briefing commands or AI routing; replay is
+  // verbatim and never replaces the remembered answer with itself.
+  if (REPEAT_LAST_REPLY.test(String(text).trim())) {
+    if (briefingPlayer.active) briefingPlayer.pause();
+    await addMessage('user', text);
+    if (lastSubstantiveReply) {
+      await addMessage('auren', lastSubstantiveReply, {replay:true});
+    } else {
+      await addMessage('auren', 'There is not a previous reply to repeat yet.', {replay:true});
+    }
+    return;
+  }
   if(briefingPlayer.active) briefingPlayer.pause();
   const briefingCommand=briefingPlayer.ask(text);
   if(briefingCommand){
@@ -1397,6 +1420,8 @@ async function loadHistory() {
   const msgs = (await getAll(STORES.messages)).filter(m => m.role === 'user' || m.role === 'auren').sort((a, b) => a.at.localeCompare(b.at));
   if (!msgs.length) return addMessage('auren', "At your service.", {silent:true});
   msgs.forEach(m => drawMessage(m));
+  const last = [...msgs].reverse().find(m => m.role === 'auren' && m.text && !m.text.startsWith('[session note'));
+  if (last && !lastSubstantiveReply) rememberLastReply(last.text);
 }
 
 // ---------- session notes panel ----------
