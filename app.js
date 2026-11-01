@@ -363,14 +363,50 @@ async function askWithMemory(question) {
   return answer;
 }
 
+// Handle explicit disputes about saved facts without arguing or fabricating provenance.
+// A saved record proves only that AUREN currently has it, not who said it or when.
+async function memoryDisputeReply(text) {
+  const question = String(text || '').trim();
+  const disputed = /\b(?:never (?:said|told|mentioned)|didn['’]t (?:say|tell|mention)|don't (?:like|enjoy|do|trade)|do not (?:like|enjoy|do|trade)|that's not true|that is not true|you(?:'re| are) (?:wrong|making (?:that|it) up)|i (?:never|don't) (?:say|said))\b/i.test(question);
+  if (!disputed) return null;
+  const memories = (await Mem.listMemories()).filter(m => m.text && !m.sensitive);
+  const queryWords = new Set(Mem.tokenize(question).filter(w => ![
+    'never','didnt','don','not','wrong','true','say','said','told','mention','make','making','up',
+    'like','enjoy','know','think','fact','remember','memory','record','lie','lying','gaslight'
+  ].includes(w)));
+  const candidates = memories.map(m => ({
+    memory:m,
+    score: [...new Set(Mem.tokenize(m.text))].filter(w => queryWords.has(w)).length
+  })).filter(x => x.score > 0).sort((a,b) => b.score - a.score);
+  if (candidates.length === 0) {
+    // No unambiguous match: don't claim a memory exists or that the user said it.
+    return 'I may have misunderstood. I cannot verify that you said that. Which saved memory would you like me to check or correct?';
+  }
+  const best = candidates[0];
+  if (candidates.length > 1 && best.score === candidates[1].score) {
+    return 'I have more than one saved note that could relate to that. I cannot verify exactly what you said. Could you tell me which memory you want to review?';
+  }
+  return `I have this saved in memory: “${best.memory.text.slice(0, 240)}”. That only tells me what is stored, not whether you actually said it or whether it is still accurate. Would you like me to correct or delete that memory?`;
+}
+
 async function send(text) {
   if (voice.available().speak && !voice.enabled) { voice.setEnabled(true); $('speakReplies').checked = true; }
   await addMessage('user', text, { ephemeral: isSessionNote(text) });
   try {
     // Verified save/delete/project operations remain local. Other conversation goes to AI.
-    const isLocal = /^(?:help|\?|what can you do|for now|just for now|this session|for this session|clear (?:the )?session|save session note|session|what are we working on|what am i working on|remember\b|please remember\b|what do you (?:remember|know) about|recall\b|do you remember|search memory for|forget\b|new project\b|start project\b|create project\b|project\b|projects\b|list projects\b|yes\b|no\b|confirm\b|cancel\b)/i.test(text);
-    if (isLocal || !getAIEndpoint()) {
+    // Only verified local actions bypass AI. General questions about the user,
+    // interests, and recommendations should reach the AI with saved memory context.
+    const isLocal = /^(?:help\s*[!?]?|for now\b|just for now\b|this session\b|for this session\b|clear (?:the )?session\b|save session note\b|session\b|what are we working on\b|what am i working on\b|(?:please )?remember\b|search memory for\b|forget\b|new project\b|start project\b|create project\b|project\b|projects\b|list projects\b|yes\s*[.!]?|no\s*[.!]?|confirm\s*[.!]?|cancel\s*[.!]?)$/i.test(text.trim())
+      || /^(?:please )?remember\s+/i.test(text)
+      || /^(?:forget|new project|start project|create project|project)\s+/i.test(text)
+      || /^(?:for now|just for now|this session|for this session|save session note)\s+/i.test(text);
+    const memoryDispute = isLocal ? null : await memoryDisputeReply(text);
+    if (isLocal) {
       await presentResult(await butler.handle(text));
+    } else if (memoryDispute) {
+      await addMessage('auren', memoryDispute);
+    } else if (!getAIEndpoint()) {
+      await addMessage('auren', 'I can see your saved memories, but my AI connection is not configured on this browser. Connect my Cloudflare AI service in Settings so I can answer personal questions and make recommendations.');
     } else if (memoryCandidate(text)) {
       const candidate = memoryCandidate(text);
       const alreadySaved = (await Mem.listMemories()).some(m => m.text.toLowerCase() === candidate.toLowerCase());
