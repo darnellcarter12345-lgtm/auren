@@ -334,7 +334,6 @@ function renderDay(){
   const label=el('div','day-event-clock',formatClock(p.time));
   const content=el('div','day-event-content');
   content.append(el('div','day-event-title',p.title));
-  content.append(el('div','day-event-meta',`${p.duration} min`));
   const remove=el('button','remove-plan','×');
   remove.type='button';
   remove.setAttribute('aria-label',`Remove ${p.title}`);
@@ -352,7 +351,7 @@ document.querySelectorAll('[data-screen]').forEach(button=>button.addEventListen
 document.querySelectorAll('.back-home').forEach(b=>b.addEventListener('click',()=>openScreen('chat')));
 const projectsBack=el('button','back-home','← Home');projectsBack.type='button';projectsBack.onclick=()=>openScreen('chat');$('projects').prepend(projectsBack);
 $('planDate').addEventListener('change',renderDay);
-$('planForm').onsubmit=async e=>{e.preventDefault();pendingPlan={kind:'add',title:$('planTitle').value.trim(),date:$('planDate').value,time:$('planTime').value,duration:Math.max(5,Math.min(720,Number($('planDuration').value)||60))};if(pendingPlan.title&&pendingPlan.time)await addMessage('auren',`Shall I add ${pendingPlan.title} at ${formatClock(pendingPlan.time)} to your schedule?`);};
+$('planForm').onsubmit=async e=>{e.preventDefault();pendingPlan={kind:'add',title:$('planTitle').value.trim(),date:$('planDate').value,time:$('planTime').value,duration:60};if(pendingPlan.title&&pendingPlan.time)await addMessage('auren',`Shall I add ${pendingPlan.title} at ${formatClock(pendingPlan.time)} to your schedule?`);};
 function prepareSpokenReview(){if(capabilities.speak){voice.setEnabled(true);$('speakReplies').checked=true;} if(capabilities.listen && !voice.awake)voice.startListening();voice.setReviewMode?.(true);reviewPending=true;}
 function beginReview(){prepareSpokenReview();const date=$('planDate').value;addMessage('auren',planSummary(date));}
 // Spoken review remains available through the daily briefing and natural conversation.

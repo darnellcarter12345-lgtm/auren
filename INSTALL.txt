@@ -1,5 +1,5 @@
-AUREN v2.2.5 — Quiet Planner
+AUREN v2.2.6 — Clean Planner
 
-Replace ONLY index.html, app.js, styles.css in your GitHub repo. Keep voice.js, AI, memory, Worker and other files untouched.
+Replace ONLY index.html and app.js in GitHub. Keep all other files unchanged.
 
-Your Day shows only saved plans, a date selector and an optional collapsed manual-add form. Removed redundant Ask AUREN about your day button and instruction hints. Briefing remains the place to hear a spoken schedule review; normal voice scheduling remains available.
+Removed the visible 60-minute duration field from manual plan creation and removed duration labels from plan cards. Plans retain a default internal duration for scheduling compatibility. Voice requests specifying a duration still work.
