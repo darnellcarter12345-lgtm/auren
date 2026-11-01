@@ -507,19 +507,35 @@ function renderDay(){
  }
 }
 function openScreen(screen){ void activateScreen(screen); }
+// Navigation must never start speech or the microphone automatically.
+// Spoken replies are reserved for questions, planner confirmations and an explicitly played briefing.
 document.querySelectorAll('[data-screen]').forEach(button=>button.addEventListener('click',()=>{
-  const screen=button.dataset.screen;
-  openScreen(screen);
-  if(voice.enabled){
-    const names={planner:'Your day. Here are your saved appointments.',briefing:'Your briefing is ready.',projects:'Your projects.',chat:'At your service.'};
-    if(names[screen])voice.speak(names[screen]);
-  }
+  openScreen(button.dataset.screen);
 }));
 document.querySelectorAll('.back-home').forEach(b=>b.addEventListener('click',()=>openScreen('chat')));
 const projectsBack=el('button','back-home','← Home');projectsBack.type='button';projectsBack.onclick=()=>openScreen('chat');$('projects').prepend(projectsBack);
 $('planDate').addEventListener('change',renderDay);
-$('planForm').onsubmit=async e=>{e.preventDefault();pendingPlan={kind:'add',title:$('planTitle').value.trim(),date:$('planDate').value,time:$('planTime').value,duration:60};if(pendingPlan.title&&pendingPlan.time)await addMessage('auren',conflictAdvice(pendingPlan)||`Shall I add ${pendingPlan.title} at ${formatClock(pendingPlan.time)} to your schedule?`);};
-function prepareSpokenReview(){if(capabilities.speak){voice.setEnabled(true);$('speakReplies').checked=true;} if(capabilities.listen && !voice.awake)voice.startListening();voice.setReviewMode?.(true);reviewPending=true;}
+$('planForm').onsubmit=async e=>{
+  e.preventDefault();
+  const title=$('planTitle').value.trim();
+  const date=$('planDate').value;
+  const time=$('planTime').value;
+  if(!title||!date||!time){
+    showStatus('Please enter an appointment name, date and time.', 'error');
+    return;
+  }
+  pendingPlan={kind:'add',title,date,time,duration:60};
+  // Surface the confirmation in text as well as voice. Never assume Safari
+  // is still listening merely because a prior speech session was active.
+  await addMessage('auren',conflictAdvice(pendingPlan)||`Shall I add ${title} on ${readableDate(date)} at ${formatClock(time)}? You can say yes, or type yes in Text chat.`);
+};
+function prepareSpokenReview(){
+  // A briefing click requests a spoken briefing; it must not open a second
+  // microphone session at the same time (especially unreliable on iPhone).
+  if(capabilities.speak){voice.setEnabled(true);$('speakReplies').checked=true;}
+  voice.setReviewMode?.(true);
+  reviewPending=true;
+}
 function beginReview(){prepareSpokenReview();const date=$('planDate').value;addMessage('auren',planSummary(date));}
 // Spoken review remains available through the daily briefing and natural conversation.
 $('playBriefing').onclick=async()=>{
@@ -533,10 +549,15 @@ $('playBriefing').onclick=async()=>{
   const due=reminders.filter(r=>!r.fired&&new Date(r.at)>=today&&new Date(r.at)<end).sort((a,b)=>a.at.localeCompare(b.at));
   const extra=due.length?' You also have '+due.length+' upcoming '+(due.length===1?'reminder':'reminders')+'.':'';
   const city=localStorage.getItem('auren_weather_city')||'Dallas';
-  $('briefingWeatherStatus').textContent='Checking weather for '+city+'…';
-  const result=await getWeatherBriefing(city,briefingScope);
-  $('briefingWeatherStatus').textContent=result.success?'Weather: '+result.display:'Weather unavailable — schedule still works.';
-  const weather=result.success?' '+result.spoken:'';
+  // Some deployed layouts omit this optional weather status node.
+  // Never let a missing DOM element break the spoken briefing.
+  const weatherStatus=$('briefingWeatherStatus');
+  if(weatherStatus)weatherStatus.textContent='Checking weather for '+city+'…';
+  let result;
+  try { result=await getWeatherBriefing(city,briefingScope); }
+  catch(error) { console.warn('Weather briefing unavailable:',error); result={success:false}; }
+  if(weatherStatus)weatherStatus.textContent=result?.success?'Weather: '+result.display:'Weather unavailable — schedule still works.';
+  const weather=result?.success?' '+result.spoken:'';
   await addMessage('auren',`Good morning. ${summary}${extra}${weather}`);
 };
 function proposedDay(text){return parseDateIntent(text)||$('planDate').value||localDate();}

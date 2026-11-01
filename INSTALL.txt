@@ -1,11 +1,9 @@
-AUREN v2.6.1 — Fluid Rescheduling
+AUREN v2.6.2 — Briefing, planner and silent navigation fix
 
-Back up the current app.js, then replace only app.js in GitHub. Keep voice.js and weather.js unchanged. Commit and refresh. Do NOT clear website data.
+1. In GitHub, back up the current app.js.
+2. Replace ONLY app.js with this file.
+3. Commit changes and refresh your AUREN page.
+4. Test: opening Your Day/Briefing/Projects stays silent; Hear your briefing speaks without null error; planner add shows confirmation, and you can say or type yes.
 
-Test: Reschedule a saved appointment -> give new day -> reply yes.
-Test: Ask to move an appointment without day -> say Friday -> yes.
-Test: Create overlapping appointment -> accept suggested opening once -> should save without repeated question.
-Test: At suggested opening ask What day? -> answer names date and hour without losing context.
-Test: Tapping Your Day / Briefing / Projects reads a short heading when spoken replies are enabled.
-
-No new paid API calls. Device-local scheduling.
+Leave voice.js, weather.js, index.html and your Cloudflare Worker unchanged.
+Note: Safari may require another orb tap to restart its microphone; navigation does not force microphone activation.
