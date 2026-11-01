@@ -87,15 +87,31 @@ $('stopSpeech').onclick = () => voice.stopSpeaking();
 
 // Voice-first dashboard and optional wake phrase (foreground only).
 const advancedNav = $('advancedNav');
+// One screen controller: the gear never triggers another navigation click.
+let lastNonSettingsScreen = 'chat';
+async function activateScreen(screen) {
+  const target = document.getElementById(screen);
+  if (!target || !target.classList.contains('tab')) return;
+  if (screen !== 'settings') lastNonSettingsScreen = screen;
+  document.querySelectorAll('nav button, .tab').forEach(node => node.classList.remove('active'));
+  target.classList.add('active');
+  const tab = document.querySelector(`nav button[data-tab="${screen}"]`);
+  if (tab) tab.classList.add('active');
+  document.body.dataset.screen = screen;
+  const inSettings = screen === 'settings';
+  advancedNav.hidden = !inSettings;
+  $('panelToggle').setAttribute('aria-expanded', String(inSettings));
+  $('panelToggle').setAttribute('aria-label', inSettings ? 'Close Settings' : 'Open Settings');
+  $('panelToggle').textContent = inSettings ? '✕' : '⚙';
+  if (screen === 'memory') await renderMemories();
+  if (screen === 'projects') await renderProjects();
+  if (inSettings) await renderStorageInfo();
+  if (screen === 'planner') renderDay();
+  window.scrollTo({top:0,behavior:'instant'});
+}
 $('panelToggle').onclick = () => {
-  // Settings goes straight to the settings panel. The navigation remains
-  // available for Memory, Projects and Home.
-  const isSettings = $('settings').classList.contains('active');
-  const target = isSettings ? 'chat' : 'settings';
-  advancedNav.hidden = isSettings;
-  $('panelToggle').setAttribute('aria-expanded', String(!isSettings));
-  const tab = document.querySelector(`nav button[data-tab="${target}"]`);
-  if (tab) tab.click();
+  const settingsOpen = $('settings').classList.contains('active');
+  void activateScreen(settingsOpen ? lastNonSettingsScreen : 'settings');
 };
 // One deliberate tap per action. Rapid repeated taps must never queue voices.
 let lastOrbTap = 0;
@@ -269,15 +285,9 @@ async function withConfirm(run, verb = 'Save') {
 }
 
 // ---------- tabs ----------
-document.querySelectorAll('nav button').forEach(b => b.onclick = safe(async () => {
-  document.querySelectorAll('nav button, .tab').forEach(x => x.classList.remove('active'));
-  b.classList.add('active'); $(b.dataset.tab).classList.add('active');
-  if (b.dataset.tab !== 'chat') { advancedNav.hidden = false; $('panelToggle').setAttribute('aria-expanded', 'true'); }
-  if (b.dataset.tab === 'memory') await renderMemories();
-  if (b.dataset.tab === 'projects') await renderProjects();
-  if (b.dataset.tab === 'settings') await renderStorageInfo();
-  document.body.dataset.screen=b.dataset.tab;
-}));
+document.querySelectorAll('nav button').forEach(button => {
+  button.onclick = safe(() => activateScreen(button.dataset.tab));
+});
 
 // ---------- v2.2 voice-first planner and concise briefing ----------
 // Device-local event storage; never claim notification delivery when tab is closed.
@@ -294,7 +304,7 @@ function formatClock(time){const [h,m]=time.split(':').map(Number);return new Da
 function plansFor(date){return plans.filter(p=>p.date===date).sort((a,b)=>a.time.localeCompare(b.time));}
 function planSummary(date){const items=plansFor(date); if(!items.length)return 'You have nothing scheduled for this day. Would you like to plan something?';const names=items.slice(0,5).map(p=>`${p.title} at ${formatClock(p.time)}`).join(', ');return `You have ${items.length} ${items.length===1?'plan':'plans'}: ${names}${items.length>5?', and others':''}. ${items.length<4?'You appear to have some open time, although I cannot see your other calendars. ':''}Does that sound correct?`;}
 function renderDay(){const node=$('dayTimeline');node.replaceChildren();const items=plansFor($('planDate').value);if(!items.length){node.append(el('div','day-empty','Nothing planned here yet.'));return;} for(const p of items){const item=el('div','day-item');item.append(el('span','at',formatClock(p.time)));const detail=el('div','desc',p.title);detail.append(el('small','duration',`${p.duration} minutes`));item.append(detail);const remove=el('button','remove-plan','×');remove.type='button';remove.setAttribute('aria-label',`Remove ${p.title}`);remove.onclick=async()=>{pendingPlan={kind:'delete',id:p.id};await addMessage('auren',`Shall I remove ${p.title} from your plans?`);};item.append(remove);node.append(item);}}
-function openScreen(screen){const tab=document.querySelector(`nav button[data-tab="${screen}"]`); if(tab) tab.click(); else {document.querySelectorAll('nav button,.tab').forEach(n=>n.classList.remove('active'));$(screen)?.classList.add('active');}document.body.dataset.screen=screen;advancedNav.hidden=true;$('panelToggle').setAttribute('aria-expanded','false');renderDay();}
+function openScreen(screen){ void activateScreen(screen); }
 document.querySelectorAll('[data-screen]').forEach(button=>button.addEventListener('click',()=>openScreen(button.dataset.screen)));
 document.querySelectorAll('.back-home').forEach(b=>b.addEventListener('click',()=>openScreen('chat')));
 const projectsBack=el('button','back-home','← Home');projectsBack.type='button';projectsBack.onclick=()=>openScreen('chat');$('projects').prepend(projectsBack);

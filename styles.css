@@ -248,3 +248,39 @@ body[data-screen=planner] .hero,body[data-screen=briefing] .hero,body[data-scree
 body[data-screen=chat] .hero{display:flex}
 #planner:not(.active),#briefing:not(.active){display:none!important}
 @media(max-width:520px){#planForm{grid-template-columns:1fr 1fr}#planForm input:first-child{grid-column:span 2}.home-shortcuts{gap:8px}.home-shortcuts button{min-height:72px}.hero{min-height:min(72dvh,640px)}}
+
+/* v2.2.1: stable Settings toggle, mobile and touch refinements */
+html{overflow-x:hidden;-webkit-text-size-adjust:100%;}
+body{width:100%;overflow-x:clip;}
+#panelToggle{position:fixed;top:max(12px, env(safe-area-inset-top));right:max(12px, env(safe-area-inset-right));min-width:46px;min-height:46px;display:grid;place-items:center;touch-action:manipulation;-webkit-tap-highlight-color:transparent;border-radius:50%!important;z-index:100;line-height:1}
+#panelToggle[aria-expanded="true"]{color:#ebd4a6!important;background:#27241e!important}
+#advancedNav:not([hidden]){position:relative;z-index:2;display:flex;flex-wrap:wrap;justify-content:center}
+.auren-orb,.home-shortcuts button,.back-home,#reviewDay,#playBriefing,.remove-plan{touch-action:manipulation;-webkit-tap-highlight-color:transparent}
+.auren-orb:active,.home-shortcuts button:active{transform:scale(.97)}
+@media(max-width:600px){
+  body{padding:12px max(14px,env(safe-area-inset-right)) calc(26px + env(safe-area-inset-bottom)) max(14px,env(safe-area-inset-left));}
+  header{padding:12px 55px 0;min-height:45px}
+  header h1{font-size:.94rem;letter-spacing:.30em}
+  .hero{min-height:min(70dvh,610px);padding:10px 0 18px;gap:10px}
+  .auren-orb{width:clamp(150px,42vw,205px);height:clamp(150px,42vw,205px)}
+  .auren-caption-slot{width:100%;max-width:100%}
+  .home-shortcuts{gap:8px;width:100%;margin-top:8px}
+  .home-shortcuts button{min-width:0;min-height:76px;padding:10px 4px;font-size:.77rem;overflow-wrap:anywhere}
+  .auren-screen{padding:12px 2px 24px;margin:0 auto}
+  .auren-screen h2{font-size:1.6rem;margin:16px 0}
+  .day-timeline{padding:8px 12px}
+  .day-item{grid-template-columns:66px minmax(0,1fr) 40px;gap:9px}
+  .day-item .remove-plan{min-width:40px;min-height:44px}
+  #planForm{grid-template-columns:minmax(0,1fr) minmax(0,1fr)}
+  #planForm input:first-child{grid-column:span 2}
+  #planForm button{min-height:44px}
+  #advancedNav{padding:10px 6px;gap:6px}
+  #advancedNav button{flex:1 1 40%;min-height:44px}
+  .card,.item{overflow-wrap:anywhere}
+  .card .row{width:100%}
+  .card .row input{min-width:0}
+  .voice-controls{justify-content:center}
+  #chatForm button{min-height:44px}
+  #chatForm input{min-width:0}
+}
+@media(max-width:360px){.home-shortcuts button{font-size:.7rem}.home-shortcuts button span{font-size:1.25rem}.day-item{grid-template-columns:59px minmax(0,1fr) 38px}}
