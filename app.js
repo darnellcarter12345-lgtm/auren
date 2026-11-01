@@ -1,3 +1,4 @@
+// AUREN v2.30 — persistent destination context and chat-to-directions handoff
 // AUREN v2.29 — clean voice destinations, device-current-location navigation, useful best-places fallback
 // AUREN v2.28 — reliable Maps directions and no failed-search retry loop
 // AUREN v2.27 — richer nearby cards, relevant choices, transparent ratings.
@@ -2242,7 +2243,7 @@ async function renderStorageInfo() {
 
 // AUREN v2.15 SMART PLACES: opt-in, any-category place search, safe Maps return flow.
 aurenPlaces = (() => {
-  let phase='idle', pending='', coords=null, results=[], requestId=0, lastMapClick=0, mapPending=false, returned=false, lookupFailed=false, navigationTarget='';
+  let phase='idle', pending='', coords=null, results=[], requestId=0, lastMapClick=0, mapPending=false, returned=false, lookupFailed=false, navigationTarget='', awaitingPlace=false;
   const yes=/^(?:yes|yep|yeah|sure|okay|ok|go ahead|please do|use my location|enable it)[.!? ]*$/i;
   const no=/^(?:no|nope|no thanks|not now|cancel)[.!? ]*$/i;
   const done=/^(?:done|finished|i(?:'m| am) done|that's all|end search|close results|stop searching)[.!? ]*$/i;
@@ -2318,7 +2319,7 @@ aurenPlaces = (() => {
   const action=(label,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=fn;actions.append(b);return b;};
   const show=(title,message)=>{heading.textContent=title;content.replaceChildren();if(message){const p=document.createElement('p');p.textContent=message;content.append(p);}actions.replaceChildren();panel.style.display='block';};
   const hide=()=>{panel.style.display='none';content.replaceChildren();actions.replaceChildren();};
-  const clear=()=>{requestId++;phase='idle';pending='';coords=null;results=[];lookupFailed=false;navigationTarget='';mapPending=false;returned=false;hide();closePopup();const n=document.getElementById('aurenMapsReturnNotice');if(n)n.style.display='none';};
+  const clear=()=>{requestId++;phase='idle';pending='';coords=null;results=[];lookupFailed=false;navigationTarget='';awaitingPlace=false;mapPending=false;returned=false;hide();closePopup();const n=document.getElementById('aurenMapsReturnNotice');if(n)n.style.display='none';};
   // Temporary, request-only Maps overlay. No persistent location card on Home.
   const mapOverlay=document.createElement('div');mapOverlay.id='aurenMapsTemporaryOverlay';
   mapOverlay.style.cssText='position:fixed;inset:0;z-index:11000;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;padding:18px;box-sizing:border-box;';
@@ -2509,7 +2510,7 @@ aurenPlaces = (() => {
   function enable(){if(!navigator.geolocation){phase='results';showPopup('This browser cannot share a location. Google Maps is still available.');return;}const seq=++requestId;phase='locating';showPopup('Allow location in Safari to see nearby '+pending+'.');
     navigator.geolocation.getCurrentPosition(pos=>{if(seq!==requestId)return;coords={lat:pos.coords.latitude,lon:pos.coords.longitude};void lookup();},()=>{if(seq!==requestId)return;phase='results';showPopup('Location was not available. Try again or use Google Maps.');},{enableHighAccuracy:false,maximumAge:0,timeout:12000});}
   function request(text){
-    requestId++;navigationTarget=destinationFrom(text);pending=normalizePlaceQuery(navigationTarget||namedPlaceSearch(text)||text);coords=null;results=[];lookupFailed=false;
+    awaitingPlace=false;requestId++;navigationTarget=destinationFrom(text);pending=normalizePlaceQuery(navigationTarget||namedPlaceSearch(text)||text);coords=null;results=[];lookupFailed=false;
     // An optional working Maps search should exist even if the free lookup fails.
     // The popup provides the primary Maps action; no unsolicited chat link.
     if(locationApproved&&aurenLocation){
@@ -2518,8 +2519,42 @@ aurenPlaces = (() => {
     }
     phase='consent';showPopup(navigationTarget?'Directions use your current device location in Google Maps if location permission is enabled there. No saved home address is used.':'Choose Nearby places to look up local options, or Google Maps to open a map search.');show('Find places near you?','Would you like to use your location for this search? The search service receives coordinates only if you approve.');action('Allow location & search',enable);action('Not now',clear);
   }
+  function isNavigationFollowup(t){
+    return /^(?:(?:yes|yeah|yep|sure|okay|ok|please|can you|could you|would you)\s+)?(?:take me there|take me to (?:it|that place|the place)|go there|navigate (?:there|to it)|get me there|bring me there|drive me there|show me (?:the )?directions|give me (?:the )?directions|open (?:the )?(?:maps|directions)|send me (?:the |their |its )?(?:address|location|directions)|yes send me (?:their |the )?address|yes take me there|how do i get there|how can i get there)[.!? ]*$/i.test(t);
+  }
+  function replyWithDirections(target){
+    // The chat link is persistent and works even if a modal was closed.
+    phase='consent';navigationTarget=target;pending=target;
+    showPopup('Directions are ready for '+target+'. Google Maps will choose your current location when permitted.');
+    const url=directionsURL(target);
+    const wrap=document.createElement('div');wrap.className='msg auren';
+    const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';
+    link.textContent='Open directions to '+target+' in Google Maps';
+    link.style.cssText='color:#e6c581;font-weight:700;text-decoration:underline;';
+    link.addEventListener('click',()=>{lastMapClick=Date.now();mapPending=true;returned=false;closePopup();});
+    wrap.append(link);$('log')?.append(wrap);
+    if($('log'))$('log').scrollTop=$('log').scrollHeight;
+  }
   async function handle(text){const t=String(text||'').trim();
-    if(incompletePlaceRequest(t)){await addMessage('user',t);await addMessage('auren','What kind of place would you like me to find?');return true;}
+    if(incompletePlaceRequest(t)){
+      awaitingPlace=true;
+      await addMessage('user',t);await addMessage('auren','What kind of place would you like me to find?');return true;
+    }
+    // A one-word answer to AUREN's place clarification is a destination, not AI small talk.
+    if(awaitingPlace && /^(?:[a-z][a-z0-9&’'. -]{1,65})$/i.test(t) && !/^(?:yes|no|cancel|never mind|stop)$/i.test(t)){
+      awaitingPlace=false;await addMessage('user',t);request('find '+t);
+      await addMessage('auren','I found the destination you mean. Choose directions or nearby locations.');return true;
+    }
+    if(awaitingPlace && /^(?:cancel|no|never mind|stop)$/i.test(t))awaitingPlace=false;
+    // Crucial: retain destination across "Yes, take me there" and "send the address".
+    // Do this before the generic AI gets a chance to hallucinate a lack of map access.
+    if((navigationTarget||pending) && isNavigationFollowup(t)){
+      const target=navigationTarget||pending;
+      await addMessage('user',t);
+      replyWithDirections(target);
+      await addMessage('auren','Certainly. Directions to '+target+' are ready. Select Open directions in the chat or popup.');
+      return true;
+    }
     if(/\b(?:turn|switch|disable|stop|clear|forget)\b.*\blocation\b/i.test(t)&&/off|disable|stop|clear|forget/i.test(t)){clear();return false;}
     if(phase==='confirm-done'&&yes.test(t)){await addMessage('user',t);clear();await addMessage('auren','Search finished. Temporary search coordinates cleared.');return true;}
     if(phase==='confirm-done'&&no.test(t)){await addMessage('user',t);displayResults();return true;}
