@@ -101,7 +101,7 @@ $('panelToggle').onclick = () => {
 let lastOrbTap = 0;
 $('orbControl').onclick = () => {
   const now = Date.now();
-  if (now - lastOrbTap < 650) return;
+  if (now - lastOrbTap < 250) return;
   lastOrbTap = now;
   if (capabilities.speak) { voice.setEnabled(true); $('speakReplies').checked = true; }
   // If speaking, a tap stops the answer and opens the mic; no new speech is queued.
@@ -110,7 +110,7 @@ $('orbControl').onclick = () => {
     voice.stopListening();
     voice.startListening();
   } else if (voice.awake) {
-    voice.setWakeMode(true); // sleep and keep authorized wake scanning
+    voice.setWakeMode(true); // one tap sleeps, wake scanner remains authorized
   } else {
     voice.startListening(); // wake on direct click; preserve wake scanner after silence
   }

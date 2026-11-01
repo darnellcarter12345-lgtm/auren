@@ -15,11 +15,12 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   let interruptionsEnabled = false; // Privacy-conscious default: background voices cannot interrupt.
   let interruptionCandidate = '', interruptionSamples = 0;
   let preferredVoiceURI = ''; let voiceRate = 0.96, voicePitch = 0.95; 
-  const SILENCE_MS = 18000;
+  // Return to wake-only mode shortly after the last interaction.
+  const SILENCE_MS = 8500;
   // Browser recognition frequently transcribes the invented name AUREN as a
   // familiar name ("Orin", "Oren", "Aaron", "Lauren"). Match short wake
   // phrases, not arbitrary mentions in the middle of other sentences.
-  const wakeNames = new Set(['auren','aurin','auron','oren','orin','orren','aaron','aron','erin','lauren','loren','orion','orin']);
+  const wakeNames = new Set(['auren','aurin','auron','oren','orin','orren','aaron','aron','erin','lauren','loren','orion','ohrin','auren']);
   function wordsOf(text) {
     return text.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
       .replace(/[^a-z0-9]+/g,' ').trim().split(/\s+/).filter(Boolean);
@@ -29,12 +30,16 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     if (!words.length) return null;
     // "Hey, Auren" and speech-engine variations like "hey Lauren".
     // Require the greeting for potentially common names to avoid false wakes.
-    const greeting = ['hey','hi','hello','okay','ok','yo'];
+    const greeting = ['hey','hay','hi','hello','okay','ok','yo','aye'];
     const offset = greeting.includes(words[0]) ? 1 : 0;
     let candidate = words[offset];
     let nameLength = 1;
     // Safari occasionally splits the spoken name 'Or-en' into two words.
-    if (['or','aur','ore'].includes(candidate) && ['en','in','an'].includes(words[offset+1])) { candidate = 'oren'; nameLength = 2; }
+    if (['or','aur','ore','ohr'].includes(candidate) && ['en','in','an','un'].includes(words[offset+1])) { candidate = 'oren'; nameLength = 2; }
+    // Speech recognition sometimes fuses the greeting and name into one token.
+    if (!offset && /^(?:heyauren|heyoren|heyaaron|heylauren|heyauron|heyorin)$/.test(candidate)) {
+      return { command: words.slice(1).join(' ') };
+    }
     if (!wakeNames.has(candidate)) return null;
     if (!offset && candidate !== 'auren' && candidate !== 'aurin' && candidate !== 'auron') return null;
     // Without a greeting, only allow a standalone name or a short direct command.
@@ -47,7 +52,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     const words = String(text || '').trim().split(/\s+/);
     const detected = detectWake(text);
     if (!detected) return String(text || '').trim();
-    const prefix = /^(hey|hi|hello|okay|ok|yo)\b/i.test(words[0] || '') ? 'Hey ' : '';
+    const prefix = /^(hey|hay|hi|hello|okay|ok|yo|aye)\b/i.test(words[0] || '') ? 'Hey ' : '';
     return prefix + 'Auren' + (detected.command ? ' ' + detected.command : '');
   }
   const report = text => onStatus?.(text);
@@ -102,8 +107,13 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   function scheduleIdle() {
     clearTimeout(idleTimer);
     if (conversation && wakeMode) idleTimer = setTimeout(() => {
+      // Never go to sleep in the middle of a response or spoken answer.
+      if (speaking || responding) { scheduleIdle(); return; }
       conversation = false;
-      report('Conversation paused after silence. Say “Hey Auren” to resume.');
+      desiredMode = 'wake';
+      onInterim?.('');
+      report('Asleep — say “Hey Auren” or tap the orb.');
+      if (!active) listenSoon(120);
     }, SILENCE_MS);
     else if (conversation) idleTimer = setTimeout(() => {
       // Conversation sleeps, but an already authorized active page stays in wake mode.
@@ -123,7 +133,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     if (desiredMode === 'off' || active || (speaking && (!conversation || !interruptionsEnabled)) || responding || errorStop || (!conversation && !wakeMode) || !permittedStart) return;
     const id = ++token;
     const r = new Recognition(); recognition = r;
-    r.lang = 'en-GB'; r.continuous = false; r.interimResults = true; r.maxAlternatives = 5;
+    r.lang = 'en-GB'; r.continuous = true; r.interimResults = true; r.maxAlternatives = 5;
     r.onstart = () => { if (id === token) { engineRunning = true; report(speaking ? 'Listening for an interruption…' : (conversation ? 'Listening…' : 'Say “Hey Auren” to speak')); } };
     r.onresult = event => {
       if (id !== token) return;
@@ -203,7 +213,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     r.onend = () => {
       if (id !== token) return;
       recognition = null; active = false; engineRunning = false;
-      if (!responding && !errorStop) listenSoon(450);
+      if (!responding && !errorStop) listenSoon(230);
     };
     try { r.start(); active = true; report(conversation ? 'Listening…' : 'Say “Hey Auren” to speak'); }
     catch { active = false; engineRunning = false; recognition = null; report('Safari could not start microphone recognition. Tap the orb to retry.'); }
@@ -220,15 +230,15 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       scheduleIdle();
       // The AI often starts speech before this promise settles. Reactivate the
       // recognizer *after* responding becomes false, including during speech.
-      if (speaking && interruptionsEnabled && conversation) listenSoon(150);
-      else if (!speaking) listenSoon(400);
+      if (speaking && interruptionsEnabled && conversation) listenSoon(90);
+      else if (!speaking) listenSoon(180);
     }
   }
   function stopSpeaking() {
     if (synth) synth.cancel();
     currentUtterance = null;
     speaking = false; spokenText = '';
-    if (!responding) listenSoon(350);
+    if (!responding) listenSoon(120);
   }
   function speak(text) {
     if (!enabled || !available().speak || !text) return;
@@ -251,7 +261,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
         onSpoken?.(text.slice(0, end), text);
       }
     };
-    u.onend = () => { if (currentUtterance !== u) return; spokenText = ''; onSpoken?.(text, text); if (currentUtterance === u) currentUtterance = null; speaking = false; report(wakeMode ? 'Listening — ask a follow-up, or say “Hey Auren”' : (conversation ? 'Listening for your next question…' : 'Tap the orb to speak')); scheduleIdle(); if (!responding) listenSoon(250); };
+    u.onend = () => { if (currentUtterance !== u) return; spokenText = ''; onSpoken?.(text, text); if (currentUtterance === u) currentUtterance = null; speaking = false; report(wakeMode ? 'Listening — ask a follow-up, or say “Hey Auren”' : (conversation ? 'Listening for your next question…' : 'Tap the orb to speak')); scheduleIdle(); if (!responding) listenSoon(160); };
     u.onerror = () => { if (currentUtterance !== u) return; spokenText = ''; if (currentUtterance === u) currentUtterance = null; speaking = false; report('Voice output stopped; text remains available.'); if (!responding) listenSoon(420); };
     try { synth.speak(u); report('AUREN speaking…'); if (interruptionsEnabled && conversation && !active && !responding) listenSoon(150); }
     catch { currentUtterance = null; speaking = false; report('Speech output unavailable.'); if (!responding) listenSoon(); }
@@ -305,7 +315,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       if (!interruptionsEnabled && speaking) { ++token; abort(); clearTimeout(restartTimer); }
       interruptionCandidate = ''; interruptionSamples = 0;
       // Switching ON is best-effort; never auto-request microphone permissions.
-      if (interruptionsEnabled && speaking && permittedStart && conversation && !responding) listenSoon(250);
+      if (interruptionsEnabled && speaking && permittedStart && conversation && !responding) listenSoon(90);
       return interruptionsEnabled;
     },
     setEnabled(v) { enabled = !!v; if (!enabled) stopSpeaking(); }

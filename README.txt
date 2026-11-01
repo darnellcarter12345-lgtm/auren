@@ -1,7 +1,7 @@
-AUREN v2.1 — Simplified wake experience
+AUREN v2.1.1 — Responsive wake and silence handling
 
-Replace ONLY index.html, styles.css, app.js, and voice.js in the existing GitHub repository root. Keep all remaining files and your Cloudflare Worker unchanged.
+Replace only app.js and voice.js in your existing GitHub repository. Leave index.html, styles.css, ai.js, memory.js, db.js and Cloudflare untouched.
 
-Home shows no personal-butler subtitle or Hey Auren button; idle prompt reads Tap to awaken. Click orb to begin conversation. After 18 seconds of silence, conversation returns to sleep, leaving wake recognition enabled while Safari permits. Say Hey Auren / Hey Oren / Hey Lauren or click orb to wake again. If Safari blocks recognition, tap the orb again.
+Changes: expanded commonly misheard Hey Auren variants, faster idle sleep (~8.5 s since the last interaction), faster permitted recognition restarts, responsive orb toggle, live interruptions setting takes effect immediately.
 
-This cannot activate mic automatically from a fresh page load on Safari, work while tab is closed, or bypass microphone permission. Wake listening uses browser SpeechRecognition and may be restarted by Safari. Settings and memory remain intact.
+Safari limitations: speech recognition is not guaranteed to understand every pronunciation, continuous recognition may still stop, and hands-free interruption during speech is best effort. Keep a visible microphone status. Microphone activation may require a tap after page load.
