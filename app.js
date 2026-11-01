@@ -1,4 +1,4 @@
-// AUREN v2.9.3 — Voice activation, explicit state and iPhone dictation recovery
+// AUREN v2.9.4 — iPhone voice diagnostics and honest listening status
 // AUREN — js/app.js
 // Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
 // v0.2: status banner for storage problems, session panel, privacy controls, safe backup import.
@@ -10,7 +10,7 @@ import { NeedsConfirmationError, historySafe, classify } from './sensitive.js';
 import { Butler, isSessionNote } from './butler.js';
 import { buildBackup, encryptBackup, decryptBackup, validateBackup, applyPlan, describeReport, LIMITS } from './backup.js';
 import { loadSettings, saveSettings } from './settings.js';
-import { createVoice } from './voice.js';
+import { createVoice } from './voice.js?v=2.9.4';
 import { getAIEndpoint, setAIEndpoint, askAI } from './ai.js';
 import { getWeatherBriefing } from './weather.js';
 
@@ -224,47 +224,53 @@ if (isIOS) {
       showStatus('Tap the microphone on your iPhone keyboard, dictate your message, then press Send.', 'info');
     });
   };
-  allowMic.onclick = async () => {
-    if (!navigator.mediaDevices?.getUserMedia) {
+  allowMic.onclick = () => {
+    // IMPORTANT: call SpeechRecognition.start() synchronously within the tap.
+    // Awaiting getUserMedia() first loses Safari's user gesture, which causes
+    // the brief Listening -> Idle flash even though the tap registered.
+    voice.primeAudio();
+    voice.setEnabled(true);
+    $('speakReplies').checked = true;
+    const started = voice.startListening();
+    syncVoiceUI();
+    if (started) {
+      allowMic.textContent = 'Retry listening';
+      showStatus('Starting iPhone speech recognition. Speak now; AUREN will report if Safari closes the session.', 'info');
+    } else {
       dictate.hidden = false;
-      showStatus('Safari microphone capture is unavailable. Use iPhone keyboard dictation.', 'error');
+      showStatus('Safari could not start speech recognition. Use iPhone dictation or check microphone permission.', 'error');
+    }
+  };
+  // Separate permission diagnostic. Does not claim to enable speech recognition.
+  const checkMic = document.createElement('button');
+  checkMic.type = 'button';
+  checkMic.className = 'ghost';
+  checkMic.textContent = 'Check mic permission';
+  checkMic.style.margin = '12px 0 0 8px';
+  checkMic.onclick = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      showStatus('Safari cannot access microphone capture. Check iPhone Safari permissions.', 'error');
       return;
     }
-    allowMic.disabled = true;
-    showStatus('Requesting microphone access…', 'info');
     try {
-      // Permission request MUST follow a physical user tap, not page startup.
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true } });
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       stream.getTracks().forEach(track => track.stop());
       microphonePermission = 'granted';
-      if (!capabilities.listen) {
-        dictate.hidden = false;
-        showStatus('Microphone allowed, but Safari speech recognition is unsupported. Use iPhone keyboard dictation.', 'info');
-      } else {
-        // The gesture may be lost across await on iOS; explicitly tell the
-        // user to tap the orb again if WebKit refuses the recognizer.
-        voice.primeAudio();
-        voice.setEnabled(true);
-        $('speakReplies').checked = true;
-        const started = voice.startListening();
-        syncVoiceUI();
-        allowMic.textContent = 'Microphone enabled';
-        showStatus(started ? 'Starting listening… Speak to AUREN.' : 'Tap the orb to start listening.', started ? 'ok' : 'info');
-      }
+      showStatus('Microphone capture works. Now tap the orb to test speech recognition (a separate Safari feature).', 'ok');
     } catch (error) {
       microphonePermission = 'denied';
-      dictate.hidden = false;
-      showStatus('Microphone not allowed. Open Safari Page Menu → Website Settings → Microphone → Allow, or use iPhone dictation.', 'error');
-    } finally { allowMic.disabled = false; }
+      showStatus('Microphone capture blocked: ' + (error.name || 'permission denied') + '. Check Safari Website Settings.', 'error');
+    }
   };
   orbButton.insertAdjacentElement('afterend', allowMic);
-  allowMic.insertAdjacentElement('afterend', dictate);
+  allowMic.insertAdjacentElement('afterend', checkMic);
+  checkMic.insertAdjacentElement('afterend', dictate);
   // A failed Web Speech session must not strand users with an inert orb.
   const voiceStatus = $('voiceStatus');
   if (voiceStatus) {
     const observer = new MutationObserver(() => {
       const msg = voiceStatus.textContent || '';
-      if (/unavailable|blocked|stuck|stopped speech recognition|recognition issue|speech recognition needs|could not start|microphone could not start/i.test(msg)) {
+      if (/unavailable|blocked|stuck|stopped|ended listening|recognition issue|speech recognition needs|could not start|microphone could not start/i.test(msg)) {
         dictate.hidden = false;
         allowMic.textContent = microphonePermission === 'granted' ? 'Retry microphone & talk' : 'Enable microphone & talk';
       }
