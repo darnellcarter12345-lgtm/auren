@@ -1,3 +1,4 @@
+// AUREN v2.27 — richer nearby cards, relevant choices, transparent ratings.
 // AUREN v2.26 — Reliable profile, direct name recall, seamless Settings.
 // AUREN v2.25 — Reliable nearby discovery, spoken results and contextual follow-ups
 // AUREN v2.24 — Name-aware wake routing, respectful butler identity, no name correction
@@ -2335,12 +2336,12 @@ aurenPlaces = (() => {
       for(const place of places.slice(0,8)){
         const card=document.createElement('div');card.style.cssText='padding:11px;border:1px solid rgba(199,168,104,.35);border-radius:12px;background:#292b31';
         const name=document.createElement('strong');name.textContent=place.name;
-        const detail=document.createElement('p');detail.textContent=place.km.toFixed(1)+' km away (straight line)'+(place.address?' · '+place.address:'');detail.style.cssText='font-size:12px;opacity:.85;margin:4px 0 8px';
+        const detail=document.createElement('p');detail.textContent=place.km.toFixed(1)+' km away (straight line)'+(place.cuisine?' · '+place.cuisine:'')+(place.address?' · '+place.address:'')+(place.hours?' · Hours listed: '+place.hours:'');detail.style.cssText='font-size:12px;opacity:.85;margin:4px 0 8px';
         const directions=document.createElement('button');directions.type='button';directions.textContent='Directions';directions.onclick=()=>openMap(mapLink(place));
         card.append(name,detail,directions);list.append(card);
       }
       mapChoices.append(list);
-      const note=document.createElement('small');note.textContent='Distances are approximate. Opening hours are not verified.';mapChoices.append(note);
+      const note=document.createElement('small');note.textContent='Names and details come from OpenStreetMap. Hours may be outdated; ratings are not included. Results are not ranked by reviews.';mapChoices.append(note);
     }else if(phase==='searching'||phase==='locating'){
       const loading=document.createElement('div');loading.setAttribute('role','status');loading.textContent=phase==='locating'?'Waiting for your location permission…':'Finding nearby suggestions…';loading.style.cssText='padding:16px;text-align:center;opacity:.85';mapChoices.append(loading);
     }
@@ -2351,6 +2352,7 @@ aurenPlaces = (() => {
         enable();
       });
     }
+    if(phase!=='searching'&&phase!=='locating'&&places.length)popupButton('Compare ratings & reviews',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
     popupButton('Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
     const x=document.createElement('button');x.type='button';x.textContent='Close';x.className='ghost';x.style.cssText='align-self:center;padding:6px 12px';x.onclick=closePopup;mapChoices.append(x);
   }
@@ -2421,14 +2423,14 @@ aurenPlaces = (() => {
     if(!(list||closest||best||(ref&&(wantsDirections||asksDetail))))return false;
     await addMessage('user',t);
     if(best){
-      await addMessage('auren','These nearby listings don’t include reliable ratings. I can open Google Maps so you can compare reviews and ratings.');
+      await addMessage('auren','OpenStreetMap does not provide reliable customer ratings. Select Compare ratings in Google Maps to see actual reviews.');
       popupButton('Compare ratings in Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent('best rated '+mapsQuery())));
       return true;
     }
     if(list){await addMessage('auren',spokenNearbySummary());showPopup('Here are your nearby choices.',results);return true;}
     if(closest){const r=results[0];await addMessage('auren',`${r.name} is the closest of the places I found, about ${r.km.toFixed(1)} kilometres away in a straight line. Driving distance may differ.`);return true;}
     if(ref){
-      await addMessage('auren',wantsDirections?`I’ve prepared directions to ${ref.name}. Select Open directions on screen.`:`${ref.name} is about ${ref.km.toFixed(1)} kilometres away in a straight line${ref.address?', at '+ref.address:''}. Would you like directions?`);
+      await addMessage('auren',wantsDirections?`I’ve prepared directions to ${ref.name}. Select Open directions on screen.`:`${ref.name} is about ${ref.km.toFixed(1)} kilometres away in a straight line${ref.cuisine?'. Cuisine: '+ref.cuisine:''}${ref.address?', at '+ref.address:''}${ref.hours?'. Listed hours: '+ref.hours+' (unverified)':''}. Would you like directions?`);
       if(wantsDirections){showPopup(`Directions to ${ref.name} are ready.`,results);popupButton('Open directions to '+ref.name,()=>openMap(mapLink(ref)));}
       return true;
     }
@@ -2460,12 +2462,20 @@ aurenPlaces = (() => {
         const found=(data.elements||[]).map(e=>{
           const t=e.tags||{},lat=e.lat??e.center?.lat,lon=e.lon??e.center?.lon;
           const name=t.name||t.brand||'';
+          const cuisine=String(t.cuisine||'').replace(/;/g,', ').slice(0,70);
+          const hours=String(t.opening_hours||'').slice(0,90);
+          const website=String(t.website||t['contact:website']||'').slice(0,180);
           const address=[t['addr:housenumber'],t['addr:street'],t['addr:city']].filter(Boolean).join(' ');
-          return {name,address,lat,lon,km:Number.isFinite(lat)&&Number.isFinite(lon)?distanceKm(coords.lat,coords.lon,lat,lon):Infinity};
+          return {name,address,cuisine,hours,website,lat,lon,km:Number.isFinite(lat)&&Number.isFinite(lon)?distanceKm(coords.lat,coords.lon,lat,lon):Infinity};
         }).filter(r=>r.name&&Number.isFinite(r.km))
           .sort((a,b)=>a.km-b.km)
-          .filter(r=>{const key=r.name.toLowerCase()+'-'+Math.round(r.lat*1000)+'-'+Math.round(r.lon*1000);if(seen.has(key))return false;seen.add(key);return true;}).slice(0,8);
-        if(found.length){results=found;displayResults(true);return;}
+          .filter(r=>{const key=r.name.toLowerCase()+'-'+Math.round(r.lat*1000)+'-'+Math.round(r.lon*1000);if(seen.has(key))return false;seen.add(key);return true;}).slice(0,35);
+        // Present a useful mix of close options and better-documented locations.
+        // This is NOT a rating or review score.
+        const selected=[];const selectedNames=new Set();
+        for(const r of found){if(selectedNames.has(r.name.toLowerCase()))continue;selected.push(r);selectedNames.add(r.name.toLowerCase());if(selected.length===5)break;}
+        for(const r of found){if(selected.includes(r))continue;selected.push(r);if(selected.length===8)break;}
+        if(selected.length){results=selected;displayResults(true);return;}
       }catch(err){console.info('AUREN nearby source unavailable',endpoint,err?.message||err);}
       finally{clearTimeout(timer);}
     }
