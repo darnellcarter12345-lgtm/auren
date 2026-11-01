@@ -39,6 +39,9 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   let speaking = false, responding = false, enabled = false, permittedStart = false;
   let token = 0, restartTimer = null, idleTimer = null, errorStop = false;
   let desiredMode = 'off';
+  let lastRecognitionError = '';
+  let earlyEndCount = 0;
+  let sessionHadResult = false;
   // Aggregate recognition fragments until the speaker pauses naturally.
   let phraseParts = [], phraseTimer = null;
   const PHRASE_PAUSE_MS = mobileWebKit ? 1350 : 1050;
@@ -236,16 +239,18 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     const id = ++token;
     lastStart = Date.now();
     lastRecognizerActivity = lastStart;
+    sessionHadResult = false; lastRecognitionError = '';
     const r = new Recognition(); recognition = r;
     r.lang = 'en-GB';
     // iOS speech services tend to work more consistently with individual utterances.
     r.continuous = !mobileWebKit;
     r.interimResults = true;
     r.maxAlternatives = mobileWebKit ? 3 : 5;
-    r.onstart = () => { if (id === token) { engineRunning = true; lastRecognizerActivity = Date.now(); stalledRestarts = 0; armWatchdog(); restartFailures = 0; report(speaking ? 'Listening for an interruption…' : (conversation ? 'Listening…' : 'Say “Hey Auren” to speak')); } };
+    r.onstart = () => { if (id === token) { engineRunning = true; lastRecognizerActivity = Date.now(); stalledRestarts = 0; armWatchdog(); report(speaking ? 'Listening for an interruption…' : (conversation ? 'Listening…' : 'Say “Hey Auren” to speak')); } };
     r.onresult = event => {
       if (id !== token) return;
       lastRecognizerActivity = Date.now(); stalledRestarts = 0;
+      sessionHadResult = true; earlyEndCount = 0; restartFailures = 0;
       const finalResults = [];
       const interim = [];
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -279,6 +284,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     r.onerror = e => {
       if (id !== token) return;
       clearWatchdog();
+      lastRecognitionError = String(e.error || 'unknown');
       if (['not-allowed','service-not-allowed','audio-capture'].includes(e.error)) {
         errorStop = true; wakeMode = false; conversation = false; desiredMode = 'off'; permittedStart = false;
         report('Microphone blocked (' + e.error + '). In iPhone Safari: page menu → Website Settings → Microphone → Allow. Reload and tap the orb.');
@@ -297,6 +303,21 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       if (id !== token) return;
       clearWatchdog();
       recognition = null; active = false; engineRunning = false;
+      // Several iPhone Safari recognizers end immediately without transcription.
+      // Stop retrying instead of displaying an endless false 'Listening' state.
+      if (mobileWebKit && !sessionHadResult && !responding && !speaking && pageVisible()) {
+        if (Date.now() - lastStart < 2200 || (lastRecognitionError && lastRecognitionError !== 'no-speech')) {
+          earlyEndCount += 1;
+        } else {
+          earlyEndCount = 0;
+        }
+        if (earlyEndCount >= 3) {
+          errorStop = true; permittedStart = false; desiredMode = 'off';
+          wakeMode = false; conversation = false;
+          report('Safari stopped speech recognition. Tap the orb to reconnect, or use iPhone keyboard dictation in Text chat.');
+          return;
+        }
+      }
       if (!responding && !errorStop) {
         // Keep the final speech fragment pending while recognition restarts.
         // Back off failed sessions; do not hammer microphone permissions on iOS.
@@ -385,7 +406,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     // Explicit taps must recover even when Safari's previous session is wedged
     // and AUREN's conversation state still says "awake".
     cancelTimers(); ++token; abort();
-    clearPhrase(); errorStop = false; stalledRestarts = 0; restartFailures = 0;
+    clearPhrase(); errorStop = false; stalledRestarts = 0; restartFailures = 0; earlyEndCount = 0;
     permittedStart = true; wakeMode = true; conversation = true; desiredMode = 'conversation';
     if (speaking) stopSpeaking();
     scheduleIdle(); startEngine(); // Synchronous user activation, required by WebKit.
@@ -400,14 +421,14 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     if (!value) { stopListening(); return false; }
     if (!Recognition) { report('Wake phrase unavailable here. On iPhone, use the keyboard microphone in Text chat.'); return false; }
     // This must be called by a user interaction to receive microphone permission.
-    clearPhrase(); errorStop = false; stalledRestarts = 0; permittedStart = true; wakeMode = true; conversation = false; desiredMode = 'wake';
+    clearPhrase(); errorStop = false; stalledRestarts = 0; earlyEndCount = 0; permittedStart = true; wakeMode = true; conversation = false; desiredMode = 'wake';
     cancelTimers(); if (speaking) stopSpeaking();
     startEngine(); // Safari requires this within the user's activation.
     if (active) report('Listening for “Hey Auren” while this page is active.');
     return true;
   }
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { clearPhrase(); clearTimeout(restartTimer); clearWatchdog(); ++token; abort(); report('Voice paused while AUREN is in the background.'); }
+    if (document.hidden) { earlyEndCount = 0; clearPhrase(); clearTimeout(restartTimer); clearWatchdog(); ++token; abort(); report('Voice paused while AUREN is in the background.'); }
     else if (permittedStart && (wakeMode || conversation) && !errorStop) {
       // Foreground resume is best effort; if Safari requires another gesture, tap orb.
       listenSoon(mobileWebKit ? 650 : 350);

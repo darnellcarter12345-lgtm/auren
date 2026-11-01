@@ -1,11 +1,12 @@
-AUREN v2.8.1 Step 1 — Voice preference reliability
+AUREN v2.8.2 — Remove moving transcript + iPhone recovery
 
-1. Back up your current GitHub app.js.
-2. Replace only app.js with this complete file.
-3. Commit and refresh AUREN.
-4. In Settings, uncheck Read replies aloud. Type a message. AUREN should answer without speaking.
-5. Check Read replies aloud and type a message. AUREN should speak.
-6. Tap the orb and ask something. The voice path should still work.
+Replace these COMPLETE files in GitHub main branch:
+1. app.js
+2. styles.css
+3. voice.js
 
-Do not replace voice.js, weather.js, styles.css, or your Cloudflare Worker.
-Other public-release milestones remain outstanding.
+Do not change index.html, weather.js, Cloudflare Worker, or stored user data. Commit and reload.
+
+Test iPhone Safari with device unlocked: orb -> question -> spoken reply -> follow-up; pause and try restart; switch tabs (no spoken navigation). Text chat history stays available.
+
+Safari may still require a manual tap after recognition failure, backgrounding, or audio playback. No always-on background listening promised.

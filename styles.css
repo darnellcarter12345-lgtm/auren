@@ -371,3 +371,17 @@ header { position:relative!important; max-width:820px; margin-inline:auto!import
   .auren-caption-slot { height:100px; min-height:100px; max-height:100px; flex-basis:100px; }
   #liveTranscript.auren-live-caption {font-size:.94rem!important; padding:11px 13px;}
 }
+
+/* v2.8.2: Remove the floating live speech transcript and its reserved space.
+   Text chat/history, state labels, voice features and layout remain available. */
+#chat .auren-caption-slot, .auren-caption-slot, #liveTranscript {
+  display: none !important;
+  height: 0 !important;
+  min-height: 0 !important;
+  max-height: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border: 0 !important;
+  overflow: hidden !important;
+  flex: 0 0 0 !important;
+}

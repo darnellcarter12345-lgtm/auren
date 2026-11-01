@@ -24,38 +24,8 @@ aiEndpointInput.value = getAIEndpoint();
 $('saveAIEndpoint').onclick = () => { try { setAIEndpoint(aiEndpointInput.value); showStatus('AUREN AI connection saved on this browser.', 'ok'); } catch (e) { showStatus(e.message, 'error'); } };
 $('clearAIEndpoint').onclick = () => { setAIEndpoint(''); aiEndpointInput.value = ''; showStatus('AI connection removed.', 'info'); };
 let storageOk = false, sinceTrim = 0;
-// Stable, readable captions. Updates are throttled so speech progress does not flicker.
-let captionFrame = null;
-let captionPending = null;
-let captionLastDraw = 0;
-function renderCaption() {
-  captionFrame = null;
-  if (!captionPending) return;
-  const { speaker, content } = captionPending;
-  const panel = $('liveTranscript');
-  if (!panel) return;
-  const full = String(content || '').replace(/\s+/g, ' ').trim();
-  // Preserve complete words when displaying the recent part of a long response.
-  const LIMIT = 220;
-  let visible = full;
-  if (full.length > LIMIT) {
-    const tail = full.slice(-LIMIT);
-    const space = tail.indexOf(' ');
-    visible = '…' + (space >= 0 ? tail.slice(space + 1) : tail);
-  }
-  const output = full ? `${speaker}: ${visible}` : '';
-  if (panel.textContent !== output) panel.textContent = output;
-  captionLastDraw = Date.now();
-}
-function showCaption(speaker, content) {
-  captionPending = { speaker, content };
-  if (captionFrame !== null) return;
-  captionFrame = setTimeout(renderCaption, Math.max(0, 100 - (Date.now() - captionLastDraw)));
-}
+// Live speech captions are intentionally removed. Conversation history remains in Text chat.
 const voice = createVoice({
-  onInterim: partial => showCaption('You', partial),
-  onSpoken: progress => showCaption('AUREN', progress),
-  onHeard: text => showCaption('You', text),
   onTranscript: async transcript => {
     $('chatInput').value = transcript;
     try { await send(transcript); }
