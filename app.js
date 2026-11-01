@@ -1,3 +1,4 @@
+// AUREN v2.9.2 — Silent manual planner and iPhone microphone gesture
 // AUREN — js/app.js
 // Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
 // v0.2: status banner for storage problems, session panel, privacy controls, safe backup import.
@@ -172,8 +173,7 @@ const orbButton = $('orbControl');
 function activateOrb(event) {
   if (event?.cancelable && event.type === 'touchstart') event.preventDefault();
   const now = Date.now();
-  // iOS sends a synthetic click after touchstart. Run the microphone action
-  // immediately during the user's real touch and ignore the duplicate.
+  // Use the native click gesture, including on iPhone Safari.
   if (event?.type === 'click' && now - lastTouchOrbTap < 850) return;
   if (now - lastOrbTap < 300) return;
   lastOrbTap = now;
@@ -199,11 +199,35 @@ function activateOrb(event) {
     showStatus('Could not activate the microphone: ' + (error?.message || 'browser permission denied'), 'error');
   }
 }
-// A real touch gesture starts voice immediately on iPhone. preventDefault
-// prevents long-press selection and the browser's delayed synthetic click.
-orbButton.addEventListener('touchstart', activateOrb, { passive: false });
-// Keep native mouse, keyboard, screen-reader and desktop behavior.
+// Safari needs a native user click for microphone activation; intercepting
+// touchstart can prevent the standard permission flow on iPhones.
 orbButton.addEventListener('click', activateOrb);
+// A separate explicit gesture lets iPhone Safari request microphone access.
+// Permission to capture audio does not guarantee Web Speech recognition support.
+if(/iPhone|iPad|iPod/.test(navigator.userAgent)){
+  const allowMic=document.createElement('button');
+  allowMic.type='button';
+  allowMic.className='ghost';
+  allowMic.textContent='Enable iPhone microphone';
+  allowMic.setAttribute('aria-label','Request microphone permission for AUREN');
+  allowMic.style.marginTop='12px';
+  allowMic.onclick=async()=>{
+    if(!navigator.mediaDevices?.getUserMedia){
+      showStatus('Microphone permission is not supported here. Open AUREN in Safari.', 'error');
+      return;
+    }
+    allowMic.disabled=true;
+    try{
+      const stream=await navigator.mediaDevices.getUserMedia({audio:true});
+      stream.getTracks().forEach(track=>track.stop());
+      showStatus('Microphone allowed. Tap the golden orb to speak.', 'ok');
+      allowMic.textContent='Microphone allowed';
+    }catch(error){
+      showStatus('Microphone access was not granted. Check Safari Website Settings.', 'error');
+    }finally{allowMic.disabled=false;}
+  };
+  orbButton.insertAdjacentElement('afterend',allowMic);
+}
 // Voice preview is intentionally removed: one voice, one simple main control.
 $('wakeBtn').onclick = () => {
   if (capabilities.speak) voice.setEnabled(true);
@@ -595,10 +619,26 @@ function renderDay(){
   const remove=el('button','remove-plan','×');
   remove.type='button';
   remove.setAttribute('aria-label',`Remove ${p.title}`);
-  remove.onclick=async()=>{
-   pendingPlan={kind:'delete',id:p.id};
-   lastDiscussedPlanId=p.id;
-   await addMessage('auren',`Shall I remove ${p.title} from your plans?`);
+  remove.onclick=()=>{
+   // Manually deleting a plan is a direct UI action, never a voice conversation.
+   const previousPlans=[...plans];
+   const previousReminders=[...reminders];
+   plans=plans.filter(item=>item.id!==p.id);
+   reminders=reminders.filter(item=>item.eventId!==p.id);
+   try{
+    savePlans();
+    saveReminders();
+    pendingPlan=null;
+    if(lastDiscussedPlanId===p.id)lastDiscussedPlanId=null;
+    renderDay();
+    showStatus('Appointment removed.', 'ok');
+   }catch(error){
+    plans=previousPlans;
+    reminders=previousReminders;
+    try{savePlans();saveReminders();}catch{}
+    renderDay();
+    showStatus('Could not remove appointment: '+(error?.message||'storage unavailable'), 'error');
+   }
   };
   card.append(label,content,remove);
   node.append(card);
@@ -613,7 +653,7 @@ document.querySelectorAll('[data-screen]').forEach(button=>button.addEventListen
 document.querySelectorAll('.back-home').forEach(b=>b.addEventListener('click',()=>openScreen('chat')));
 const projectsBack=el('button','back-home','← Home');projectsBack.type='button';projectsBack.onclick=()=>openScreen('chat');$('projects').prepend(projectsBack);
 $('planDate').addEventListener('change',renderDay);
-$('planForm').onsubmit=async e=>{
+$('planForm').onsubmit=e=>{
   e.preventDefault();
   const title=$('planTitle').value.trim();
   const date=$('planDate').value;
@@ -622,10 +662,20 @@ $('planForm').onsubmit=async e=>{
     showStatus('Please enter an appointment name, date and time.', 'error');
     return;
   }
-  pendingPlan={kind:'add',title,date,time,duration:60};
-  // Surface the confirmation in text as well as voice. Never assume Safari
-  // is still listening merely because a prior speech session was active.
-  await addMessage('auren',conflictAdvice(pendingPlan)||`Shall I add ${title} on ${readableDate(date)} at ${formatClock(time)}? You can say yes, or type yes in Text chat.`);
+  // Manual planner saves directly and silently. Voice-driven scheduling is
+  // handled separately by the conversation planner, with no interference.
+  const event={id:uid(),title:title.slice(0,120),date,time,duration:60};
+  plans.push(event);
+  try{
+    savePlans();
+    pendingPlan=null;
+    $('planTitle').value='';
+    renderDay();
+    showStatus('Appointment saved.', 'ok');
+  }catch(error){
+    plans=plans.filter(item=>item.id!==event.id);
+    showStatus('Could not save appointment: '+(error?.message||'storage unavailable'), 'error');
+  }
 };
 function prepareSpokenReview(){
   // A briefing click requests a spoken briefing; it must not open a second
