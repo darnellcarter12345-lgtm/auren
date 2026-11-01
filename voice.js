@@ -125,7 +125,10 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       if (/female|child/i.test(name)) n -= 15;
       return n;
     };
-    const chosen = candidates.sort((a,b) => score(b)-score(a))[0] || null;
+    const ranked = candidates.sort((a,b) => score(b)-score(a));
+    // iOS voices differ from macOS. A system default is safer than requesting
+    // an unavailable British voice, which can result in silent output.
+    const chosen = mobileWebKit ? (ranked.find(v => v.localService && /^en-GB$/i.test(v.lang)) || ranked.find(v => v.localService) || null) : (ranked[0] || null);
     // Never switch between voices during the session, especially when Safari
     // populates voices late or offers novelty-only fallbacks.
     if (chosen) fixedVoice = chosen;
@@ -251,7 +254,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       if (id !== token) return;
       if (['not-allowed','service-not-allowed','audio-capture'].includes(e.error)) {
         errorStop = true; wakeMode = false; conversation = false; desiredMode = 'off'; permittedStart = false;
-        report('Microphone unavailable (' + e.error + '). Enable access and tap the orb again.');
+        report('Microphone blocked (' + e.error + '). In iPhone Safari: page menu → Website Settings → Microphone → Allow. Reload and tap the orb.');
       } else if (e.error === 'no-speech') {
         // Silence is not a microphone failure; continue waiting for wake phrase.
         if (mobileWebKit && conversation) scheduleIdle();
@@ -311,13 +314,9 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     enabled = true;
     try {
       synth.resume();
-      if (!audioPrimed && mobileWebKit && !speaking) {
-        const warmup = new SpeechSynthesisUtterance(' ');
-        warmup.volume = 0;
-        warmup.lang = 'en-GB';
-        synth.speak(warmup);
-        audioPrimed = true;
-      }
+      // Permission for spoken output is different from microphone permission.
+      // Don't enqueue a silent utterance; Safari can leave it stuck in its queue.
+      audioPrimed = true;
       return true;
     } catch (error) { report('iPhone audio is unavailable. Try tapping the orb again.'); return false; }
   }
@@ -344,7 +343,12 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       }
     };
     u.onend = () => { if (currentUtterance !== u) return; spokenText = ''; onSpoken?.(text, text); if (currentUtterance === u) currentUtterance = null; speaking = false; report(wakeMode ? 'Listening — ask a follow-up, or say “Hey Auren”' : (conversation ? 'Listening for your next question…' : 'Tap the orb to speak')); scheduleIdle(); if (!responding) listenSoon(160); };
-    u.onerror = () => { if (currentUtterance !== u) return; spokenText = ''; if (currentUtterance === u) currentUtterance = null; speaking = false; report('Voice output stopped; text remains available.'); if (!responding) listenSoon(420); };
+    u.onerror = e => { if (currentUtterance !== u) return; spokenText = ''; currentUtterance = null; speaking = false; report('Spoken reply unavailable (' + (e.error || 'audio error') + '). On iPhone, tap the orb, check volume, and try again.'); if (!responding) listenSoon(420); };
+    if (mobileWebKit) setTimeout(() => {
+      if (currentUtterance === u && speaking && !synth.speaking) {
+        report('iPhone has not started spoken audio. Check silent mode / volume, then tap the orb to retry.');
+      }
+    }, 3000);
     try { synth.speak(u); report('AUREN speaking…'); if (interruptionsEnabled && conversation && !active && !responding) listenSoon(150); }
     catch { currentUtterance = null; speaking = false; report('Speech output unavailable.'); if (!responding) listenSoon(); }
   }

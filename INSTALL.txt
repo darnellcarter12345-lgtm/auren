@@ -1,5 +1,5 @@
-AUREN v2.5.1 — Speech pause fix
+AUREN v2.5.3 — iPhone voice diagnostics
 Replace ONLY voice.js in your GitHub repository.
-Keep app.js, index.html, styles.css, weather.js and Cloudflare Worker unchanged.
-Refresh the site; test on iPhone and Mac.
-This waits for ~1.35s of silence on iPhone or ~1.05s on desktop after final fragments before submitting the request. Safari may end recognition or limit simultaneous listening and speaking.
+Requires app.js from v2.5.2 and weather.js from v2.5.
+Microphone permissions are controlled by Safari and cannot be forced by the website.
+The AI Worker endpoint is browser-local: configure it separately on iPhone in Settings if missing.
