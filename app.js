@@ -1,4 +1,4 @@
-// AUREN v2.9.4 — iPhone voice diagnostics and honest listening status
+// AUREN v2.9.6 — unified context, conversation continuity and planner awareness
 // AUREN — js/app.js
 // Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
 // v0.2: status banner for storage problems, session panel, privacy controls, safe backup import.
@@ -20,7 +20,27 @@ const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls)
 const butler = new Butler();
 const settings = loadSettings();
 const HISTORY_LIMIT = 200;
+// Conversation continuity lasts across refreshes on this browser.
+// Only the last few non-sensitive conversational turns are sent to AI.
+const CONVERSATION_KEY = 'auren_ai_recent_v296';
 const aiRecent = [];
+try {
+  const stored = JSON.parse(localStorage.getItem(CONVERSATION_KEY) || '[]');
+  if (Array.isArray(stored)) aiRecent.push(...stored.filter(v =>
+    v && ['user', 'assistant'].includes(v.role) && typeof v.content === 'string'
+  ).slice(-10).map(v => ({role:v.role, content:v.content.slice(0,500)})));
+} catch { /* Keep working without saved history. */ }
+function rememberConversationTurn(question, answer) {
+  const sensitive = classify(question + ' ' + answer);
+  // Never keep sensitive chat in the AI context cache.
+  if (sensitive.blocked.length || sensitive.sensitive.length) return;
+  aiRecent.push({role:'user', content:question.slice(0,500)},
+    {role:'assistant', content:answer.slice(0,500)});
+  if (aiRecent.length > 10) aiRecent.splice(0, aiRecent.length - 10);
+  try { localStorage.setItem(CONVERSATION_KEY, JSON.stringify(aiRecent)); } catch {}
+}
+let latestBriefingContext = null;
+
 const aiEndpointInput = $('aiEndpoint');
 window.addEventListener('auren:ai-endpoint-updated', () => { aiEndpointInput.value = getAIEndpoint(); });
 aiEndpointInput.value = getAIEndpoint();
@@ -613,7 +633,7 @@ function changeDescription(p){const name=p.title||plans.find(e=>e.id===p.id)?.ti
 let planClarification=null;
 function extractLooseTime(t){const m=String(t).match(/^(?:at\s+|to\s+|make\s+(?:it|that)\s+)?(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?$/i);return m?timeFromText('at '+m[0].replace(/^(?:at|to|make (?:it|that))\s+/i,'')):timeFromText(t);}
 function durationMention(t){return /\b\d+\s*(?:hours?|minutes?)\b/i.test(t);}
-function planSummary(date){const items=plansFor(date); if(!items.length)return 'You have nothing scheduled for this day.';const names=items.slice(0,5).map(p=>`${p.title} at ${formatClock(p.time)}`).join(', ');return `You have ${items.length} ${items.length===1?'plan':'plans'}: ${names}${items.length>5?', and others':''}. Does that sound correct?`;}
+function planSummary(date){const items=plansFor(date); if(!items.length)return 'You have nothing scheduled for this day.';const names=items.slice(0,5).map(p=>`${p.title} at ${formatClock(p.time)}`).join(', ');return `You have ${items.length} ${items.length===1?'plan':'plans'}: ${names}${items.length>5?', and others':''}.`;}
 function renderDay(){
  const node=$('dayTimeline');
  node.replaceChildren();
@@ -718,7 +738,9 @@ $('playBriefing').onclick=async()=>{
   catch(error) { console.warn('Weather briefing unavailable:',error); result={success:false}; }
   if(weatherStatus)weatherStatus.textContent=result?.success?'Weather: '+result.display:'Weather unavailable — schedule still works.';
   const weather=result?.success?' '+result.spoken:'';
-  await addMessage('auren',`Good morning. ${summary}${extra}${weather}`);
+  const briefingText = `Good morning. ${summary}${extra}${weather}`;
+  latestBriefingContext = { text: briefingText.slice(0, 1200), at: Date.now() };
+  await addMessage('auren', briefingText);
 };
 function proposedDay(text){return parseDateIntent(text)||$('planDate').value||localDate();}
 function timeFromText(text){
@@ -933,9 +955,29 @@ async function contextForAI(question) {
 
 async function askWithMemory(question) {
   const context = await contextForAI(question);
-  const answer = await askAI(question, context.memories, context.session, aiRecent);
-  aiRecent.push({role:'user', content:question.slice(0,500)}, {role:'assistant', content:answer.slice(0,500)});
-  if (aiRecent.length > 12) aiRecent.splice(0, aiRecent.length - 12);
+  // Read live local state, not a stale snapshot of the planner.
+  const today = localDate();
+  const upcoming = plans.filter(p => p.date >= today)
+    .sort((a,b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time))
+    .slice(0, 12)
+    .map(p => `${p.title.slice(0,90)} | ${p.date} ${p.time} | ${p.duration||60} min`);
+  const due = reminders.filter(r => !r.fired && new Date(r.at).getTime() >= Date.now())
+    .sort((a,b) => a.at.localeCompare(b.at))
+    .slice(0, 8).map(r => `${r.text.slice(0,90)} | ${r.at}`);
+  const projects = (await Proj.listProjects()).filter(p => !p.sensitive)
+    .slice(0, 8).map(p => `${p.name.slice(0,90)} | ${p.status} | ${p.progress}%`);
+  const isFollowup = /^(?:what about|tell me more|why|how|the (?:first|second|third)|first|second|third|explain|and |what did you mean|what was that)/i.test(question.trim());
+  const briefing = isFollowup && latestBriefingContext && Date.now()-latestBriefingContext.at < 45*60*1000
+    ? latestBriefingContext.text : '';
+  const deviceContext = [
+    `Current local date/time: ${new Date().toLocaleString()} (${localTimeZone()})`,
+    `Verified upcoming appointments (read-only data): ${JSON.stringify(upcoming)}`,
+    `Verified active reminders (read-only data): ${JSON.stringify(due)}`,
+    `Verified non-sensitive projects (read-only data): ${JSON.stringify(projects)}`,
+    briefing ? `Most recent spoken briefing (read-only data): ${briefing}` : ''
+  ].filter(Boolean);
+  const answer = await askAI(question, context.memories, context.session, aiRecent, deviceContext);
+  rememberConversationTurn(question, answer);
   return answer;
 }
 
