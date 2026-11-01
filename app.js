@@ -361,10 +361,38 @@ function parseDateIntent(t){
 }
 function findMatchingEvent(t){
  const candidates=plans.filter(p=>t.toLowerCase().includes(p.title.toLowerCase()));
- if(candidates.length===1)return candidates[0];
+ if(candidates.length===1)return candidates[0];if(candidates.length>1)return null;
  const current=plansFor($('planDate').value);if(current.length===1)return current[0];
  return plans.find(p=>p.id===lastDiscussedPlanId)||null;
 }
+// v2.3: find overlap by actual time intervals; all times are device-local.
+function minutesOf(time){const [h,m]=String(time).split(':').map(Number);return h*60+m;}
+function endOf(p){return minutesOf(p.time)+Math.max(1,Number(p.duration)||60);}
+function overlaps(a,b){return a.date===b.date&&minutesOf(a.time)<endOf(b)&&minutesOf(b.time)<endOf(a);}
+function conflictingEvents(candidate,excludeId=null){return plans.filter(p=>p.id!==excludeId&&overlaps(candidate,p));}
+function nextAvailable(candidate,excludeId=null){
+ let start=minutesOf(candidate.time),duration=Math.max(1,Number(candidate.duration)||60);
+ while(start+duration<=24*60){
+  const probe={...candidate,time:`${String(Math.floor(start/60)).padStart(2,'0')}:${String(start%60).padStart(2,'0')}`};
+  const conflicts=conflictingEvents(probe,excludeId);
+  if(!conflicts.length)return probe.time;
+  start=Math.max(start+5,...conflicts.map(endOf));
+  start=Math.ceil(start/5)*5;
+ }
+ return null;
+}
+function conflictAdvice(p){
+ const conflicts=conflictingEvents(p,p.kind==='move'?p.id:null);
+ if(!conflicts.length)return null;
+ const suggestion=nextAvailable(p,p.kind==='move'?p.id:null);
+ p.conflictAcknowledged=false;
+ p.suggestedTime=suggestion;
+ return `That overlaps with ${conflicts.slice(0,2).map(c=>`${c.title} at ${formatClock(c.time)}`).join(' and ')}. ${suggestion?`${formatClock(suggestion)} is available. Shall I use that instead?`:'I cannot find a free opening later that day. Would you prefer a different day?'} `;
+}
+function changeDescription(p){const name=p.title||plans.find(e=>e.id===p.id)?.title||'that plan';return `${p.kind==='add'?'add':p.kind==='move'?'move':'remove'} ${name}${p.kind==='delete'?'':` on ${readableDate(p.date)} at ${formatClock(p.time)}`}`;}
+let planClarification=null;
+function extractLooseTime(t){const m=String(t).match(/^(?:at\s+|to\s+|make\s+(?:it|that)\s+)?(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?$/i);return m?timeFromText('at '+m[0].replace(/^(?:at|to|make (?:it|that))\s+/i,'')):timeFromText(t);}
+function durationMention(t){return /\b\d+\s*(?:hours?|minutes?)\b/i.test(t);}
 function planSummary(date){const items=plansFor(date); if(!items.length)return 'You have nothing scheduled for this day. Would you like to plan something?';const names=items.slice(0,5).map(p=>`${p.title} at ${formatClock(p.time)}`).join(', ');return `You have ${items.length} ${items.length===1?'plan':'plans'}: ${names}${items.length>5?', and others':''}. Does that sound correct?`;}
 function renderDay(){
  const node=$('dayTimeline');
@@ -397,7 +425,7 @@ document.querySelectorAll('[data-screen]').forEach(button=>button.addEventListen
 document.querySelectorAll('.back-home').forEach(b=>b.addEventListener('click',()=>openScreen('chat')));
 const projectsBack=el('button','back-home','← Home');projectsBack.type='button';projectsBack.onclick=()=>openScreen('chat');$('projects').prepend(projectsBack);
 $('planDate').addEventListener('change',renderDay);
-$('planForm').onsubmit=async e=>{e.preventDefault();pendingPlan={kind:'add',title:$('planTitle').value.trim(),date:$('planDate').value,time:$('planTime').value,duration:60};if(pendingPlan.title&&pendingPlan.time)await addMessage('auren',`Shall I add ${pendingPlan.title} at ${formatClock(pendingPlan.time)} to your schedule?`);};
+$('planForm').onsubmit=async e=>{e.preventDefault();pendingPlan={kind:'add',title:$('planTitle').value.trim(),date:$('planDate').value,time:$('planTime').value,duration:60};if(pendingPlan.title&&pendingPlan.time)await addMessage('auren',conflictAdvice(pendingPlan)||`Shall I add ${pendingPlan.title} at ${formatClock(pendingPlan.time)} to your schedule?`);};
 function prepareSpokenReview(){if(capabilities.speak){voice.setEnabled(true);$('speakReplies').checked=true;} if(capabilities.listen && !voice.awake)voice.startListening();voice.setReviewMode?.(true);reviewPending=true;}
 function beginReview(){prepareSpokenReview();const date=$('planDate').value;addMessage('auren',planSummary(date));}
 // Spoken review remains available through the daily briefing and natural conversation.
@@ -419,8 +447,37 @@ async function planSpeech(text){const t=text.trim();
    planningOffer=null; // unrelated conversation: don't nag or hold an offer open
  }
 
+ if(planClarification){
+  const previous=planClarification;
+  if(/^(?:cancel|nevermind|never mind|no thanks)\b/i.test(t)){planClarification=null;return 'Of course. No changes made.';}
+  if(previous.kind==='time'){
+    const given=extractLooseTime(t);
+    if(given==='ambiguous')return 'Was that AM or PM?';
+    if(given){planClarification=null;pendingPlan={...previous.plan,time:given};const conflict=conflictAdvice(pendingPlan);return conflict||`Shall I ${changeDescription(pendingPlan)}?`;}
+  }
+  if(previous.kind==='which'){
+    const match=findMatchingEvent(t);
+    if(match){planClarification=null;pendingPlan={...previous.plan,id:match.id,title:match.title,date:previous.plan.date||match.date,time:previous.plan.time||match.time,duration:match.duration};const conflict=previous.plan.kind==='move'?conflictAdvice(pendingPlan):null;return conflict||`Shall I ${changeDescription(pendingPlan)}?`;}
+  }
+  // Clear the old clarification if user begins a new instruction.
+  if(/^(?:schedule|add|move|change|remove|delete|what|discuss)\b/i.test(t))planClarification=null;
+  else return previous.kind==='which'?'Which event do you mean?':'Please tell me the time, including AM or PM.';
+ }
+ if(pendingPlan&&pendingPlan.suggestedTime&&!pendingPlan.conflictAcknowledged){
+  if(/^(?:yes|yeah|sure|okay|use that|that works|please do)\b/i.test(t)){
+   pendingPlan.time=pendingPlan.suggestedTime;pendingPlan.suggestedTime=null;pendingPlan.conflictAcknowledged=true;
+   return `Certainly. Shall I ${changeDescription(pendingPlan)}?`;
+  }
+  const alternate=extractLooseTime(t);
+  if(alternate&&alternate!=='ambiguous'){pendingPlan.time=alternate;const conflict=conflictAdvice(pendingPlan);return conflict||`Shall I ${changeDescription(pendingPlan)}?`;}
+  if(/^(?:no|nope|cancel|never mind)\b/i.test(t)){pendingPlan=null;return 'Of course. No changes made.';}
+  if(/^(?:keep|use original|anyway|overlap)\b/i.test(t)){pendingPlan.suggestedTime=null;pendingPlan.conflictAcknowledged=true;return `That would overlap another plan. Shall I ${changeDescription(pendingPlan)} anyway?`;}
+  return 'Would you prefer the available time, a different time, or to cancel?';
+ }
  if(pendingPlan && /^(yes|yeah|yep|correct|please do|do it|sure|confirm|go ahead|that's right)\b/i.test(t)){
-  const p=pendingPlan;pendingPlan=null;
+  const p=pendingPlan;
+  if(p.kind!=='delete'&&!p.conflictAcknowledged){const latest=conflictingEvents(p,p.kind==='move'?p.id:null);if(latest.length){const prompt=conflictAdvice(p);return prompt||'That time now conflicts with another event.';}}
+  pendingPlan=null;
   if(p.kind==='add'){if(!p.title||!p.time)return 'I still need the name and time before saving that.';const event={id:uid(),title:p.title.slice(0,120),date:p.date,time:p.time,duration:p.duration||60};plans.push(event);try{savePlans();}catch(e){plans=plans.filter(x=>x.id!==event.id);return 'I could not save that event on this device.';}lastDiscussedPlanId=event.id;renderDay();return `Certainly. I have added ${event.title} at ${formatClock(event.time)}.`;}
   if(p.kind==='delete'){const old=plans.find(e=>e.id===p.id);plans=plans.filter(e=>e.id!==p.id);try{savePlans();}catch{if(old)plans.push(old);return 'I could not save that deletion.';}renderDay();return 'Certainly. I have removed that plan.';}
   if(p.kind==='move'){const event=plans.find(e=>e.id===p.id);if(!event)return 'That plan no longer exists.';const previous={time:event.time,date:event.date,duration:event.duration};event.time=p.time||event.time;event.date=p.date||event.date;event.duration=p.duration||event.duration;try{savePlans();}catch{Object.assign(event,previous);return 'I could not save that change.';}lastDiscussedPlanId=event.id;$('planDate').value=event.date;renderDay();return `Certainly. Moved ${event.title} to ${formatClock(event.time)} on ${event.date}.`;}
@@ -428,17 +485,24 @@ async function planSpeech(text){const t=text.trim();
  if(pendingPlan&&/^(no|nope|cancel|don't|do not|never mind)\b/i.test(t)){pendingPlan=null;return 'Of course. I have made no changes.';}
  if(pendingPlan && /^(?:actually|wait|instead|make (?:it|that)|change (?:it|that))\b/i.test(t)){
   const date=parseDateIntent(t),time=timeFromText(t);if(time==='ambiguous')return 'Did you mean AM or PM?';
-  if(date)pendingPlan.date=date;if(time)pendingPlan.time=time;if(/\d+\s*(?:hours?|minutes?)/i.test(t))pendingPlan.duration=durationFromText(t);
-  return `Understood. Shall I ${pendingPlan.kind==='add'?'add':pendingPlan.kind==='move'?'move':'change'} ${pendingPlan.title||plans.find(p=>p.id===pendingPlan.id)?.title||'that plan'}${pendingPlan.time?' at '+formatClock(pendingPlan.time):''}${pendingPlan.date?' on '+readableDate(pendingPlan.date):''}?`;
+  if(date)pendingPlan.date=date;if(time)pendingPlan.time=time;if(durationMention(t))pendingPlan.duration=durationFromText(t);
+  const conflict=pendingPlan.kind==='delete'?null:conflictAdvice(pendingPlan);return conflict||`Understood. Shall I ${changeDescription(pendingPlan)}?`;
  }
 
  if(reviewPending && /^(yes|yeah|correct|sounds good|that's correct|all correct)\b/i.test(t)){reviewPending=false;voice.setReviewMode?.(false);return 'Very good. I am here if you need anything adjusted.';}
  if(/\b(?:what(?:'s| is) on|what do i have|go over|review|discuss|read|tell me about|brief(?:ing)?)\b.*\b(?:my day|my week|this week|next week|schedule|calendar|plans|today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(t)||/^(?:my schedule|my plans|my week)$/i.test(t)){reviewPending=true;voice.setReviewMode?.(true);const scope=requestedScope(t);const date=proposedDay(t);if(scope==='week'||parseDateIntent(t)){$('planDate').value=date;setPlannerScope(scope);}return weekOrDaySummary(date,scope);}
  if(/^(?:wait|hold on|that's not right|that isn't right|change that|actually)\b/i.test(t)&&reviewPending){return 'Of course. What would you like me to change?';}
  const add=t.match(/^(?:please\s+)?(?:add|schedule|plan|put|book|set aside)\s+(.+)/i);
- if(add){const time=timeFromText(t);if(time==='ambiguous')return 'Of course. Did you mean AM or PM? Please say the full time again.';if(!time)return 'Certainly. What time should I put that on your schedule? Please include AM or PM.';const title=add[1].replace(/\b(?:tomorrow|today|day after tomorrow|next week|this week|(?:next|this|on)?\s*(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/gi,'').replace(/\b(?:at|for)\s+\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b/gi,'').replace(/\b\d+\s*(?:hours?|minutes?)\b/gi,'').trim().replace(/\s+/g,' ').replace(/[.,]+$/,'');if(!title)return 'What would you like me to call that plan?';pendingPlan={kind:'add',title,date:proposedDay(t),time,duration:durationFromText(t)};return `Shall I add ${title} at ${formatClock(time)}?`;}
+ if(add){const time=timeFromText(t);if(time==='ambiguous'||!time){const title=add[1].replace(/\b(?:at|for)\s+\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b/gi,'').replace(/\b(?:today|tomorrow|on|next|this|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/gi,'').trim();planClarification={kind:'time',plan:{kind:'add',title:title||'Untitled plan',date:proposedDay(t),duration:durationFromText(t)}};return time==='ambiguous'?'Would that be AM or PM? Please give the time again.':'What time would you like, including AM or PM?';}const title=add[1].replace(/\b(?:tomorrow|today|day after tomorrow|next week|this week|(?:next|this|on)?\s*(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/gi,'').replace(/\b(?:at|for)\s+\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b/gi,'').replace(/\b\d+\s*(?:hours?|minutes?)\b/gi,'').trim().replace(/\s+/g,' ').replace(/[.,]+$/,'');if(!title)return 'What would you like me to call that plan?';pendingPlan={kind:'add',title,date:proposedDay(t),time,duration:durationFromText(t)};return conflictAdvice(pendingPlan)||`Shall I add ${title} on ${readableDate(pendingPlan.date)} at ${formatClock(time)}?`;}
  if(/^(?:remove|delete|cancel)\b/i.test(t)&&/\b(?:plan|event|appointment|meeting|that|it|schedule)\b/i.test(t)){const event=findMatchingEvent(t);if(!event)return 'Which event would you like me to remove?';pendingPlan={kind:'delete',id:event.id};return `Shall I remove ${event.title} from your schedule?`;}
- if(/\b(?:move|change|reschedule)\b/i.test(t)){const time=timeFromText(t);const event=findMatchingEvent(t);if(!event)return 'Which event would you like me to change?';if(time==='ambiguous')return 'Did you mean AM or PM? Please include that when giving the new time.';const explicitDate=!!parseDateIntent(t);if(!time&&!explicitDate)return 'What new day or time would you prefer?';pendingPlan={kind:'move',id:event.id,time:time||event.time,date:explicitDate?proposedDay(t):event.date,duration:/\b\d+\s*(?:hours?|minutes?)\b/i.test(t)?durationFromText(t):event.duration};lastDiscussedPlanId=event.id;return `Shall I move ${event.title} to ${formatClock(pendingPlan.time)} on ${pendingPlan.date}?`;}
+ if(/^(?:make (?:that|it)|change (?:that|it) to|actually make (?:that|it))\b/i.test(t)&&lastDiscussedPlanId&&!pendingPlan){
+  const event=plans.find(p=>p.id===lastDiscussedPlanId);
+  if(event){const time=extractLooseTime(t),date=parseDateIntent(t),hasDuration=durationMention(t);
+   if(time==='ambiguous')return 'Did you mean AM or PM?';
+   if(time||date||hasDuration){pendingPlan={kind:'move',id:event.id,time:time||event.time,date:date||event.date,duration:hasDuration?durationFromText(t):event.duration};return conflictAdvice(pendingPlan)||`Shall I update ${event.title}${hasDuration?' to '+pendingPlan.duration+' minutes':''}${time?' at '+formatClock(time):''}?`;}
+  }
+ }
+ if(/\b(?:move|change|reschedule)\b/i.test(t)){const time=timeFromText(t);const event=findMatchingEvent(t);if(!event)return 'Which event would you like me to change?';if(time==='ambiguous')return 'Did you mean AM or PM? Please include that when giving the new time.';const explicitDate=!!parseDateIntent(t);if(!time&&!explicitDate)return 'What new day or time would you prefer?';pendingPlan={kind:'move',id:event.id,time:time||event.time,date:explicitDate?proposedDay(t):event.date,duration:/\b\d+\s*(?:hours?|minutes?)\b/i.test(t)?durationFromText(t):event.duration};lastDiscussedPlanId=event.id;return conflictAdvice(pendingPlan)||`Shall I move ${event.title} to ${formatClock(pendingPlan.time)} on ${readableDate(pendingPlan.date)}?`;}
  return null;
 }
 // The planner only changes data after confirmation, not from arbitrary AI text.

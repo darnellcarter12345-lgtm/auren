@@ -1,2 +1,1 @@
-AUREN v2.2.7 Week Planning and Natural Scheduling
-Replace index.html, styles.css, and app.js in GitHub. Do NOT replace voice.js or AI Worker. Refresh the website. Existing locally stored plans remain unchanged.
+AUREN v2.3 Smart Scheduling: Replace app.js only in your existing v2.2.7 project. Keep all other files unchanged. Refresh after committing. Test conflicts and spoken follow-ups in your browser.
