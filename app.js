@@ -1,3 +1,4 @@
+// AUREN v2.21 — complete-intent search and simple Maps choices
 // AUREN v2.20 — Maps return navigation, concise replies, responsive live captions
 // AUREN v2.19 — intent-first directions, immediate Maps popup, contextual responses
 // AUREN v2.16.7 — Smart Places controls in Settings; conversation stays clean.
@@ -2203,6 +2204,19 @@ aurenPlaces = (() => {
     if(/^(?:my memories|my schedule|my appointments|my projects|my notes|the answer|that|it|help|information|a way|a solution)$/i.test(d))return '';
     return d;
   }
+  // Never search an incomplete voice phrase; wait for a meaningful destination.
+  function incompletePlaceRequest(raw){
+    const t=String(raw||'').trim().toLowerCase().replace(/^(?:hey\s+)?auren[,! ]*/,'').replace(/[.!?]+$/,'').trim();
+    if(!/^(?:(?:can|could|would) you\s+|please\s+)?(?:find|take|show|search|look|recommend|suggest|navigate|directions|go)\b/.test(t))return false;
+    if(/\b(?:um+|uh+|erm+|hmm+|like|you know)\s*$/.test(t))return true;
+    if(/\b(?:to|for|at|near|a|an|the|some|somewhere|place|places|spot|spots|location|locations|me)\s*$/.test(t))return true;
+    return /^(?:find me|find me a|find me a place|take me|take me to|show me|directions to|navigate to|search for|look for|recommend somewhere)$/.test(t);
+  }
+  function meaningfulSearchTerm(raw){
+    const s=String(raw||'').trim().replace(/\b(?:um+|uh+|erm+|hmm+)\b/gi,'').trim();
+    if(s.length<3)return false;
+    return !/^(?:me|a|an|the|some|place|places|somewhere|spot|spots|location|locations|near me|nearby|to|for|there|anything)$/i.test(s);
+  }
   const placeIntent=/\b(?:where (?:should|can|could) (?:i|we) (?:go|eat|shop|visit)|(?:find|show|suggest|recommend|look up|search for)\s+(?:me\s+)?(?:some\s+|a\s+|an\s+|the\s+|nearby\s+|closest\s+|good\s+|best\s+)*(?:places?|locations?|spots?|things to do|restaurants?|food|cafes?|coffee shops?|mcdonald'?s|chick.fil.a|starbucks|parks?|gyms?|stores?|shops?|museums?|libraries|theaters?|cinemas?|bowling|hiking|pharmacies|gas stations?|hotels?|barbers?|salons?|car washes?|mechanics?|dealerships?|bookstores?|arcades?|grocery stores?|supermarkets?|walmart|target)|(?:near me|nearby|closest to me|around me|in my area))\b/i;
   const panel=document.createElement('section');panel.id='aurenSmartPlacesV215';panel.className='card';panel.style.cssText='margin:12px auto;width:min(92%,680px);padding:14px;border:1px solid rgba(199,168,104,.38);border-radius:14px;background:#191b20;color:#ebd9b2;display:none';
   const heading=document.createElement('strong'), content=document.createElement('div'), actions=document.createElement('div');actions.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-top:12px';panel.append(heading,content,actions);
@@ -2233,12 +2247,15 @@ aurenPlaces = (() => {
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&mapOverlay.style.display!=='none')closePopup();});
   function showPopup(message,places=[]){
     mapText.textContent=message;mapChoices.replaceChildren();mapOverlay.style.display='flex';
-    const top=places.slice(0,4);
-    for(const r of top)popupButton(r.name+' · '+r.km.toFixed(1)+' km · Open in Google Maps',()=>openMap(mapLink(r)));
-    if(!coords)popupButton('Allow location & find nearby options',enable);
-    popupButton('Open '+pending.slice(0,60)+' in Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
-    popupButton('Not now / Close',closePopup);
-    popupButton('Finish this search',finish);
+    popupButton('Nearby places',()=>{
+      closePopup();
+      if(results.length){displayResults(false);return;}
+      if(coords){void lookup();return;}
+      if(locationApproved&&aurenLocation){coords={lat:aurenLocation.latitude,lon:aurenLocation.longitude};void lookup();return;}
+      enable();
+    });
+    popupButton('Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
+    const x=document.createElement('button');x.type='button';x.textContent='× Close';x.className='ghost';x.style.cssText='align-self:center;padding:6px 12px';x.onclick=closePopup;mapChoices.append(x);
   }
   const distanceKm=(a,b,c,d)=>{const R=6371,rad=x=>x*Math.PI/180,dl=rad(c-a),dn=rad(d-b),v=Math.sin(dl/2)**2+Math.cos(rad(a))*Math.cos(rad(c))*Math.sin(dn/2)**2;return 2*R*Math.atan2(Math.sqrt(v),Math.sqrt(1-v));};
   const mapLink=(r)=>'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(r.lat+','+r.lon+' '+r.name);
@@ -2299,11 +2316,12 @@ aurenPlaces = (() => {
     appendMapsLink(pending+' near me','Search '+pending.slice(0,65)+' in Google Maps');
     if(locationApproved&&aurenLocation){
       coords={lat:aurenLocation.latitude,lon:aurenLocation.longitude};
-      showPopup('Searching nearby locations. You can open Google Maps now, or wait for AUREN to list available places.');void lookup();return;
+      phase='consent';showPopup('Choose how you want to search for '+pending+'.');return;
     }
-    phase='consent';showPopup('Would you like to use your location to find nearby places? You can still open Maps without sharing GPS with AUREN.');show('Find places near you?','Would you like to use your location for this search? The search service receives coordinates only if you approve.');action('Allow location & search',enable);action('Not now',clear);
+    phase='consent';showPopup('Choose Nearby places to look up local options, or Google Maps to open a map search.');show('Find places near you?','Would you like to use your location for this search? The search service receives coordinates only if you approve.');action('Allow location & search',enable);action('Not now',clear);
   }
   async function handle(text){const t=String(text||'').trim();
+    if(incompletePlaceRequest(t)){await addMessage('user',t);await addMessage('auren','What kind of place would you like me to find?');return true;}
     if(/\b(?:turn|switch|disable|stop|clear|forget)\b.*\blocation\b/i.test(t)&&/off|disable|stop|clear|forget/i.test(t)){clear();return false;}
     if(phase==='confirm-done'&&yes.test(t)){await addMessage('user',t);clear();await addMessage('auren','Search finished. Temporary search coordinates cleared.');return true;}
     if(phase==='confirm-done'&&no.test(t)){await addMessage('user',t);displayResults();return true;}
@@ -2317,9 +2335,10 @@ aurenPlaces = (() => {
       return true;
     }
     if(phase==='consent'&&no.test(t)){await addMessage('user',t);clear();await addMessage('auren','Of course. I will not use your location.');return true;}
-    if(destinationFrom(t)||namedPlaceSearch(t)||placeIntent.test(t)||broadPlaceIntent.test(t)){
+    const destination=destinationFrom(t),named=namedPlaceSearch(t);
+    if((destination&&meaningfulSearchTerm(destination))||(named&&meaningfulSearchTerm(named))||placeIntent.test(t)||broadPlaceIntent.test(t)){
       await addMessage('user',t);request(t);
-      await addMessage('auren',locationApproved&&aurenLocation?'Of course. I have opened your Maps options on screen and am checking nearby locations.':'Of course. I have brought up '+pending+' in Google Maps. Tap the button on screen to open it.');
+      await addMessage('auren',locationApproved&&aurenLocation?'Choose Nearby places or Google Maps on screen.':'Choose Nearby places or Google Maps on screen.');
       return true;
     }
     return false;
