@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101318">
   <title>AUREN · Voice Assistant</title>
-  <link rel="stylesheet" href="./styles.css?v=2.2.2">
+  <link rel="stylesheet" href="./styles.css?v=2.2.3">
 </head>
 <body>
   <div id="statusBar" role="status" aria-live="polite" hidden>
@@ -19,8 +19,9 @@
       <h1>AUREN</h1>
       <p class="sub"><span class="sr-only" id="status">starting&hellip;</span></p>
     </div>
+    <button type="button" id="panelToggle" class="ghost" aria-expanded="false" aria-controls="settings" aria-label="Open Settings">⚙</button>
   </header>
-  <button type="button" id="panelToggle" class="ghost" aria-expanded="false" aria-controls="settings" aria-label="Open Settings">⚙</button>
+  
   <noscript><p class="card">AUREN needs JavaScript enabled.</p></noscript>
 
   <div class="hero" aria-label="AUREN voice assistant">
@@ -47,24 +48,21 @@
   <main>
     <section id="planner" class="tab auren-screen" aria-label="Your Day">
       <div class="screen-top"><button type="button" class="back-home">← Home</button><span>YOUR DAY</span></div>
-      <h2>Your schedule</h2>
-      <label class="date-row">Day <input type="date" id="planDate" aria-label="Choose schedule date"></label>
+      <h2>Your Day</h2>
+      <label class="date-row">Date <input type="date" id="planDate" aria-label="Choose schedule date"></label>
       <div id="dayTimeline" class="day-timeline" aria-live="polite"></div>
       <div class="plan-actions">
-        <button id="reviewDay" type="button">◉ Discuss your day</button>
-        <details class="manual-plan"><summary>Add something manually</summary><form id="planForm">
+        <details class="manual-plan"><summary>Add a plan manually</summary><form id="planForm">
           <input id="planTitle" required maxlength="120" placeholder="What's planned?" aria-label="Plan title">
           <input id="planTime" type="time" required aria-label="Plan time">
           <input id="planDuration" type="number" min="5" max="720" value="60" aria-label="Duration in minutes">
           <button type="submit">Add plan</button></form></details>
       </div>
-      <p class="hint">Plans are stored on this browser. AUREN will ask before changing them.</p>
     </section>
     <section id="briefing" class="tab auren-screen" aria-label="Daily briefing">
       <div class="screen-top"><button type="button" class="back-home">← Home</button><span>DAILY BRIEFING</span></div>
       <h2>Good morning.</h2>
       <button id="playBriefing" type="button" class="briefing-play"><span aria-hidden="true">◉</span><span><strong>Hear your briefing</strong><small>Today's plans · Your time</small></span></button>
-      <p class="hint">A short spoken summary. Ask for details whenever you want.</p>
     </section>
     <section id="chat" class="tab active">
       <div id="latestReply" class="latest-reply" role="status" aria-live="polite">Ready when you are.</div>

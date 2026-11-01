@@ -1,4 +1,5 @@
-AUREN v2.2.2 — Settings tap + orb touch + gentle planning initiative.
-Replace index.html, styles.css, app.js only. Keep voice.js and your other modules unchanged.
-Hard-refresh Mac and mobile; test settings open/close, orb wake/sleep, three shortcuts, planner.
-Planning suggestions are opt-in and never auto-save events.
+AUREN v2.2.5 — Quiet Planner
+
+Replace ONLY index.html, app.js, styles.css in your GitHub repo. Keep voice.js, AI, memory, Worker and other files untouched.
+
+Your Day shows only saved plans, a date selector and an optional collapsed manual-add form. Removed redundant Ask AUREN about your day button and instruction hints. Briefing remains the place to hear a spoken schedule review; normal voice scheduling remains available.
