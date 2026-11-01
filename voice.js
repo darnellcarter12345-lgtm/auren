@@ -1,4 +1,4 @@
-// AUREN v1.1: improved foreground wake-phrase recognition and microphone lifecycle.
+// AUREN v2.9.3: explicit microphone status, bounded iPhone recovery and dictation fallback.
 // SpeechRecognition is browser-dependent and may process microphone audio online.
 // The user must explicitly start voice access at least once; no background/locked-screen listening.
 export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpoken }) {
@@ -287,7 +287,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       lastRecognitionError = String(e.error || 'unknown');
       if (['not-allowed','service-not-allowed','audio-capture'].includes(e.error)) {
         errorStop = true; wakeMode = false; conversation = false; desiredMode = 'off'; permittedStart = false;
-        report('Microphone blocked (' + e.error + '). In iPhone Safari: page menu → Website Settings → Microphone → Allow. Reload and tap the orb.');
+        report('Microphone blocked (' + e.error + '). In Safari: Page Menu → Website Settings → Microphone → Allow. Alternatively use iPhone keyboard dictation in Text chat.');
       } else if (e.error === 'no-speech') {
         // Silence is not a microphone failure; continue waiting for wake phrase.
         if (mobileWebKit && conversation) scheduleIdle();
@@ -296,7 +296,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
         report('Speech recognition needs a connection. You can retry by tapping the orb.');
       } else if (e.error !== 'aborted') {
         restartFailures = Math.min(restartFailures + 1, 5);
-        report('Voice recognition issue: ' + e.error + '. Tap the orb if listening stops.');
+        report('Voice recognition issue: ' + e.error + '. Retry using the orb or switch to iPhone keyboard dictation.');
       }
     };
     r.onend = () => {
@@ -314,7 +314,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
         if (earlyEndCount >= 3) {
           errorStop = true; permittedStart = false; desiredMode = 'off';
           wakeMode = false; conversation = false;
-          report('Safari stopped speech recognition. Tap the orb to reconnect, or use iPhone keyboard dictation in Text chat.');
+          report('Safari stopped speech recognition. Tap the orb to retry or use iPhone keyboard dictation in Text chat.');
           return;
         }
       }
@@ -329,7 +329,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     catch (err) {
       active = false; engineRunning = false; recognition = null;
       restartFailures = Math.min(restartFailures + 1, 5);
-      report('Microphone could not start. Check Safari microphone access, then tap the orb again.');
+      report('Microphone could not start. Retry by tapping the orb; if it still fails use iPhone keyboard dictation.');
       // A denied synchronous start should be retried by a tap, not an endless loop.
       errorStop = true;
     }
