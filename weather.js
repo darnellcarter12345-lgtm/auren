@@ -1,33 +1,254 @@
-// City-level weather only: no GPS access and no exact user location.
-// Data: Open-Meteo public geocoding + forecast APIs.
-const weatherCache=new Map();
-const CONDITION={0:'clear skies',1:'mostly clear skies',2:'partly cloudy skies',3:'cloudy skies',45:'fog',48:'fog',51:'light drizzle',53:'drizzle',55:'drizzle',61:'light rain',63:'rain',65:'heavy rain',71:'light snow',73:'snow',75:'heavy snow',80:'scattered showers',81:'showers',82:'heavy showers',95:'thunderstorms',96:'thunderstorms',99:'thunderstorms'};
-async function json(url){const c=new AbortController();const timeout=setTimeout(()=>c.abort(),6500);try{const r=await fetch(url,{signal:c.signal});if(!r.ok)throw Error('Weather service unavailable');return await r.json();}finally{clearTimeout(timeout);}}
-export async function getWeatherBriefing(city='Dallas',scope='day'){
-  city=String(city||'Dallas').trim().slice(0,80);
-  const key=city.toLowerCase()+':'+scope;
-  const hit=weatherCache.get(key);if(hit && Date.now()-hit.at<10*60*1000)return hit.result;
-  try{
-    const geo=await json('https://geocoding-api.open-meteo.com/v1/search?name='+encodeURIComponent(city)+'&count=1&language=en&format=json');
-    const place=geo.results?.[0];if(!place)throw Error('City not found');
-    const u=new URL('https://api.open-meteo.com/v1/forecast');
-    u.searchParams.set('latitude',place.latitude);u.searchParams.set('longitude',place.longitude);
-    u.searchParams.set('timezone','auto');u.searchParams.set('temperature_unit','fahrenheit');
-    u.searchParams.set('daily','weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max');
-    u.searchParams.set('forecast_days',scope==='week'?'7':'2');
-    const forecast=await json(u.toString());const d=forecast.daily;
-    if(!d?.time?.length)throw Error('No forecast');
-    const cityName=place.name;
-    const condition=CONDITION[d.weather_code[0]]||'mixed conditions';
-    const hi=Math.round(d.temperature_2m_max[0]);const lo=Math.round(d.temperature_2m_min[0]);
-    const chance=Math.round(d.precipitation_probability_max?.[0]||0);
-    let spoken=`In ${cityName}, expect ${condition}, with a high of ${hi} degrees and a low of ${lo}.`;
-    if(chance>=40)spoken+=` The chance of precipitation is around ${chance} percent.`;
-    if(scope==='week'){
-      const rainy=d.time.reduce((n,_,i)=>n+((d.precipitation_probability_max?.[i]||0)>=60?1:0),0);
-      if(rainy)spoken+=` Rain is more likely on ${rainy} day${rainy===1?'':'s'} this week.`;
+]
+/*
+ * AUREN Weather Service
+ * Live weather from Open-Meteo
+ * No GPS required — uses city names
+ */
+
+const weatherCache = new Map();
+
+const CONDITIONS = {
+  0: 'clear skies',
+  1: 'mostly clear skies',
+  2: 'partly cloudy skies',
+  3: 'cloudy skies',
+  45: 'fog',
+  48: 'fog',
+  51: 'light drizzle',
+  53: 'drizzle',
+  55: 'drizzle',
+  56: 'freezing drizzle',
+  57: 'freezing drizzle',
+  61: 'light rain',
+  63: 'rain',
+  65: 'heavy rain',
+  66: 'freezing rain',
+  67: 'freezing rain',
+  71: 'light snow',
+  73: 'snow',
+  75: 'heavy snow',
+  77: 'snow grains',
+  80: 'scattered showers',
+  81: 'showers',
+  82: 'heavy showers',
+  85: 'snow showers',
+  86: 'heavy snow showers',
+  95: 'thunderstorms',
+  96: 'thunderstorms',
+  99: 'thunderstorms'
+};
+
+async function readJSON(url) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+
+  try {
+    const response = await fetch(url, {
+      signal: controller.signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`Weather service returned ${response.status}`);
     }
-    const result={success:true,spoken,display:`${cityName} · ${condition} · ${hi}°F`};
-    weatherCache.set(key,{result,at:Date.now()});return result;
-  }catch(err){return {success:false,spoken:'',display:'Weather unavailable'};}
+
+    return await response.json();
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function niceNumber(value) {
+  if (value === null || value === undefined || value === '') {
+    return null;
+  }
+
+  const number = Number(value);
+
+  return Number.isFinite(number)
+    ? Math.round(number)
+    : null;
+}
+
+function shortDate(date) {
+  const d = new Date(`${date}T12:00:00Z`);
+
+  return d.toLocaleDateString('en-US', {
+    weekday: 'long',
+    timeZone: 'UTC'
+  });
+}
+
+export async function getWeatherBriefing(
+  city = 'Dallas',
+  scope = 'day'
+) {
+  const requestedCity =
+    String(city || 'Dallas').trim().slice(0, 80) || 'Dallas';
+
+  const mode = ['day', 'tomorrow', 'week'].includes(scope)
+    ? scope
+    : 'day';
+
+  const cacheKey = `${requestedCity.toLowerCase()}:${mode}`;
+
+  const cached = weatherCache.get(cacheKey);
+
+  if (
+    cached &&
+    Date.now() - cached.at < 10 * 60 * 1000
+  ) {
+    return cached.result;
+  }
+
+  try {
+    // Find the city
+    const geoUrl = new URL(
+      'https://geocoding-api.open-meteo.com/v1/search'
+    );
+
+    geoUrl.searchParams.set('name', requestedCity);
+    geoUrl.searchParams.set('count', '1');
+    geoUrl.searchParams.set('language', 'en');
+    geoUrl.searchParams.set('format', 'json');
+
+    const geo = await readJSON(geoUrl.toString());
+    const place = geo.results?.[0];
+
+    if (!place) {
+      throw new Error('City not found');
+    }
+
+    // Retrieve forecast
+    const url = new URL(
+      'https://api.open-meteo.com/v1/forecast'
+    );
+
+    url.searchParams.set(
+      'latitude',
+      String(place.latitude)
+    );
+
+    url.searchParams.set(
+      'longitude',
+      String(place.longitude)
+    );
+
+    url.searchParams.set('timezone', 'auto');
+    url.searchParams.set('temperature_unit', 'fahrenheit');
+
+    url.searchParams.set(
+      'daily',
+      'weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max'
+    );
+
+    url.searchParams.set(
+      'forecast_days',
+      mode === 'week' ? '7' : '2'
+    );
+
+    const forecast = await readJSON(url.toString());
+    const daily = forecast.daily;
+
+    if (!daily?.time?.length) {
+      throw new Error('Forecast missing');
+    }
+
+    const index = mode === 'tomorrow' ? 1 : 0;
+
+    if (!daily.time[index]) {
+      throw new Error('Requested forecast unavailable');
+    }
+
+    const condition =
+      CONDITIONS[daily.weather_code?.[index]] ||
+      'mixed conditions';
+
+    const high = niceNumber(
+      daily.temperature_2m_max?.[index]
+    );
+
+    const low = niceNumber(
+      daily.temperature_2m_min?.[index]
+    );
+
+    const rainChance = niceNumber(
+      daily.precipitation_probability_max?.[index]
+    );
+
+    if (high === null || low === null) {
+      throw new Error('Temperature unavailable');
+    }
+
+    const placeName = place.name;
+    const label = mode === 'tomorrow' ? 'tomorrow' : 'today';
+
+    let spoken =
+      `In ${placeName} ${label}, expect ${condition}, ` +
+      `with a high of ${high} degrees and a low of ${low}.`;
+
+    if (rainChance !== null) {
+      spoken +=
+        ` The chance of precipitation is ${rainChance} percent.`;
+    }
+
+    // Extra information for weekly forecasts
+    if (mode === 'week') {
+      const rainyDays = daily.time
+        .map((date, i) => ({
+          date,
+          chance: niceNumber(
+            daily.precipitation_probability_max?.[i]
+          )
+        }))
+        .filter(
+          item =>
+            item.chance !== null &&
+            item.chance >= 60
+        );
+
+      if (rainyDays.length) {
+        const days = rainyDays
+          .slice(0, 3)
+          .map(item => shortDate(item.date))
+          .join(', ');
+
+        spoken +=
+          ` Rain is more likely on ${days}` +
+          `${rainyDays.length > 3 ? ' and other days' : ''}` +
+          ` this week.`;
+      } else {
+        spoken +=
+          ' No days currently show a high chance of precipitation in the seven-day forecast.';
+      }
+    }
+
+    const result = {
+      success: true,
+      spoken,
+      display:
+        `${placeName} · ${condition} · ${high}°F`,
+      date: daily.time[index],
+      rainChance,
+      city: placeName
+    };
+
+    weatherCache.set(cacheKey, {
+      result,
+      at: Date.now()
+    });
+
+    return result;
+  } catch (error) {
+    console.warn(
+      'AUREN weather unavailable:',
+      error
+    );
+
+    return {
+      success: false,
+      spoken: '',
+      display: 'Weather unavailable',
+      error: error.message
+    };
+  }
 }
