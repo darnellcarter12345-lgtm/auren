@@ -93,6 +93,9 @@ let lastNonSettingsScreen = 'chat';
 async function activateScreen(screen) {
   const target = document.getElementById(screen);
   if (!target || !target.classList.contains('tab')) return;
+  // Screen navigation is always silent. Cancel any reply still playing from
+  // the previous screen; never turn on TTS or the microphone from a tab click.
+  if (voice.speaking) voice.stopSpeaking();
   if (screen !== 'settings') lastNonSettingsScreen = screen;
   document.querySelectorAll('nav button, .tab').forEach(node => node.classList.remove('active'));
   target.classList.add('active');

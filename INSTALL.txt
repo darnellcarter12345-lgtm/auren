@@ -1,4 +1,3 @@
-AUREN v2.6.3 Natural Planning & Local Clock
-Replace only app.js in your GitHub Pages repository. Commit and refresh. Keep other files unchanged.
-Try: Set a bike ride for tomorrow at 8 AM. Then answer yes.
-Time zone uses the browser device setting, not a weather-city guess.
+AUREN v2.6.4 — Silent Navigation
+Replace only app.js in your GitHub repository. Keep the other files unchanged.
+This update is based on v2.6.3 and stops audio when navigating tabs. Voice replies to questions, planner confirmations, and the Hear your briefing action remain enabled.
