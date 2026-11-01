@@ -1,4 +1,4 @@
-// AUREN v2.9.9 — relative reminders and respectful uncertainty handling
+// AUREN v2.10.0 — named-day weather, optional clothing suggestions, varied respectful replies
 // AUREN — js/app.js
 // Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
 // v0.2: status banner for storage problems, session panel, privacy controls, safe backup import.
@@ -555,14 +555,32 @@ function saveRelativeReminder(subject, at) {
  refreshUpNext();
  return `Reminder set for ${new Date(at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}.`;
 }
+// Small, local phrase bank: rotates wording without saving private conversations.
+// Distinct contexts get distinct sequences; the same phrase is not repeated consecutively.
+const phraseIndex = new Map();
+function varyButler(context, options) {
+ const index = phraseIndex.get(context) || 0;
+ phraseIndex.set(context, index + 1);
+ return options[index % options.length];
+}
 function respectfulUncertainty(text) {
  const t=String(text||'').trim().toLowerCase().replace(/[.!?]+$/,'');
  if (!/^(?:idk|i don['’]t know|not sure|i'm not sure|i am not sure|no idea|i dunno)$/.test(t)) return null;
  if(pendingReminder || pendingPlan || planClarification || planningOffer) {
    pendingReminder=null; pendingPlan=null; planClarification=null; planningOffer=null;
-   return 'That is quite all right. We can leave it undecided for now.';
+   return varyButler('uncertainPending', [
+   'Certainly. We can leave that undecided.',
+   'No problem. I will leave it as it is.',
+   'Very well. We can return to it whenever you wish.',
+   'Understood. Nothing needs deciding just now.'
+ ]);
  }
- return 'Of course. There is no need to decide right now.';
+ return varyButler('uncertainGeneral', [
+   'Understood. We can leave it there.',
+   'That is fine. There is no need to decide just yet.',
+   'Very well. Take your time.',
+   'Of course. We need not settle that right now.'
+ ]);
 }
 
 function reminderSpeech(t){
@@ -1229,6 +1247,8 @@ function smartButlerReply(utterance) {
 let recentWeatherScope = null;
 let recentWeatherAt = 0;
 let recentWeatherHour = null;
+let pendingWeatherOffer = null;
+let lastWeatherDetails = null;
 async function send(text) {
   if(briefingPlayer.active) briefingPlayer.pause();
   const briefingCommand=briefingPlayer.ask(text);
@@ -1245,6 +1265,22 @@ async function send(text) {
     // Uncertainty is not a scheduling commitment or a reason to pressure the user.
     const unsure = respectfulUncertainty(text);
     if(unsure){await addMessage('auren',unsure);return;}
+    // Offer assistance once after a forecast. Only give clothing suggestions if requested.
+    if (pendingWeatherOffer) {
+      const response = text.trim().toLowerCase().replace(/[.!?]+$/, '');
+      if (/^(?:yes|yeah|yep|sure|please|go ahead|sounds good|what should i wear|help me dress)$/.test(response)) {
+        const data = pendingWeatherOffer; pendingWeatherOffer = null;
+        const clothing = data.high <= 50 ? 'a warm coat or layers' : data.high <= 68 ? 'a light jacket or sweater' : 'comfortable, breathable clothing';
+        const rain = data.rainChance >= 40 ? ', and a rain jacket or umbrella' : '';
+        await addMessage('auren', `For ${data.label}, I would suggest ${clothing}${rain}.`);
+        return;
+      }
+      pendingWeatherOffer = null; // Another request means do not push suggestions.
+      if (/^(?:no|no thanks|not now|nah|nope)$/.test(response)) {
+        await addMessage('auren', varyButler('offerNo', ['Very well.', 'Of course.', 'Understood.']));
+        return;
+      }
+    }
     // Explicit preferences and schedule insights are device-local, and never consume AI credits.
     // Do not intercept replies to a pending confirmation or reminder.
     if (!pendingPlan && !pendingReminder && !planClarification) {
@@ -1260,24 +1296,39 @@ async function send(text) {
     const otherAction = /^(?:please\s+)?(?:remind|schedule|plan|add|move|reschedule|change|delete|remove|remember|forget|set\s+(?:a\s+)?(?:reminder|appointment|event|bike ride)|set up|create)\b/i.test(cleaned);
     if ((explicitWeather || contextualWeather) && !otherAction) {
       const city = localStorage.getItem('auren_weather_city') || 'Dallas';
-      const scope = /\btomorrow\b/i.test(cleaned) ? 'tomorrow'
+      const weekday = cleaned.match(/\b(?:(?:this|next|on)\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i);
+      const scope = weekday ? weekday[1].toLowerCase()
+        : /\b(?:day after tomorrow)\b/i.test(cleaned) ? 'day after tomorrow'
+        : /\btomorrow\b/i.test(cleaned) ? 'tomorrow'
         : /\b(week|weekly|next\s+7\s+days|seven\s+days)\b/i.test(cleaned) ? 'week'
+        : /\b(today|tonight)\b/i.test(cleaned) ? 'day'
         : (weatherFresh ? recentWeatherScope : 'day');
       // A short question such as 'what about the wind?' inherits the last forecast day.
       // 'What about 4 PM?' inherits the topic, but not an imaginary AM/PM value.
       const hourText = cleaned.match(/\b(?:at|around|about|by)\s+(\d{1,2})(?::\d{2})?\s*(?:am|pm)\b/i);
       const currentHour = hourText ? hourText[0] : null;
       const inherited = !currentHour && recentWeatherHour && contextualWeather
-        && !/\b(today|tomorrow|week|morning|afternoon|evening|tonight)\b/i.test(cleaned)
+        && !/\b(today|tomorrow|week|morning|afternoon|evening|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(cleaned)
         ? ` ${recentWeatherHour}` : '';
       recentWeatherScope = scope;
       recentWeatherAt = Date.now();
       if (currentHour) recentWeatherHour = currentHour;
-      else if (/\b(today|tomorrow|week|morning|afternoon|evening|tonight)\b/i.test(cleaned)) recentWeatherHour = null;
+      else if (/\b(today|tomorrow|week|morning|afternoon|evening|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(cleaned)) recentWeatherHour = null;
       const weather = await getWeatherBriefing(city, scope, cleaned + inherited);
-      await addMessage('auren', weather.success
-        ? weather.spoken
-        : `I couldn't retrieve the forecast for ${city} just now. Please try again shortly.`);
+      if (weather.success) {
+        lastWeatherDetails = weather;
+        // Ask once, rather than supplying unsolicited clothing instructions.
+        pendingWeatherOffer = Number.isFinite(weather.high)
+          ? { high: weather.high, rainChance: weather.rainChance ?? 0, label: weather.label }
+          : null;
+        const offer = pendingWeatherOffer
+          ? ' Would you like a suggestion for what to wear?'
+          : '';
+        await addMessage('auren', weather.spoken + offer);
+      } else {
+        pendingWeatherOffer = null;
+        await addMessage('auren', weather.spoken || `I couldn't retrieve the forecast for ${city} just now.`);
+      }
       return;
     }
     // Verified save/delete/project operations remain local. Other conversation goes to AI.
