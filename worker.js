@@ -133,14 +133,13 @@ export default {
     if (request.headers.get('Origin') !== SITE) return new Response('Forbidden', { status: 403 });
     if (request.method === 'OPTIONS') return new Response(null, { headers: CORS });
     if (request.method !== 'POST') return json({ error: 'POST required' }, 405);
-    if (Number(request.headers.get('Content-Length') || 0) > 18000) return json({ error: 'Request too large' }, 413);
+    const isTranscription = new URL(request.url).pathname === '/transcribe';
+    const size = Number(request.headers.get('Content-Length') || 0);
+    if (size > (isTranscription ? 2200000 : 18000)) return json({ error: 'Request too large' }, 413);
+
     if (!env.AI || !env.BUDGET) return json({ error: 'AI or BUDGET binding missing. Public requests are disabled until configured.' }, 503);
     const ip = request.headers.get('CF-Connecting-IP');
     if (!ip) return json({ error: 'Cannot verify request origin.' }, 403);
-    let data;
-    try { data = await request.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
-    const message = typeof data?.message === 'string' ? data.message.trim().slice(0, 1200) : '';
-    if (!message) return json({ error: 'Message required' }, 400);
     // All expensive operations happen after budget approval. Fail CLOSED if the limiter is unavailable.
     let budget;
     try {
@@ -159,6 +158,30 @@ export default {
           'AUREN has reached its shared free AI request budget for today.'
     }, 429, { 'Retry-After': String(budget.retry || 60) });
 
+    // Rate-limit every AI operation, including voice transcription, before processing audio.
+    if (isTranscription) {
+      try {
+        const form = await request.formData();
+        const file = form.get('audio');
+        if (!file || typeof file.arrayBuffer !== 'function') return json({ error: 'Missing audio recording' }, 400);
+        if (file.size < 100 || file.size > 2097152) return json({ error: 'Recording must be under 2 MB' }, 413);
+        const media = String(file.type || '');
+        if (!/^audio\/(mp4|x-m4a|mpeg|webm|ogg|wav|x-wav)/i.test(media)) return json({ error: 'Unsupported recording format: ' + media }, 415);
+        const array = new Uint8Array(await file.arrayBuffer());
+        // Convert in chunks to avoid stack/argument limits for larger audio.
+        let binary = '';
+        for (let i = 0; i < array.length; i += 8192) binary += String.fromCharCode(...array.subarray(i, i + 8192));
+        const result = await env.AI.run('@cf/openai/whisper-large-v3-turbo', {audio: btoa(binary), task: 'transcribe'});
+        return json({ text: String(result?.text || '').slice(0, 4000) });
+      } catch (error) {
+        console.error('AUREN transcription error:', String(error));
+        return json({ error: 'Voice transcription failed. Check Cloudflare Workers AI model availability.' }, 502);
+      }
+    }
+    let data;
+    try { data = await request.json(); } catch { return json({ error: 'Invalid JSON' }, 400); }
+    const message = typeof data?.message === 'string' ? data.message.trim().slice(0, 1200) : '';
+    if (!message) return json({ error: 'Message required' }, 400);
     const recent = Array.isArray(data.recent) ? data.recent.slice(-8)
       .filter(x => x && ['user', 'assistant'].includes(x.role) && typeof x.content === 'string')
       .map(x => ({ role: x.role, content: x.content.slice(0, 500) })) : [];
