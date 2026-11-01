@@ -18,6 +18,8 @@ import { getWeatherBriefing } from './weather.js';
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
 const butler = new Butler();
+// Initialized before voice callbacks; Smart Places replaces the fallback after setup.
+let aurenPlaces = { handle: async () => false, clear: () => {} };
 const settings = loadSettings();
 const HISTORY_LIMIT = 200;
 // Conversation continuity lasts across refreshes on this browser.
@@ -1615,23 +1617,7 @@ function locationOn(){
 }
 locationButton.addEventListener('click',()=>{if(locationApproved||locationPending)locationOff();else locationOn();});
 locationPanel.append(locationTitle,locationDesc,locationButton,locationStatus);$('settings').append(locationPanel);
-// AUREN v2.13.1: persistent, visible permission controls for desktop Safari.
-// Never rely on chat-log buttons: Home and voice views can hide the chat log.
-const locationQuickPanel=document.createElement('div');
-locationQuickPanel.id='aurenLocationQuickPanel';
-locationQuickPanel.setAttribute('aria-label','Location controls');
-locationQuickPanel.style.cssText='box-sizing:border-box;width:min(92%,680px);margin:10px auto;padding:12px 15px;background:rgba(28,30,34,.95);border:1px solid rgba(199,168,104,.45);border-radius:14px;color:#e6d5af;text-align:center;';
-const locationQuickStatus=document.createElement('p');
-locationQuickStatus.style.cssText='margin:0 0 9px;font-size:13px;';
-const locationQuickEnable=document.createElement('button');
-locationQuickEnable.type='button';locationQuickEnable.textContent='Enable location';
-locationQuickEnable.onclick=()=>locationOn();
-const locationQuickDisable=document.createElement('button');
-locationQuickDisable.type='button';locationQuickDisable.textContent='Turn location OFF';
-locationQuickDisable.onclick=()=>locationOff();
-locationQuickPanel.append(locationQuickStatus,locationQuickEnable,locationQuickDisable);
-// Position under the orb, always visible on the assistant home screen.
-$('settings').append(locationQuickPanel); locationQuickPanel.hidden=true; locationQuickPanel.style.display='none';
+// Location toggle belongs exclusively in Settings. No permanent Home status card.
 const locationPermissionBar=document.createElement('div');
 locationPermissionBar.id='aurenLocationPermissionBar';
 locationPermissionBar.hidden=true;
@@ -1653,7 +1639,7 @@ const nearbyResultPanel=document.createElement('section');nearbyResultPanel.id='
 nearbyResultPanel.style.cssText='box-sizing:border-box;width:min(92%,680px);margin:12px auto;padding:15px;background:#22252b;color:#f3e6c5;border:1px solid #c7a868;border-radius:14px;text-align:center;';
 const nearbyResultNote=document.createElement('p');nearbyResultNote.style.cssText='margin:0 0 12px;font-size:13px;line-height:1.5;';
 const nearbyResultLink=document.createElement('a');nearbyResultLink.target='_blank';nearbyResultLink.rel='noopener noreferrer';nearbyResultLink.style.cssText='display:inline-block;padding:12px 16px;border-radius:10px;background:#d9ae55;color:#151515;font-weight:700;text-decoration:none;';
-nearbyResultPanel.append(nearbyResultNote,nearbyResultLink);locationQuickPanel.insertAdjacentElement('afterend',nearbyResultPanel);
+nearbyResultPanel.append(nearbyResultNote,nearbyResultLink);$('log').parentElement.append(nearbyResultPanel);
 locationPaint();
 function locationOffCommand(t){return /\b(?:turn|switch|set|shut|disable|stop)\s+(?:my\s+|the\s+)?location\s*(?:off)?\b/i.test(t)&&/\b(?:off|disable|stop|shut)\b/i.test(t)||/\b(?:stop using|forget|clear|delete)\s+(?:my\s+|the\s+)?location\b/i.test(t);}
 function locationOnCommand(t){return /\b(?:turn|switch|set|enable|activate)\s+(?:my\s+|the\s+)?location\s*(?:on)?\b/i.test(t)&&/\b(?:on|enable|activate)\b/i.test(t)||/\b(?:use my location|share my location for this)\b/i.test(t);}
@@ -1678,7 +1664,7 @@ function mapsSuggestionLink(query) {
   return 'https://www.google.com/maps/search/?'+params;
 }
 async function send(text) {
-  if (typeof aurenPlaces !== 'undefined' && await aurenPlaces.handle(text)) return;
+  if (await aurenPlaces.handle(text)) return;
   // Location commands take priority over AI. Only a direct button tap triggers Safari's GPS prompt.
   const clean=String(text||'').trim();
   const localPersonal=personalCommand(clean);
@@ -2142,7 +2128,7 @@ async function renderStorageInfo() {
 })();
 
 // AUREN v2.15 SMART PLACES: opt-in, any-category place search, safe Maps return flow.
-const aurenPlaces = (() => {
+aurenPlaces = (() => {
   let phase='idle', pending='', coords=null, results=[], requestId=0, lastMapClick=0, mapPending=false, returned=false;
   const yes=/^(?:yes|yep|yeah|sure|okay|ok|go ahead|please do|use my location|enable it)[.!? ]*$/i;
   const no=/^(?:no|nope|no thanks|not now|cancel)[.!? ]*$/i;
