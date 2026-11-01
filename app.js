@@ -730,6 +730,8 @@ async function memoryDisputeReply(text) {
   return `I have this saved in memory: “${best.memory.text.slice(0, 240)}”. That only tells me what is stored, not whether you actually said it or whether it is still accurate. Would you like me to correct or delete that memory?`;
 }
 
+let recentWeatherScope = null;
+let recentWeatherAt = 0;
 async function send(text) {
   if (voice.available().speak && !voice.enabled) { voice.setEnabled(true); $('speakReplies').checked = true; }
   await addMessage('user', text, { ephemeral: isSessionNote(text) });
@@ -737,7 +739,8 @@ async function send(text) {
     // Weather questions use the live weather service rather than the general AI.
     // Do not steal scheduling, reminder, or memory commands that mention weather.
     const weatherQuestion =
-      /\b(weather|forecast|temperature|raining|rain|snow|snowing|degrees|windy|humidity)\b/i.test(text) &&
+      (/\b(weather|forecast|temperature|raining|rain|snow|snowing|degrees|windy|wind|humidity|humid|precipitation)\b/i.test(text) ||
+       (recentWeatherScope && Date.now()-recentWeatherAt<90000 && /^(?:what about|and|how about|tell me more|more details|go into detail)/i.test(text.trim()))) &&
       !/^(?:please\s+)?(?:remind|schedule|plan|add|move|reschedule|change|delete|remove|remember|forget|set\s+(?:a\s+)?reminder)\b/i.test(text.trim());
     if (weatherQuestion) {
       const city = localStorage.getItem('auren_weather_city') || 'Dallas';
@@ -745,8 +748,9 @@ async function send(text) {
         ? 'tomorrow'
         : /\b(week|weekly|next\s+7\s+days|seven\s+days)\b/i.test(text)
           ? 'week'
-          : 'day';
-      const weather = await getWeatherBriefing(city, scope);
+          : (recentWeatherScope && Date.now()-recentWeatherAt<90000 ? recentWeatherScope : 'day');
+      recentWeatherScope = scope; recentWeatherAt = Date.now();
+      const weather = await getWeatherBriefing(city, scope, text);
       await addMessage('auren', weather.success
         ? weather.spoken
         : `I'm unable to retrieve the forecast for ${city} right now. Please try again shortly.`);

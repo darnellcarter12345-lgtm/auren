@@ -10,6 +10,27 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   const pageVisible = () => document.visibilityState === 'visible';
   let restartFailures = 0;
   let lastStart = 0;
+  let lastRecognizerActivity = 0;
+  let recognizerWatchdog = null;
+  let stalledRestarts = 0;
+  function clearWatchdog() { clearInterval(recognizerWatchdog); recognizerWatchdog = null; }
+  function armWatchdog() {
+    clearWatchdog();
+    recognizerWatchdog = setInterval(() => {
+      if (!active || !recognition || !permittedStart || !pageVisible() || speaking || responding || phraseParts.length) return;
+      if (Date.now() - lastRecognizerActivity < 16000) return;
+      // Some WebKit recognizers stall without firing onend. Restart at most a
+      // few times, then ask for a fresh tap rather than looping indefinitely.
+      if (++stalledRestarts > 3) {
+        clearWatchdog(); errorStop = true;
+        report('Safari stopped speech recognition. Tap the orb to reactivate it.');
+        return;
+      }
+      ++token; abort(); clearWatchdog();
+      report('Reconnecting microphone…');
+      listenSoon(mobileWebKit ? 750 : 300);
+    }, 3000);
+  }
   const synth = window.speechSynthesis || null;
   let recognition = null, active = false, engineRunning = false, wakeMode = false, conversation = false;
   let speaking = false, responding = false, enabled = false, permittedStart = false;
@@ -43,7 +64,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   let interruptionCandidate = '', interruptionSamples = 0;
   let preferredVoiceURI = ''; let voiceRate = 0.96, voicePitch = 0.95; 
   // Return to wake-only mode shortly after the last interaction.
-  const SILENCE_MS = 8500;
+  const SILENCE_MS = 22000; // Allow natural follow-up questions before returning to wake-only mode.
   // Browser recognition frequently transcribes the invented name AUREN as a
   // familiar name ("Orin", "Oren", "Aaron", "Lauren"). Match short wake
   // phrases, not arbitrary mentions in the middle of other sentences.
@@ -84,8 +105,8 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   }
   const report = text => onStatus?.(text);
   const available = () => ({ listen: !!Recognition, speak: !!(synth && window.SpeechSynthesisUtterance) });
-  const cancelTimers = () => { clearTimeout(restartTimer); clearTimeout(idleTimer); clearPhrase(); };
-  const abort = () => { const old = recognition; recognition = null; active = false; engineRunning = false; if (old) try { old.abort(); } catch {} };
+  const cancelTimers = () => { clearTimeout(restartTimer); clearTimeout(idleTimer); clearPhrase(); clearWatchdog(); };
+  const abort = () => { clearWatchdog(); const old = recognition; recognition = null; active = false; engineRunning = false; if (old) try { old.abort(); } catch {} };
   function looksLikeUser(text) {
     const normalized = String(text || '').toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
     const output = spokenText.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
@@ -211,15 +232,17 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     if (!pageVisible()) return;
     const id = ++token;
     lastStart = Date.now();
+    lastRecognizerActivity = lastStart;
     const r = new Recognition(); recognition = r;
     r.lang = 'en-GB';
     // iOS speech services tend to work more consistently with individual utterances.
     r.continuous = !mobileWebKit;
     r.interimResults = true;
     r.maxAlternatives = mobileWebKit ? 3 : 5;
-    r.onstart = () => { if (id === token) { engineRunning = true; restartFailures = 0; report(speaking ? 'Listening for an interruption…' : (conversation ? 'Listening…' : 'Say “Hey Auren” to speak')); } };
+    r.onstart = () => { if (id === token) { engineRunning = true; lastRecognizerActivity = Date.now(); stalledRestarts = 0; armWatchdog(); restartFailures = 0; report(speaking ? 'Listening for an interruption…' : (conversation ? 'Listening…' : 'Say “Hey Auren” to speak')); } };
     r.onresult = event => {
       if (id !== token) return;
+      lastRecognizerActivity = Date.now(); stalledRestarts = 0;
       const finalResults = [];
       const interim = [];
       for (let i = event.resultIndex; i < event.results.length; i++) {
@@ -252,6 +275,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     };
     r.onerror = e => {
       if (id !== token) return;
+      clearWatchdog();
       if (['not-allowed','service-not-allowed','audio-capture'].includes(e.error)) {
         errorStop = true; wakeMode = false; conversation = false; desiredMode = 'off'; permittedStart = false;
         report('Microphone blocked (' + e.error + '). In iPhone Safari: page menu → Website Settings → Microphone → Allow. Reload and tap the orb.');
@@ -268,6 +292,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     };
     r.onend = () => {
       if (id !== token) return;
+      clearWatchdog();
       recognition = null; active = false; engineRunning = false;
       if (!responding && !errorStop) {
         // Keep the final speech fragment pending while recognition restarts.
@@ -276,7 +301,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
         listenSoon(delay);
       }
     };
-    try { r.start(); active = true; report(conversation ? 'Listening…' : 'Say “Hey Auren” to speak'); }
+    try { r.start(); active = true; armWatchdog(); report(conversation ? 'Listening…' : 'Say “Hey Auren” to speak'); }
     catch (err) {
       active = false; engineRunning = false; recognition = null;
       restartFailures = Math.min(restartFailures + 1, 5);
@@ -355,7 +380,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   function startListening() {
     if (!Recognition) { report('This browser cannot transcribe speech directly. On iPhone, use the keyboard microphone in Text chat.'); return false; }
     if (conversation && !wakeMode) { stopListening(); return false; }
-    clearPhrase(); errorStop = false; permittedStart = true; wakeMode = true; conversation = true; desiredMode = 'conversation';
+    clearPhrase(); errorStop = false; stalledRestarts = 0; permittedStart = true; wakeMode = true; conversation = true; desiredMode = 'conversation';
     clearTimeout(idleTimer); if (speaking) stopSpeaking();
     scheduleIdle(); startEngine(); // Must run synchronously in the user's click on Safari.
     return true;
@@ -369,18 +394,24 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     if (!value) { stopListening(); return false; }
     if (!Recognition) { report('Wake phrase unavailable here. On iPhone, use the keyboard microphone in Text chat.'); return false; }
     // This must be called by a user interaction to receive microphone permission.
-    clearPhrase(); errorStop = false; permittedStart = true; wakeMode = true; conversation = false; desiredMode = 'wake';
+    clearPhrase(); errorStop = false; stalledRestarts = 0; permittedStart = true; wakeMode = true; conversation = false; desiredMode = 'wake';
     cancelTimers(); if (speaking) stopSpeaking();
     startEngine(); // Safari requires this within the user's activation.
     if (active) report('Listening for “Hey Auren” while this page is active.');
     return true;
   }
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) { clearPhrase(); clearTimeout(restartTimer); ++token; abort(); report('Voice paused while AUREN is in the background.'); }
+    if (document.hidden) { clearPhrase(); clearTimeout(restartTimer); clearWatchdog(); ++token; abort(); report('Voice paused while AUREN is in the background.'); }
     else if (permittedStart && (wakeMode || conversation) && !errorStop) {
       // Foreground resume is best effort; if Safari requires another gesture, tap orb.
       listenSoon(mobileWebKit ? 650 : 350);
     }
+  });
+  window.addEventListener('pageshow', () => {
+    if (pageVisible() && permittedStart && (wakeMode || conversation) && !errorStop && !active) listenSoon(450);
+  });
+  window.addEventListener('focus', () => {
+    if (pageVisible() && permittedStart && (wakeMode || conversation) && !errorStop && !active) listenSoon(450);
   });
   return {
     available, speak, primeAudio, stopSpeaking, startListening, stopListening, setWakeMode,

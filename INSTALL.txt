@@ -1,5 +1,1 @@
-AUREN v2.5.3 — iPhone voice diagnostics
-Replace ONLY voice.js in your GitHub repository.
-Requires app.js from v2.5.2 and weather.js from v2.5.
-Microphone permissions are controlled by Safari and cannot be forced by the website.
-The AI Worker endpoint is browser-local: configure it separately on iPhone in Settings if missing.
+Back up your previous files. Replace app.js, voice.js, and weather.js in your GitHub repository root, then commit and refresh. Browser restrictions can still require a new tap after inactivity/backgrounding.
