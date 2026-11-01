@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,8 +7,34 @@
   <meta name="theme-color" content="#101318">
   <title>AUREN · Voice Assistant</title>
   <link rel="stylesheet" href="./styles.css?v=2.5">
+<style>
+  body.auren-auth-locked > :not(#aurenAuthGate) { visibility:hidden !important; }
+  .auren-auth-gate { position:fixed;inset:0;z-index:99999;display:grid;place-items:center;min-height:100dvh;background:radial-gradient(circle at 50% 40%,#20202a,#101318 68%);padding:20px;box-sizing:border-box;color:#f2e9da;font-family:Georgia,serif; }
+  .auren-auth-gate[hidden] { display:none !important; }
+  .auren-auth-panel {width:min(100%,360px);text-align:center;}
+  .auren-auth-mark {letter-spacing:.52em;color:#d6b47a;font-size:17px;margin-bottom:32px;}
+  .auren-auth-orb {height:142px;width:142px;border-radius:50%;margin:0 auto 30px;border:1px solid #b99457;background:radial-gradient(circle at 37% 30%,#f5d59b,#9e7948 45%,#241e20 82%);box-shadow:0 0 50px #b9945730;}
+  .auren-auth-panel h2 {font-size:27px;font-weight:400;margin:0 0 12px;}
+  .auren-auth-panel p {font-size:14px;line-height:1.5;color:#a99f90;}
+  .auren-google-btn {width:100%;border:1px solid #ddd;background:#f8f8f8;color:#222;font-size:15px;border-radius:12px;min-height:48px;margin-top:22px;cursor:pointer;font-family:system-ui,sans-serif;font-weight:600;}
+  .auren-google-btn:focus-visible {outline:3px solid #d6b47a;outline-offset:3px;}
+  .auren-google-btn:disabled {opacity:.6;cursor:wait;}
+  #aurenAuthStatus {min-height:2em;}
+</style>
 </head>
-<body>
+<body class="auren-auth-locked">
+  <!-- AUREN account gate: the assistant loads only after sign-in. -->
+  <section id="aurenAuthGate" class="auren-auth-gate" aria-label="Sign in to AUREN">
+    <div class="auren-auth-panel">
+      <div class="auren-auth-mark">A U R E N</div>
+      <div class="auren-auth-orb" aria-hidden="true"></div>
+      <h2>Your personal AI butler.</h2>
+      <p>Sign in to continue.</p>
+      <button id="aurenGoogleSignIn" type="button" class="auren-google-btn">Continue with Google</button>
+      <p id="aurenAuthStatus" role="status" aria-live="polite">Your existing data on this device will be kept.</p>
+    </div>
+  </section>
+
   <div id="statusBar" role="status" aria-live="polite" hidden>
     <span id="statusMsg"></span>
     <button id="statusClose" type="button" aria-label="Dismiss">&times;</button>
@@ -21,7 +48,7 @@
     </div>
     <button type="button" id="panelToggle" class="ghost" aria-expanded="false" aria-controls="settings" aria-label="Open Settings">⚙</button>
   </header>
-  
+
   <noscript><p class="card">AUREN needs JavaScript enabled.</p></noscript>
 
   <div class="hero" aria-label="AUREN voice assistant">
@@ -37,6 +64,7 @@
       <button type="button" data-screen="projects"><span aria-hidden="true">▤</span>Projects</button>
     </div>
   </div>
+
   <nav id="advancedNav" hidden aria-label="Manage AUREN">
     <button data-tab="chat" class="active">Home</button>
     <button data-tab="memory">Memory</button>
@@ -59,12 +87,14 @@
           <button type="submit">Add plan</button></form></details>
       </div>
     </section>
+
     <section id="briefing" class="tab auren-screen" aria-label="Daily briefing">
       <div class="screen-top"><button type="button" class="back-home">← Home</button><span>DAILY BRIEFING</span></div>
       <h2>Good morning.</h2>
       <div class="scope-chooser" role="group" aria-label="Briefing period"><button id="briefDay" type="button" class="scope-active" aria-pressed="true">Today</button><button id="briefWeek" type="button" aria-pressed="false">This week</button></div>
       <button id="playBriefing" type="button" class="briefing-play"><span aria-hidden="true">◉</span><span><strong>Hear your briefing</strong><small id="briefingScopeLabel">Today’s plans</small></span></button>
     </section>
+
     <section id="chat" class="tab active">
       <div id="latestReply" class="latest-reply" role="status" aria-live="polite">Ready when you are.</div>
       <details id="conversationDetails" class="conversation-details"><summary>Text chat & history</summary><div id="log"></div>
@@ -119,6 +149,12 @@
     </section>
 
     <section id="settings" class="tab">
+      <div class="card" id="aurenAccountCard" hidden>
+        <b>Your AUREN account</b>
+        <p class="hint" id="aurenAccountEmail"></p>
+        <button type="button" id="aurenSignOut" class="ghost">Sign out</button>
+        <p class="hint">Cloud syncing is not active yet. Your existing data remains on this device.</p>
+      </div>
       <div class="card">
         <h3>Connect AUREN's AI brain</h3>
         <p class="hint">Paste the address of your free Cloudflare AI Worker. Do not paste API keys here. Natural conversation will work after you deploy and connect the Worker.</p>
@@ -161,6 +197,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=2.5"></script>
+  <script type="module" src="./auth.js?v=2.8.8"></script>
 </body>
 </html>
