@@ -383,7 +383,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       return true;
     } catch (error) { report('iPhone audio is unavailable. Try tapping the orb again.'); return false; }
   }
-  function speak(text) {
+  function speak(text, options = {}) {
     if (!enabled || !available().speak || !text) return;
     try { synth.resume(); } catch {}
     // A fresh answer replaces prior speech; stop timers/recognition only once.
@@ -405,7 +405,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
         onSpoken?.(text.slice(0, end), text);
       }
     };
-    u.onend = () => { if (currentUtterance !== u) return; spokenText = ''; onSpoken?.(text, text); if (currentUtterance === u) currentUtterance = null; speaking = false; report(wakeMode ? 'Listening — ask a follow-up, or say “Hey Auren”' : (conversation ? 'Listening for your next question…' : 'Tap the orb to speak')); scheduleIdle(); if (!responding) listenSoon(160); };
+    u.onend = () => { if (currentUtterance !== u) return; spokenText = ''; onSpoken?.(text, text); if (currentUtterance === u) currentUtterance = null; speaking = false; try { options.onFinished?.(); } catch(e) { console.warn('Briefing continuation failed',e); } report(wakeMode ? 'Listening — ask a follow-up, or say “Hey Auren”' : (conversation ? 'Listening for your next question…' : 'Tap the orb to speak')); if (!speaking) { scheduleIdle(); if (!responding) listenSoon(160); } };
     u.onerror = e => { if (currentUtterance !== u) return; spokenText = ''; currentUtterance = null; speaking = false; report('Spoken reply unavailable (' + (e.error || 'audio error') + '). On iPhone, tap the orb, check volume, and try again.'); if (!responding) listenSoon(420); };
     if (mobileWebKit) setTimeout(() => {
       if (currentUtterance === u && speaking && !synth.speaking) {
