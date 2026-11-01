@@ -1,9 +1,4 @@
-AUREN v2.6.2 — Briefing, planner and silent navigation fix
-
-1. In GitHub, back up the current app.js.
-2. Replace ONLY app.js with this file.
-3. Commit changes and refresh your AUREN page.
-4. Test: opening Your Day/Briefing/Projects stays silent; Hear your briefing speaks without null error; planner add shows confirmation, and you can say or type yes.
-
-Leave voice.js, weather.js, index.html and your Cloudflare Worker unchanged.
-Note: Safari may require another orb tap to restart its microphone; navigation does not force microphone activation.
+AUREN v2.6.3 Natural Planning & Local Clock
+Replace only app.js in your GitHub Pages repository. Commit and refresh. Keep other files unchanged.
+Try: Set a bike ride for tomorrow at 8 AM. Then answer yes.
+Time zone uses the browser device setting, not a weather-city guess.
