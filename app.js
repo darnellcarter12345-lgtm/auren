@@ -1,3 +1,4 @@
+// AUREN v2.16.7 — Smart Places controls in Settings; conversation stays clean.
 // AUREN v2.16.4 — startup reference repair; topic-switch patience, simplified orb status and subtle Central clock
 // AUREN — js/app.js
 // Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
@@ -2146,7 +2147,8 @@ aurenPlaces = (() => {
   const placeIntent=/\b(?:where (?:should|can|could) (?:i|we) (?:go|eat|shop|visit)|(?:find|show|suggest|recommend|look up|search for)\s+(?:me\s+)?(?:some\s+|a\s+|an\s+|the\s+|nearby\s+|closest\s+|good\s+|best\s+)*(?:places?|locations?|spots?|things to do|restaurants?|food|cafes?|coffee shops?|mcdonald'?s|chick.fil.a|starbucks|parks?|gyms?|stores?|shops?|museums?|libraries|theaters?|cinemas?|bowling|hiking|pharmacies|gas stations?|hotels?|barbers?|salons?|car washes?|mechanics?|dealerships?|bookstores?|arcades?|grocery stores?|supermarkets?|walmart|target)|(?:near me|nearby|closest to me|around me|in my area))\b/i;
   const panel=document.createElement('section');panel.id='aurenSmartPlacesV215';panel.className='card';panel.style.cssText='margin:12px auto;width:min(92%,680px);padding:14px;border:1px solid rgba(199,168,104,.38);border-radius:14px;background:#191b20;color:#ebd9b2;display:none';
   const heading=document.createElement('strong'), content=document.createElement('div'), actions=document.createElement('div');actions.style.cssText='display:flex;gap:8px;flex-wrap:wrap;margin-top:12px';panel.append(heading,content,actions);
-  const log=$('log'); (log?.parentElement||$('chat')||document.body).append(panel);
+  // Keep all Smart Places controls in Settings, never on the orb/home dashboard.
+  $('settings').append(panel);
   const action=(label,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=fn;actions.append(b);return b;};
   const show=(title,message)=>{heading.textContent=title;content.replaceChildren();if(message){const p=document.createElement('p');p.textContent=message;content.append(p);}actions.replaceChildren();panel.style.display='block';};
   const hide=()=>{panel.style.display='none';content.replaceChildren();actions.replaceChildren();};
@@ -2168,7 +2170,7 @@ aurenPlaces = (() => {
     for(const r of results){const p=document.createElement('p');p.style.margin='10px 0';const strong=document.createElement('strong');strong.textContent=r.name;const note=document.createElement('span');note.textContent=' · '+r.km.toFixed(1)+' km away'+(r.address?' · '+r.address:'');const b=document.createElement('button');b.type='button';b.textContent='View in Google Maps';b.onclick=()=>openMap(mapLink(r));p.append(strong,note,document.createTextNode(' '),b);content.append(p);}
     action('Search all on Google Maps',()=>{const q=pending+' near '+coords.lat+','+coords.lon;openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(q));});
     action('Repeat places',()=>displayResults(true));action('Finish search',finish);
-    if(announce)void addMessage('auren',results.length?`I found ${results.length} nearby places, including ${results.slice(0,3).map(x=>x.name).join(', ')}. Their distances are approximate. You can view directions in Google Maps or ask for more options.`:'The public place search did not return a match. I can still open Google Maps for you.');
+    if(announce)void addMessage('auren',results.length?`I found ${results.length} nearby places, including ${results.slice(0,3).map(x=>x.name).join(', ')}. Their distances are approximate. You can view directions in Google Maps or ask for more options.`:'The public place search did not return a match. Open Settings and select Search all on Google Maps for more options.');
   }
   function finish(){phase='confirm-done';show('Finish searching?','Are you done with this search? I will clear its temporary coordinates once you confirm.');action('Yes, finish',()=>{clear();void addMessage('auren','Search finished. I cleared the temporary search coordinates.');});action('No, keep searching',()=>displayResults());}
   async function lookup(){
@@ -2183,8 +2185,8 @@ aurenPlaces = (() => {
       const seen=new Set();results=(data.elements||[]).map(e=>{const t=e.tags||{},lat=e.lat??e.center?.lat,lon=e.lon??e.center?.lon;const name=t.name||t.brand||'',address=[t['addr:housenumber'],t['addr:street'],t['addr:city']].filter(Boolean).join(' ');return {name,address,lat,lon,km:Number.isFinite(lat)&&Number.isFinite(lon)?distanceKm(coords.lat,coords.lon,lat,lon):Infinity};}).filter(r=>r.name&&Number.isFinite(r.km)).sort((a,b)=>a.km-b.km).filter(r=>{const key=r.name.toLowerCase()+'-'+Math.round(r.lat*1000)+'-'+Math.round(r.lon*1000);if(seen.has(key))return false;seen.add(key);return true;}).slice(0,6);
       displayResults(true);return;
     }catch(err){if(seq!==requestId)return;}}
-    show('Live lookup unavailable','The free map database is unavailable right now. You can open a search directly in Google Maps.');phase='results';action('Search Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(pending+' near '+coords.lat+','+coords.lon)));action('Finish search',finish);
-    void addMessage('auren','The nearby listing service is unavailable. I can still open Google Maps to search that area.');
+    show('Live lookup unavailable','The free map database is unavailable right now. The Google Maps option is ready below.');phase='results';action('Search Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(pending+' near '+coords.lat+','+coords.lon)));action('Finish search',finish);
+    void addMessage('auren','The free nearby listing service is unavailable. I prepared a Google Maps search in Settings under Nearby Places. You can open it there, or try the lookup again later.');
   }
   function enable(){if(!navigator.geolocation){show('Location unavailable','Your browser does not support location sharing.');return;}const seq=++requestId;phase='locating';show('Allow location','Safari may ask for access. Your location will only be used for this nearby search.');
     navigator.geolocation.getCurrentPosition(pos=>{if(seq!==requestId)return;coords={lat:pos.coords.latitude,lon:pos.coords.longitude};void lookup();},()=>{if(seq!==requestId)return;phase='consent';show('Location not available','Check your Safari location permission, or search manually in Google Maps.');action('Try again',enable);action('Cancel',clear);},{enableHighAccuracy:false,maximumAge:0,timeout:12000});}
@@ -2196,9 +2198,9 @@ aurenPlaces = (() => {
     if((phase==='results'||phase==='confirm-done')&&repeat.test(t)){await addMessage('user',t);displayResults(true);return true;}
     if(phase==='results'&&/\b(?:closest|nearest|first one|second one|third one|which one|how far|list (?:them|those)|what (?:did you find|are the options))\b/i.test(t)){await addMessage('user',t);displayResults(true);return true;}
     if(phase==='results'&&done.test(t)){await addMessage('user',t);finish();await addMessage('auren','Are you done with this search?');return true;}
-    if(phase==='consent'&&yes.test(t)){await addMessage('user',t);show('Ready to search','Tap Allow location & search to share your approximate location with the free place-search service. Safari may request location access.');action('Allow location & search',enable);action('Not now',clear);await addMessage('auren','Ready. Select Allow location & search to begin finding actual places.');return true;}
+    if(phase==='consent'&&yes.test(t)){await addMessage('user',t);show('Ready to search','Tap Allow location & search to share your approximate location with the free place-search service. Safari may request location access.');action('Allow location & search',enable);action('Not now',clear);await addMessage('auren','Ready. Open Settings → Nearby Places and select Allow location & search to begin.');return true;}
     if(phase==='consent'&&no.test(t)){await addMessage('user',t);clear();await addMessage('auren','Of course. I will not use your location.');return true;}
-    if(placeIntent.test(t)||broadPlaceIntent.test(t)){await addMessage('user',t);request(t);await addMessage('auren','I can look up nearby places for you. Would you like me to use your location?');return true;}
+    if(placeIntent.test(t)||broadPlaceIntent.test(t)){await addMessage('user',t);request(t);await addMessage('auren','I can search for places nearby. Open Settings → Nearby Places and select Allow location & search, or tell me no. Location access is optional.');return true;}
     return false;
   }
   function onReturn(){if(!mapPending||returned||Date.now()-lastMapClick<1000||Date.now()-lastMapClick>20*60*1000||document.hidden)return;returned=true;mapPending=false;
