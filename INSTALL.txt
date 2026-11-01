@@ -1,10 +1,5 @@
-AUREN v2.3.2 — iPhone Voice + One Confirmation
-
-Replace ONLY app.js and voice.js in the GitHub repository root.
-Keep index.html, styles.css, and the Cloudflare Worker unchanged.
-
-Fix: When AUREN proposes a conflict-free alternative (e.g. 4 PM) and you say yes, it saves the plan immediately rather than asking you to confirm the same plan again. Regular new plans still ask once before saving.
-
-Voice: Retains v2.3.1 iPhone-compatible voice handling. On iPhone, tap the golden orb and grant microphone access in Safari. Background listening is subject to Safari restrictions.
-
-After committing, refresh AUREN and test on phone and computer.
+AUREN v2.4 - Reminders + Up Next
+Replace index.html, styles.css, app.js, and voice.js in GitHub.
+Other files and Cloudflare Worker stay unchanged.
+Reminders are device-local and only checked while webpage is open; iPhone background/locked screen alerts are not supported.
+Note: v2.3.2 voice.js is included unchanged for compatibility.

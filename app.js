@@ -316,7 +316,7 @@ function planningOpportunity(text){
 }
 let lastDiscussedPlanId=null;
 let reviewPending=false;
-function savePlans(){ localStorage.setItem(PLAN_KEY,JSON.stringify(plans)); }
+function savePlans(){ localStorage.setItem(PLAN_KEY,JSON.stringify(plans)); refreshUpNext(); }
 function formatClock(time){const [h,m]=time.split(':').map(Number);return new Date(2020,0,1,h,m).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});}
 function plansFor(date){return plans.filter(p=>p.date===date).sort((a,b)=>a.time.localeCompare(b.time));}
 const weekdayNames=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
@@ -325,6 +325,88 @@ function shiftedDate(date,days){const d=parseISO(date);d.setDate(d.getDate()+day
 function weekStart(date){const day=parseISO(date).getDay();return shiftedDate(date,-((day+6)%7));}
 function weekItems(date){const start=weekStart(date),end=shiftedDate(start,6);return plans.filter(p=>p.date>=start&&p.date<=end).sort((a,b)=>a.date.localeCompare(b.date)||a.time.localeCompare(b.time));}
 function readableDate(date){return parseISO(date).toLocaleDateString([], {weekday:'long',month:'short',day:'numeric'});}
+// Reminder records are stored locally on this browser; timers run only with the page open.
+const REMINDER_KEY='auren_reminders_v24';
+let reminders=[];
+try {const saved=JSON.parse(localStorage.getItem(REMINDER_KEY)||'[]');if(Array.isArray(saved)) reminders=saved.filter(r=>r&&typeof r.id==='string'&&typeof r.at==='string'&&typeof r.text==='string').slice(0,500);}catch{}
+function saveReminders(){localStorage.setItem(REMINDER_KEY,JSON.stringify(reminders));}
+function eventTimestamp(p){const [y,m,d]=p.date.split('-').map(Number);const [h,min]=p.time.split(':').map(Number);return new Date(y,m-1,d,h,min).getTime();}
+function upcomingItems(){
+ const now=Date.now();const all=[];
+ for(const p of plans){const when=eventTimestamp(p);if(when>=now)all.push({when,text:p.title+' · '+readableDate(p.date)+' at '+formatClock(p.time)});}
+ for(const r of reminders){const when=new Date(r.at).getTime();if(!r.fired&&Number.isFinite(when)&&when>=now)all.push({when,text:'Reminder: '+r.text+' · '+new Date(when).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})});}
+ return all.sort((a,b)=>a.when-b.when).slice(0,6);
+}
+let upNextIndex=0, homeMessageUntil=0;
+function renderUpNext(){
+ const reply=$('latestReply');if(!reply||Date.now()<homeMessageUntil)return;
+ const items=upcomingItems();
+ reply.textContent=items.length?items[upNextIndex%items.length].text:'Nothing coming up. Your day is clear.';
+ reply.setAttribute('aria-label','Upcoming plans and reminders');
+}
+function refreshUpNext(){upNextIndex=0;renderUpNext();}
+function checkReminders(){
+ const now=Date.now();let changed=false;
+ for(const r of reminders){const at=new Date(r.at).getTime();if(r.fired||!Number.isFinite(at)||at>now)continue;
+ r.fired=true;changed=true;
+ // Clearly mark a due reminder even if the user is in another section.
+ showStatus('Reminder: '+r.text,'info');
+ if(document.visibilityState==='visible'){
+   homeMessageUntil=now+20000;
+   $('latestReply').textContent='Reminder: '+r.text;
+   // Only speak when spoken replies were enabled already; never switch on audio unexpectedly.
+   if(voice.enabled&&!voice.speaking)voice.speak('A reminder: '+r.text);
+ }
+ }
+ if(changed){try{saveReminders();}catch(e){showStatus('Reminder could not be recorded: '+e.message,'error');}}
+ renderUpNext();
+}
+setInterval(()=>{checkReminders();upNextIndex++;renderUpNext();},12000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkReminders();});
+let pendingReminder=null;
+function findReminder(t){const words=t.toLowerCase();return reminders.find(r=>!r.fired&&words.includes(r.text.toLowerCase()))||null;}
+function reminderSpeech(t){
+ const text=t.trim();
+ if(pendingReminder){
+  if(/^(?:yes|yeah|yep|sure|correct|confirm|do it|please do|go ahead)\b/i.test(text)){
+   const p=pendingReminder;pendingReminder=null;
+   if(p.kind==='remove'){const existing=reminders.find(r=>r.id===p.id);reminders=reminders.filter(r=>r.id!==p.id);try{saveReminders();}catch(e){if(existing)reminders.push(existing);return 'I could not save that change.';}refreshUpNext();return 'Certainly. That reminder has been removed.';}
+   const item={id:uid(),text:p.text,at:p.at,fired:false};reminders.push(item);try{saveReminders();}catch(e){reminders=reminders.filter(r=>r.id!==item.id);return 'I could not save that reminder.';}refreshUpNext();return 'Certainly. I will remind you '+new Date(item.at).toLocaleString([],{weekday:'long',hour:'numeric',minute:'2-digit'})+'.';
+  }
+  if(/^(?:no|nope|cancel|never mind|not now)\b/i.test(text)){pendingReminder=null;return 'Very well. No reminder has been changed.';}
+  // A new request cancels the old pending draft instead of hijacking it.
+  if(!/^(?:remind|set a reminder|delete reminder|remove reminder|cancel reminder)\b/i.test(text))return null;
+  pendingReminder=null;
+ }
+ if(/^(?:remove|delete|cancel)\s+(?:my\s+|the\s+|a\s+)?reminder\b/i.test(text)){
+  const r=findReminder(text);if(!r)return 'Which reminder would you like me to remove?';
+  pendingReminder={kind:'remove',id:r.id};return 'Shall I remove your reminder for '+r.text+'?';
+ }
+ if(!/^(?:please\s+)?(?:remind me|set (?:a )?reminder)\b/i.test(text))return null;
+ const before=text.match(/\b(\d{1,3})\s*(minutes?|hours?)\s+before\s+(?:my\s+|the\s+)?(.+?)(?:[.!?]|$)/i);
+ if(before){
+  const offset=Number(before[1])*(before[2].toLowerCase().startsWith('hour')?60:1);
+  const description=before[3].trim().toLowerCase();
+  const matches=plans.filter(p=>p.title.toLowerCase().includes(description)||description.includes(p.title.toLowerCase())||(/^(?:appointment|meeting|event|plan)$/.test(description)&&/^(?:appointment|meeting)$/.test(description)));
+  const upcoming=matches.filter(p=>eventTimestamp(p)>Date.now()).sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+  if(upcoming.length!==1)return upcoming.length?'I found more than one matching appointment. Which date do you mean?':'I could not find that upcoming appointment in your planner. Which one did you mean?';
+  const event=upcoming[0],at=new Date(eventTimestamp(event)-offset*60000);
+  if(at.getTime()<=Date.now())return 'That reminder time has already passed. Would you prefer a different time?';
+  pendingReminder={kind:'add',text:event.title,at:at.toISOString()};
+  return 'Shall I remind you about '+event.title+' '+offset+' minutes beforehand?';
+ }
+ const direct=text.match(/\b(?:tomorrow|today|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i);
+ const time=text.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
+ if(!direct||!time)return 'Certainly. Please tell me what to remind you about, with a day and time, such as “remind me tomorrow at 3 PM to call Alex.”';
+ const day=parseDateIntent(text),clock=timeFromText('at '+time[1]+(time[2]?':'+time[2]:'')+' '+time[3]);
+ if(!day||!clock||clock==='ambiguous')return 'Which day and time would you prefer?';
+ const [y,m,d]=day.split('-').map(Number),[h,min]=clock.split(':').map(Number);const when=new Date(y,m-1,d,h,min);
+ if(when.getTime()<=Date.now())return 'That time has already passed. Please choose a future time.';
+ const subject=text.replace(/^(?:please\s+)?(?:remind me|set (?:a )?reminder)\s*/i,'').replace(/\b(?:today|tomorrow|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/gi,'').replace(/\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi,'').replace(/^(?:to|about)\s+/i,'').trim();
+ if(!subject)return 'What would you like me to remind you about?';
+ pendingReminder={kind:'add',text:subject,at:when.toISOString()};
+ return 'Shall I remind you to '+subject+' '+when.toLocaleString([],{weekday:'long',hour:'numeric',minute:'2-digit'})+'?';
+}
 let plannerScope='day', briefingScope='day';
 function setScopeButtons(ids,selected){for(const [scope,id] of Object.entries(ids)){const b=$(id);b.classList.toggle('scope-active',scope===selected);b.setAttribute('aria-pressed',String(scope===selected));}}
 function setPlannerScope(scope){plannerScope=scope;setScopeButtons({day:'viewDay',week:'viewWeek'},scope);$('plannerHeading').textContent=scope==='week'?'Your Week':'Your Day';renderDay();}
@@ -393,7 +475,7 @@ function changeDescription(p){const name=p.title||plans.find(e=>e.id===p.id)?.ti
 let planClarification=null;
 function extractLooseTime(t){const m=String(t).match(/^(?:at\s+|to\s+|make\s+(?:it|that)\s+)?(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?$/i);return m?timeFromText('at '+m[0].replace(/^(?:at|to|make (?:it|that))\s+/i,'')):timeFromText(t);}
 function durationMention(t){return /\b\d+\s*(?:hours?|minutes?)\b/i.test(t);}
-function planSummary(date){const items=plansFor(date); if(!items.length)return 'You have nothing scheduled for this day. Would you like to plan something?';const names=items.slice(0,5).map(p=>`${p.title} at ${formatClock(p.time)}`).join(', ');return `You have ${items.length} ${items.length===1?'plan':'plans'}: ${names}${items.length>5?', and others':''}. Does that sound correct?`;}
+function planSummary(date){const items=plansFor(date); if(!items.length)return 'You have nothing scheduled for this day.';const names=items.slice(0,5).map(p=>`${p.title} at ${formatClock(p.time)}`).join(', ');return `You have ${items.length} ${items.length===1?'plan':'plans'}: ${names}${items.length>5?', and others':''}. Does that sound correct?`;}
 function renderDay(){
  const node=$('dayTimeline');
  node.replaceChildren();
@@ -429,7 +511,7 @@ $('planForm').onsubmit=async e=>{e.preventDefault();pendingPlan={kind:'add',titl
 function prepareSpokenReview(){if(capabilities.speak){voice.setEnabled(true);$('speakReplies').checked=true;} if(capabilities.listen && !voice.awake)voice.startListening();voice.setReviewMode?.(true);reviewPending=true;}
 function beginReview(){prepareSpokenReview();const date=$('planDate').value;addMessage('auren',planSummary(date));}
 // Spoken review remains available through the daily briefing and natural conversation.
-$('playBriefing').onclick=()=>{prepareSpokenReview();const date=localDate();addMessage('auren',`Good morning. ${weekOrDaySummary(date,briefingScope)}`);};
+$('playBriefing').onclick=()=>{prepareSpokenReview();const date=localDate();const summary=weekOrDaySummary(date,briefingScope);const today=new Date();const end=briefingScope==='week'?new Date(today.getTime()+7*86400000):new Date(today.getFullYear(),today.getMonth(),today.getDate()+1);const due=reminders.filter(r=>!r.fired&&new Date(r.at)>=today&&new Date(r.at)<end).sort((a,b)=>a.at.localeCompare(b.at));const extra=due.length?' You also have '+due.length+' upcoming '+(due.length===1?'reminder':'reminders')+'.':'';addMessage('auren',`Good morning. ${summary}${extra}`);};
 function proposedDay(text){return parseDateIntent(text)||$('planDate').value||localDate();}
 function timeFromText(text){
  const m=text.match(/\b(?:at|to|for)\s+(\d{1,2})(?::(\d\d))?\s*(a\.?m\.?|p\.?m\.?)?\b/i);
@@ -511,7 +593,7 @@ async function planSpeech(text){const t=text.trim();
  return null;
 }
 // The planner only changes data after confirmation, not from arbitrary AI text.
-renderDay();document.body.dataset.screen='chat';
+renderDay();document.body.dataset.screen='chat';refreshUpNext();checkReminders();
 
 // ---------- chat ----------
 function drawMessage(rec, opts = {}) {
@@ -527,7 +609,7 @@ function drawMessage(rec, opts = {}) {
     d.append(row);
   }
   $('log').append(d); $('log').scrollTop = $('log').scrollHeight;
-  if (rec.role === 'auren') $('latestReply').textContent = rec.text;
+  if (rec.role === 'auren') { homeMessageUntil=Date.now()+16000; $('latestReply').textContent = rec.text; }
 }
 
 // What goes to disk is redacted: sensitive/blocked text and session notes are never kept in history.
@@ -640,7 +722,8 @@ async function send(text) {
       || /^(?:please )?remember\s+/i.test(text)
       || /^(?:forget|new project|start project|create project|project)\s+/i.test(text)
       || /^(?:for now|just for now|this session|for this session|save session note)\s+/i.test(text);
-    const planResponse = await planSpeech(text);
+    const reminderResponse = reminderSpeech(text);
+    const planResponse = reminderResponse || await planSpeech(text);
     const memoryDispute = isLocal || planResponse ? null : await memoryDisputeReply(text);
     const planningSuggestion = !isLocal && !planResponse && !memoryDispute && !pendingPlan && !planningOffer
       && Date.now()-lastPlanningOfferAt>PLANNING_OFFER_COOLDOWN_MS ? planningOpportunity(text) : null;
