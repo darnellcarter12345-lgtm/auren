@@ -276,7 +276,56 @@ document.querySelectorAll('nav button').forEach(b => b.onclick = safe(async () =
   if (b.dataset.tab === 'memory') await renderMemories();
   if (b.dataset.tab === 'projects') await renderProjects();
   if (b.dataset.tab === 'settings') await renderStorageInfo();
+  document.body.dataset.screen=b.dataset.tab;
 }));
+
+// ---------- v2.2 voice-first planner and concise briefing ----------
+// Device-local event storage; never claim notification delivery when tab is closed.
+const PLAN_KEY='auren_plans_v22';
+let plans=[];
+try { const saved=JSON.parse(localStorage.getItem(PLAN_KEY)||'[]'); if(Array.isArray(saved)) plans=saved.filter(p=>p&&typeof p.title==='string'&&/^\d{4}-\d\d-\d\d$/.test(p.date)).slice(0,500); } catch {}
+const localDate=(d=new Date())=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+$('planDate').value=localDate();
+let pendingPlan=null;
+let lastDiscussedPlanId=null;
+let reviewPending=false;
+function savePlans(){ localStorage.setItem(PLAN_KEY,JSON.stringify(plans)); }
+function formatClock(time){const [h,m]=time.split(':').map(Number);return new Date(2020,0,1,h,m).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});}
+function plansFor(date){return plans.filter(p=>p.date===date).sort((a,b)=>a.time.localeCompare(b.time));}
+function planSummary(date){const items=plansFor(date); if(!items.length)return 'You have nothing scheduled for this day. Would you like to plan something?';const names=items.slice(0,5).map(p=>`${p.title} at ${formatClock(p.time)}`).join(', ');return `You have ${items.length} ${items.length===1?'plan':'plans'}: ${names}${items.length>5?', and others':''}. ${items.length<4?'You appear to have some open time, although I cannot see your other calendars. ':''}Does that sound correct?`;}
+function renderDay(){const node=$('dayTimeline');node.replaceChildren();const items=plansFor($('planDate').value);if(!items.length){node.append(el('div','day-empty','Nothing planned here yet.'));return;} for(const p of items){const item=el('div','day-item');item.append(el('span','at',formatClock(p.time)));const detail=el('div','desc',p.title);detail.append(el('small','duration',`${p.duration} minutes`));item.append(detail);const remove=el('button','remove-plan','×');remove.type='button';remove.setAttribute('aria-label',`Remove ${p.title}`);remove.onclick=async()=>{pendingPlan={kind:'delete',id:p.id};await addMessage('auren',`Shall I remove ${p.title} from your plans?`);};item.append(remove);node.append(item);}}
+function openScreen(screen){const tab=document.querySelector(`nav button[data-tab="${screen}"]`); if(tab) tab.click(); else {document.querySelectorAll('nav button,.tab').forEach(n=>n.classList.remove('active'));$(screen)?.classList.add('active');}document.body.dataset.screen=screen;advancedNav.hidden=true;$('panelToggle').setAttribute('aria-expanded','false');renderDay();}
+document.querySelectorAll('[data-screen]').forEach(button=>button.addEventListener('click',()=>openScreen(button.dataset.screen)));
+document.querySelectorAll('.back-home').forEach(b=>b.addEventListener('click',()=>openScreen('chat')));
+const projectsBack=el('button','back-home','← Home');projectsBack.type='button';projectsBack.onclick=()=>openScreen('chat');$('projects').prepend(projectsBack);
+$('planDate').addEventListener('change',renderDay);
+$('planForm').onsubmit=async e=>{e.preventDefault();pendingPlan={kind:'add',title:$('planTitle').value.trim(),date:$('planDate').value,time:$('planTime').value,duration:Math.max(5,Math.min(720,Number($('planDuration').value)||60))};if(pendingPlan.title&&pendingPlan.time)await addMessage('auren',`Shall I add ${pendingPlan.title} at ${formatClock(pendingPlan.time)} to your schedule?`);};
+function prepareSpokenReview(){if(capabilities.speak){voice.setEnabled(true);$('speakReplies').checked=true;} if(capabilities.listen && !voice.awake)voice.startListening();voice.setReviewMode?.(true);reviewPending=true;}
+function beginReview(){prepareSpokenReview();const date=$('planDate').value;addMessage('auren',planSummary(date));}
+$('reviewDay').onclick=beginReview;
+$('playBriefing').onclick=()=>{prepareSpokenReview();const date=localDate();addMessage('auren',`Good morning. ${planSummary(date)}`);};
+function proposedDay(text){const t=text.toLowerCase(); if(/\btomorrow\b/.test(t)){const d=new Date();d.setDate(d.getDate()+1);return localDate(d);}if(/\btoday\b/.test(t))return localDate();return $('planDate').value||localDate();}
+function timeFromText(text){let m=text.match(/\b(?:at|for)\s+(\d{1,2})(?::(\d\d))?\s*(am|pm)?\b/i);if(!m)return null;let h=Number(m[1]),min=Number(m[2]||0);const ap=(m[3]||'').toLowerCase();if(h>23||min>59)return null;if(ap){if(h<1||h>12)return null;h=h%12+(ap==='pm'?12:0);}else if(h>=1&&h<=7)h+=12;return `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`;}
+function durationFromText(t){const m=t.match(/\b(\d+)\s*(hour|hours|minute|minutes)\b/i);return m?Math.min(720,Number(m[1])*(m[2].toLowerCase().startsWith('hour')?60:1)):60;}
+async function planSpeech(text){const t=text.trim();
+ if(pendingPlan && /^(yes|yeah|yep|correct|please do|do it|sure|confirm|go ahead|that's right)\b/i.test(t)){
+  const p=pendingPlan;pendingPlan=null;
+  if(p.kind==='add'){if(!p.title||!p.time)return 'I still need the name and time before saving that.';const event={id:uid(),title:p.title.slice(0,120),date:p.date,time:p.time,duration:p.duration||60};plans.push(event);try{savePlans();}catch(e){plans=plans.filter(x=>x.id!==event.id);return 'I could not save that event on this device.';}lastDiscussedPlanId=event.id;renderDay();return `Certainly. I have added ${event.title} at ${formatClock(event.time)}.`;}
+  if(p.kind==='delete'){const old=plans.find(e=>e.id===p.id);plans=plans.filter(e=>e.id!==p.id);try{savePlans();}catch{if(old)plans.push(old);return 'I could not save that deletion.';}renderDay();return 'Certainly. I have removed that plan.';}
+  if(p.kind==='move'){const event=plans.find(e=>e.id===p.id);if(!event)return 'That plan no longer exists.';const previous=event.time;event.time=p.time;try{savePlans();}catch{event.time=previous;return 'I could not save the new time.';}renderDay();return `Certainly. Moved ${event.title} to ${formatClock(event.time)}.`;}
+ }
+ if(pendingPlan&&/^(no|nope|cancel|don't|do not|never mind)\b/i.test(t)){pendingPlan=null;return 'Of course. I have made no changes.';}
+ if(reviewPending && /^(yes|yeah|correct|sounds good|that's correct|all correct)\b/i.test(t)){reviewPending=false;voice.setReviewMode?.(false);return 'Very good. I am here if you need anything adjusted.';}
+ if(/\b(?:what(?:'s| is) on|what do i have|go over|review|discuss|read|tell me about)\b.*\b(?:my day|schedule|calendar|plans|today|tomorrow)\b/i.test(t)||/^(?:my schedule|my plans)$/i.test(t)){reviewPending=true;voice.setReviewMode?.(true);return planSummary(proposedDay(t));}
+ if(/^(?:wait|hold on|that's not right|that isn't right|change that|actually)\b/i.test(t)&&reviewPending){return 'Of course. What would you like me to change?';}
+ const add=t.match(/^(?:please\s+)?(?:add|schedule|plan|put|book|set aside)\s+(.+)/i);
+ if(add){const time=timeFromText(t);if(!time)return 'Certainly. What time should I put that on your schedule? Please include am or pm.';const title=add[1].replace(/\b(?:tomorrow|today)\b/gi,'').replace(/\b(?:at|for)\s+\d{1,2}(?::\d\d)?\s*(?:am|pm)?\b/gi,'').replace(/\b\d+\s*(?:hours?|minutes?)\b/gi,'').trim().replace(/\s+/g,' ').replace(/[.,]+$/,'');if(!title)return 'What would you like me to call that plan?';pendingPlan={kind:'add',title,date:proposedDay(t),time,duration:durationFromText(t)};return `Shall I add ${title} at ${formatClock(time)}?`;}
+ if(/^(?:remove|delete|cancel)\b/i.test(t)&&/\b(?:plan|event|appointment|meeting|that|it|schedule)\b/i.test(t)){const matches=plansFor(proposedDay(t));const event=matches.find(p=>t.toLowerCase().includes(p.title.toLowerCase()))|| (matches.length===1?matches[0]:plans.find(p=>p.id===lastDiscussedPlanId));if(!event)return 'Which event would you like me to remove?';pendingPlan={kind:'delete',id:event.id};return `Shall I remove ${event.title} from your schedule?`;}
+ if(/\b(?:move|change|reschedule)\b/i.test(t)&&/\b(?:to|at)\s+\d/.test(t)){const time=timeFromText(t);const candidates=plansFor(proposedDay(t));const event=candidates.find(p=>t.toLowerCase().includes(p.title.toLowerCase()))||(candidates.length===1?candidates[0]:plans.find(p=>p.id===lastDiscussedPlanId));if(!event||!time)return 'Which event and what new time would you prefer?';pendingPlan={kind:'move',id:event.id,time};return `Shall I move ${event.title} to ${formatClock(time)}?`;}
+ return null;
+}
+// The planner only changes data after confirmation, not from arbitrary AI text.
+renderDay();document.body.dataset.screen='chat';
 
 // ---------- chat ----------
 function drawMessage(rec, opts = {}) {
@@ -405,8 +454,11 @@ async function send(text) {
       || /^(?:please )?remember\s+/i.test(text)
       || /^(?:forget|new project|start project|create project|project)\s+/i.test(text)
       || /^(?:for now|just for now|this session|for this session|save session note)\s+/i.test(text);
-    const memoryDispute = isLocal ? null : await memoryDisputeReply(text);
-    if (isLocal) {
+    const planResponse = await planSpeech(text);
+    const memoryDispute = isLocal || planResponse ? null : await memoryDisputeReply(text);
+    if (planResponse) {
+      await addMessage('auren', planResponse);
+    } else if (isLocal) {
       await presentResult(await butler.handle(text));
     } else if (memoryDispute) {
       await addMessage('auren', memoryDispute);

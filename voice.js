@@ -12,6 +12,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   let fixedVoice = null;
   let spokenText = '';
   let interrupted = false;
+  let reviewMode = false;
   let interruptionsEnabled = false; // Privacy-conscious default: background voices cannot interrupt.
   let interruptionCandidate = '', interruptionSamples = 0;
   let preferredVoiceURI = ''; let voiceRate = 0.96, voicePitch = 0.95; 
@@ -69,7 +70,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     return !output.includes(normalized) && !normalized.includes(output.slice(0, 40));
   }
   function interruptSpeech() {
-    if (!speaking || !interruptionsEnabled) return;
+    if (!speaking || !(interruptionsEnabled || reviewMode)) return;
     interrupted = true;
     currentUtterance = null;
     speaking = false; spokenText = '';
@@ -126,11 +127,11 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   }
   function listenSoon(delay = 200) {
     clearTimeout(restartTimer);
-    if (desiredMode === 'off' || (!wakeMode && !conversation) || (speaking && (!conversation || !interruptionsEnabled)) || responding || !permittedStart || errorStop || active || !Recognition) return;
+    if (desiredMode === 'off' || (!wakeMode && !conversation) || (speaking && (!conversation || !(interruptionsEnabled || reviewMode))) || responding || !permittedStart || errorStop || active || !Recognition) return;
     restartTimer = setTimeout(startEngine, delay);
   }
   function startEngine() {
-    if (desiredMode === 'off' || active || (speaking && (!conversation || !interruptionsEnabled)) || responding || errorStop || (!conversation && !wakeMode) || !permittedStart) return;
+    if (desiredMode === 'off' || active || (speaking && (!conversation || !(interruptionsEnabled || reviewMode))) || responding || errorStop || (!conversation && !wakeMode) || !permittedStart) return;
     const id = ++token;
     const r = new Recognition(); recognition = r;
     r.lang = 'en-GB'; r.continuous = true; r.interimResults = true; r.maxAlternatives = 5;
@@ -146,7 +147,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       }
       if (interim.length) {
         const preview = interim.join(' ').trim();
-        if (speaking && interruptionsEnabled && looksLikeUser(preview)) {
+        if (speaking && (interruptionsEnabled || reviewMode) && (reviewMode ? /^(?:wait|hold on|stop|actually|that's not right|that is not right|change that)\b/i.test(preview.trim()) : looksLikeUser(preview))) {
           const comparable = preview.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').trim();
           if (comparable.startsWith(interruptionCandidate) || interruptionCandidate.startsWith(comparable)) interruptionSamples++;
           else interruptionSamples = 1;
@@ -160,14 +161,15 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       const transcript = alternatives[0] || '';
       if (!transcript) return;
       if (speaking) {
-        if (!interruptionsEnabled) return;
+        if (!(interruptionsEnabled || reviewMode)) return;
         // Safari may hear its own speakers. Only interrupt for a clear, distinct
         // utterance; a wake phrase always counts. Others need 3+ words and
         // must not be a fragment of what AUREN is currently saying.
         const cleaned = transcript.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
         const output = spokenText.toLowerCase().replace(/[^a-z0-9 ]/g, '');
         const wake = alternatives.map(detectWake).find(Boolean);
-        if (!wake && (cleaned.split(/\s+/).length < 3 || output.includes(cleaned))) return;
+        if (reviewMode && !interruptionsEnabled && !/^(?:wait|hold on|stop|actually|that's not right|that is not right|change that)\b/i.test(transcript)) return;
+        if (!reviewMode && !wake && (cleaned.split(/\s+/).length < 3 || output.includes(cleaned))) return;
         interruptSpeech();
         onInterim?.('');
         // Continue below through the exact same transcript pipeline as orb mode.
@@ -230,7 +232,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       scheduleIdle();
       // The AI often starts speech before this promise settles. Reactivate the
       // recognizer *after* responding becomes false, including during speech.
-      if (speaking && interruptionsEnabled && conversation) listenSoon(90);
+      if (speaking && (interruptionsEnabled || reviewMode) && conversation) listenSoon(90);
       else if (!speaking) listenSoon(180);
     }
   }
@@ -245,7 +247,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     // A fresh answer replaces prior speech; stop timers/recognition only once.
     // Keep recognition running during speech where Safari permits, so the user
     // can interrupt. Spoken-voice echo is filtered in the recognition handler.
-    if (!conversation || !interruptionsEnabled) abort();
+    if (!conversation || !(interruptionsEnabled || reviewMode)) abort();
     if (synth) synth.cancel();
     speaking = true; interrupted = false; spokenText = text;
     interruptionCandidate = ''; interruptionSamples = 0;
@@ -263,7 +265,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     };
     u.onend = () => { if (currentUtterance !== u) return; spokenText = ''; onSpoken?.(text, text); if (currentUtterance === u) currentUtterance = null; speaking = false; report(wakeMode ? 'Listening — ask a follow-up, or say “Hey Auren”' : (conversation ? 'Listening for your next question…' : 'Tap the orb to speak')); scheduleIdle(); if (!responding) listenSoon(160); };
     u.onerror = () => { if (currentUtterance !== u) return; spokenText = ''; if (currentUtterance === u) currentUtterance = null; speaking = false; report('Voice output stopped; text remains available.'); if (!responding) listenSoon(420); };
-    try { synth.speak(u); report('AUREN speaking…'); if (interruptionsEnabled && conversation && !active && !responding) listenSoon(150); }
+    try { synth.speak(u); report('AUREN speaking…'); if ((interruptionsEnabled || reviewMode) && conversation && !active && !responding) listenSoon(150); }
     catch { currentUtterance = null; speaking = false; report('Speech output unavailable.'); if (!responding) listenSoon(); }
   }
   function startListening() {
@@ -295,6 +297,11 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   });
   return {
     available, speak, stopSpeaking, startListening, stopListening, setWakeMode,
+    setReviewMode(value) {
+      reviewMode=!!value;
+      if(speaking && permittedStart && conversation){if(reviewMode)listenSoon(90);else if(!interruptionsEnabled){++token;abort();clearTimeout(restartTimer);}}
+      return reviewMode;
+    },
     getVoices() { return synth?.getVoices?.() || []; },
     setVoicePreference(uri) { preferredVoiceURI = String(uri || ""); fixedVoice = null; },
     setVoiceStyle({ rate, pitch } = {}) {
@@ -312,7 +319,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       interruptionsEnabled = !!value;
       // Switching OFF immediately halts microphone recognition during playback.
       // It resumes only after AUREN finishes talking.
-      if (!interruptionsEnabled && speaking) { ++token; abort(); clearTimeout(restartTimer); }
+      if (!interruptionsEnabled && !reviewMode && speaking) { ++token; abort(); clearTimeout(restartTimer); }
       interruptionCandidate = ''; interruptionSamples = 0;
       // Switching ON is best-effort; never auto-request microphone permissions.
       if (interruptionsEnabled && speaking && permittedStart && conversation && !responding) listenSoon(90);

@@ -1,9 +1,9 @@
-AUREN v2.0.3 Smarter Memory — built on the v2.0.2 combined update.
+AUREN v2.2 — Butler Experience
 
-GitHub: replace app.js and ai.js in repository root. Leave index.html, styles.css, voice.js and other files as they are.
+Replace index.html, styles.css, app.js and voice.js in your GitHub repository. Keep db.js, memory.js, ai.js, Cloudflare Worker and all other files unchanged. Commit changes and hard-refresh Safari.
 
-Optional recommended: deploy cloudflare-worker.js through the Cloudflare dashboard Worker code editor (NOT as a GitHub Pages script) to improve the actual AI instructions. Keep Workers AI binding AI unchanged. Worker is still a personal prototype; Origin is NOT authentication.
+Features: redesigned home, quick-access Your Day / Briefing / Projects, settings gear at upper right, local saved daily plans with confirmations, spoken day review and briefing.
 
-Test: Save "I enjoy trading" in Memory, refresh, ask AUREN "What are my interests?" and "What should I focus on today?". Saved information should be used; unsaved facts should not be guessed.
+Important: The planner currently saves only in this browser (localStorage); no cross-device sync or scheduled notifications. Safari speech recognition and interrupt support vary; the correction-phrase exception is best-effort. Test with headphones to minimize speaker echo.
 
-No new memories are created without consent. Sensitive memories are not sent to AI. Browsers can still clear IndexedDB; export backups regularly.
+Example voice commands: “What is on my schedule today?” “Schedule study time tomorrow at 3 pm.” “Yes.” “Move study time to 4 pm.” “Cancel that plan.”
