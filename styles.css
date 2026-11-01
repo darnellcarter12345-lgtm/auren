@@ -404,3 +404,72 @@ header { position:relative!important; max-width:820px; margin-inline:auto!import
   -webkit-user-drag: none;
 }
 #orbControl .orb-core { pointer-events: none !important; }
+
+/* v2.8.4: compact two-line captions — stable footprint, rolling words. */
+#chat .auren-caption-slot, .auren-caption-slot {
+  display: flex !important;
+  width: min(100%, 560px) !important;
+  height: 56px !important;
+  min-height: 56px !important;
+  max-height: 56px !important;
+  flex: 0 0 56px !important;
+  align-items: center !important;
+  justify-content: center !important;
+  margin: 8px auto 10px !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border: 0 !important;
+  box-sizing: border-box !important;
+}
+#liveTranscript, #liveTranscript.auren-live-caption,
+.auren-caption-slot .auren-live-caption {
+  display: -webkit-box !important;
+  -webkit-box-orient: vertical !important;
+  -webkit-line-clamp: 2 !important;
+  line-clamp: 2 !important;
+  width: 100% !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: 56px !important;
+  margin: 0 !important;
+  padding: 8px 13px !important;
+  overflow: hidden !important;
+  overflow-wrap: normal !important;
+  word-break: normal !important;
+  white-space: normal !important;
+  border-radius: 12px !important;
+  border: 1px solid rgba(214,181,123,.22) !important;
+  background: rgba(23,27,33,.91) !important;
+  color: #f2e5cf !important;
+  font: 500 .88rem/1.38 system-ui,-apple-system,sans-serif !important;
+  text-align: center !important;
+  box-sizing: border-box !important;
+}
+.auren-caption-slot:not(.caption-visible) #liveTranscript {
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
+@media(max-width:520px) {
+  #chat .auren-caption-slot,.auren-caption-slot {height:54px !important;min-height:54px !important;max-height:54px !important;flex-basis:54px !important;}
+  #liveTranscript.auren-live-caption {font-size:.84rem !important;padding:7px 11px !important;}
+}
+
+/* v2.8.5 — quiet, short subtitles; original reminder-first home layout */
+#chat .auren-caption-slot, .auren-caption-slot {
+  height: 42px !important; min-height: 42px !important;
+  max-height: 42px !important; flex-basis: 42px !important;
+  margin: 3px auto 7px !important;
+}
+#liveTranscript, #liveTranscript.auren-live-caption {
+  max-height: 42px !important; padding: 5px 11px !important;
+  font-size: .82rem !important; line-height: 1.35 !important;
+  -webkit-line-clamp: 2 !important;
+}
+.auren-caption-slot:not(.caption-visible) { visibility: hidden !important; }
+@media (max-width:520px) {
+  #chat .auren-caption-slot,.auren-caption-slot {
+    height: 40px !important; min-height: 40px !important;
+    max-height: 40px !important; flex-basis: 40px !important;
+  }
+  #liveTranscript.auren-live-caption { font-size:.78rem !important; }
+}

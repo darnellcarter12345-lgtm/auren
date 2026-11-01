@@ -1,1 +1,1 @@
-AUREN v2.8.3 iPhone orb touch fix. Replace complete app.js and styles.css in GitHub. Leave voice.js, weather.js and Cloudflare Worker unchanged. Refresh AUREN in iPhone Safari.
+Replace the complete app.js and styles.css in GitHub. Preserve all other files. The short temporary caption clears after speech and the main home line returns to Up Next.

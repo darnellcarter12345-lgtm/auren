@@ -24,9 +24,63 @@ aiEndpointInput.value = getAIEndpoint();
 $('saveAIEndpoint').onclick = () => { try { setAIEndpoint(aiEndpointInput.value); showStatus('AUREN AI connection saved on this browser.', 'ok'); } catch (e) { showStatus(e.message, 'error'); } };
 $('clearAIEndpoint').onclick = () => { setAIEndpoint(''); aiEndpointInput.value = ''; showStatus('AI connection removed.', 'info'); };
 let storageOk = false, sinceTrim = 0;
-// Live speech captions are intentionally removed. Conversation history remains in Text chat.
+// Compact voice subtitles: fixed two lines, with older words rolling away.
+// Full messages remain unchanged in Text chat and history.
+const captionNode = $('liveTranscript');
+let captionTimer = null;
+let captionClear = null;
+let captionSpeaking = false;
+let lastInterimAt = 0;
+function captionWords(text, count = 9) {
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  return words.slice(-count).join(' ');
+}
+function showCaption(text, speaker) {
+  if (!captionNode) return;
+  clearTimeout(captionClear);
+  captionNode.textContent = text ? (speaker ? speaker + ': ' : '') + captionWords(text) : '';
+  captionNode.parentElement?.classList.toggle('caption-visible', Boolean(text));
+}
+function clearCaption(delay = 1500) {
+  clearTimeout(captionClear);
+  captionClear = setTimeout(() => {
+    if (!captionSpeaking) showCaption('', '');
+  }, delay);
+}
+function voiceCaptionSpoken(text) {
+  // voice.js invokes onSpoken both at speech start and speech end.
+  if (captionSpeaking) {
+    captionSpeaking = false;
+    clearInterval(captionTimer);
+    captionTimer = null;
+    clearCaption(1400);
+    // Restore the home screen to its upcoming reminder or appointment
+    // once AUREN finishes a spoken reply; chat history remains intact.
+    homeMessageUntil = Date.now() + 1700;
+    setTimeout(() => { if (!captionSpeaking) renderUpNext(); }, 1800);
+    return;
+  }
+  captionSpeaking = true;
+  clearInterval(captionTimer);
+  const words = String(text || '').trim().split(/\s+/).filter(Boolean);
+  let position = Math.min(words.length, 8);
+  const paint = () => showCaption(words.slice(Math.max(0, position - 9), position).join(' '), 'AUREN');
+  paint();
+  captionTimer = setInterval(() => {
+    position = Math.min(words.length, position + 2);
+    paint();
+    if (position >= words.length) { clearInterval(captionTimer); captionTimer = null; }
+  }, 900);
+}
 const voice = createVoice({
+  onInterim: transcript => {
+    if (captionSpeaking || Date.now() - lastInterimAt < 200) return;
+    lastInterimAt = Date.now();
+    showCaption(transcript, 'YOU');
+  },
+  onSpoken: text => voiceCaptionSpoken(text),
   onTranscript: async transcript => {
+    if (!captionSpeaking) { showCaption(transcript, 'YOU'); clearCaption(2500); }
     $('chatInput').value = transcript;
     try { await send(transcript); }
     catch (error) {
@@ -85,6 +139,10 @@ async function activateScreen(screen) {
   // Screen navigation is always silent. Cancel any reply still playing from
   // the previous screen; never turn on TTS or the microphone from a tab click.
   if (voice.speaking) voice.stopSpeaking();
+  clearInterval(captionTimer);
+  captionTimer = null;
+  captionSpeaking = false;
+  showCaption('', '');
   if (screen !== 'settings') lastNonSettingsScreen = screen;
   document.querySelectorAll('nav button, .tab').forEach(node => node.classList.remove('active'));
   target.classList.add('active');
