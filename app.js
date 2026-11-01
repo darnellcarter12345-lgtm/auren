@@ -1,4 +1,4 @@
-// AUREN v2.9.2 — Silent manual planner and iPhone microphone gesture
+// AUREN v2.9.3 — Voice activation, explicit state and iPhone dictation recovery
 // AUREN — js/app.js
 // Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
 // v0.2: status banner for storage problems, session panel, privacy controls, safe backup import.
@@ -168,16 +168,12 @@ $('panelToggle').addEventListener('click', (event) => {
 });
 // Direct click actions are synchronous to preserve Safari's microphone gesture permission.
 let lastOrbTap = 0;
-let lastTouchOrbTap = 0;
 const orbButton = $('orbControl');
 function activateOrb(event) {
-  if (event?.cancelable && event.type === 'touchstart') event.preventDefault();
   const now = Date.now();
   // Use the native click gesture, including on iPhone Safari.
-  if (event?.type === 'click' && now - lastTouchOrbTap < 850) return;
   if (now - lastOrbTap < 300) return;
   lastOrbTap = now;
-  if (event?.type === 'touchstart') lastTouchOrbTap = now;
   if (!capabilities.listen) {
     showStatus('Voice recognition is unavailable in this browser. On iPhone, open Text chat and use the keyboard microphone to dictate.', 'error');
     return;
@@ -202,31 +198,79 @@ function activateOrb(event) {
 // Safari needs a native user click for microphone activation; intercepting
 // touchstart can prevent the standard permission flow on iPhones.
 orbButton.addEventListener('click', activateOrb);
-// A separate explicit gesture lets iPhone Safari request microphone access.
-// Permission to capture audio does not guarantee Web Speech recognition support.
-if(/iPhone|iPad|iPod/.test(navigator.userAgent)){
-  const allowMic=document.createElement('button');
-  allowMic.type='button';
-  allowMic.className='ghost';
-  allowMic.textContent='Enable iPhone microphone';
-  allowMic.setAttribute('aria-label','Request microphone permission for AUREN');
-  allowMic.style.marginTop='12px';
-  allowMic.onclick=async()=>{
-    if(!navigator.mediaDevices?.getUserMedia){
-      showStatus('Microphone permission is not supported here. Open AUREN in Safari.', 'error');
+// iPhone: a single deliberate tap requests mic permission and starts voice.
+// When Web Speech is unavailable, offer native iOS dictation instead of a dead orb.
+const isIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+let microphonePermission = 'unknown';
+if (isIOS) {
+  const allowMic = document.createElement('button');
+  allowMic.type = 'button';
+  allowMic.className = 'ghost';
+  allowMic.textContent = 'Enable microphone & talk';
+  allowMic.setAttribute('aria-label', 'Allow microphone and start speaking to AUREN');
+  allowMic.style.marginTop = '12px';
+  const dictate = document.createElement('button');
+  dictate.type = 'button';
+  dictate.className = 'ghost';
+  dictate.textContent = 'Use iPhone dictation';
+  dictate.style.margin = '12px 0 0 8px';
+  dictate.hidden = capabilities.listen;
+  dictate.onclick = () => {
+    voice.stopListening();
+    void activateScreen('chat').then(() => {
+      const input = $('chatInput');
+      input.focus();
+      showStatus('Tap the microphone on your iPhone keyboard, dictate your message, then press Send.', 'info');
+    });
+  };
+  allowMic.onclick = async () => {
+    if (!navigator.mediaDevices?.getUserMedia) {
+      dictate.hidden = false;
+      showStatus('Safari microphone capture is unavailable. Use iPhone keyboard dictation.', 'error');
       return;
     }
-    allowMic.disabled=true;
-    try{
-      const stream=await navigator.mediaDevices.getUserMedia({audio:true});
-      stream.getTracks().forEach(track=>track.stop());
-      showStatus('Microphone allowed. Tap the golden orb to speak.', 'ok');
-      allowMic.textContent='Microphone allowed';
-    }catch(error){
-      showStatus('Microphone access was not granted. Check Safari Website Settings.', 'error');
-    }finally{allowMic.disabled=false;}
+    allowMic.disabled = true;
+    showStatus('Requesting microphone access…', 'info');
+    try {
+      // Permission request MUST follow a physical user tap, not page startup.
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true } });
+      stream.getTracks().forEach(track => track.stop());
+      microphonePermission = 'granted';
+      if (!capabilities.listen) {
+        dictate.hidden = false;
+        showStatus('Microphone allowed, but Safari speech recognition is unsupported. Use iPhone keyboard dictation.', 'info');
+      } else {
+        // The gesture may be lost across await on iOS; explicitly tell the
+        // user to tap the orb again if WebKit refuses the recognizer.
+        voice.primeAudio();
+        voice.setEnabled(true);
+        $('speakReplies').checked = true;
+        const started = voice.startListening();
+        syncVoiceUI();
+        allowMic.textContent = 'Microphone enabled';
+        showStatus(started ? 'Starting listening… Speak to AUREN.' : 'Tap the orb to start listening.', started ? 'ok' : 'info');
+      }
+    } catch (error) {
+      microphonePermission = 'denied';
+      dictate.hidden = false;
+      showStatus('Microphone not allowed. Open Safari Page Menu → Website Settings → Microphone → Allow, or use iPhone dictation.', 'error');
+    } finally { allowMic.disabled = false; }
   };
-  orbButton.insertAdjacentElement('afterend',allowMic);
+  orbButton.insertAdjacentElement('afterend', allowMic);
+  allowMic.insertAdjacentElement('afterend', dictate);
+  // A failed Web Speech session must not strand users with an inert orb.
+  const voiceStatus = $('voiceStatus');
+  if (voiceStatus) {
+    const observer = new MutationObserver(() => {
+      const msg = voiceStatus.textContent || '';
+      if (/unavailable|blocked|stuck|stopped speech recognition|recognition issue|speech recognition needs|could not start|microphone could not start/i.test(msg)) {
+        dictate.hidden = false;
+        allowMic.textContent = microphonePermission === 'granted' ? 'Retry microphone & talk' : 'Enable microphone & talk';
+      }
+    });
+    observer.observe(voiceStatus, { childList: true, characterData: true, subtree: true });
+  }
 }
 // Voice preview is intentionally removed: one voice, one simple main control.
 $('wakeBtn').onclick = () => {
