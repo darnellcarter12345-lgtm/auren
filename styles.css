@@ -1,4 +1,3 @@
-
 :root { --obsidian:#101318; --graphite:#20252C; --gold:#D6B57B; --ivory:#ECE7DD; --dim:#9a968c; }
 * { box-sizing: border-box; }
 html, body { margin:0; background:var(--obsidian); color:var(--ivory); font-family: Georgia, 'Times New Roman', serif; }
@@ -53,7 +52,7 @@ textarea { width:100%; resize:vertical; }
   body { padding: 10px; } #statusBar { margin:-10px -10px 10px; }
   #log { height: 45vh; } .msg { max-width: 96%; }
   nav button { flex:1 1 30%; padding:10px 6px; }
-  button, .btn, select, input, textarea { font-size:16px; }
+  button, .btn, select, input, textarea { font-size:16px; }  /* avoids iOS zoom on focus */
 }
 
 /* Voice controls */
@@ -63,7 +62,7 @@ textarea { width:100%; resize:vertical; }
 #micBtn[aria-pressed="true"] { border-color:var(--gold); background:#544329; }
 button:disabled { opacity:.48; cursor:not-allowed; }
 
-/* v0.4 voice-first */
+/* v0.4 voice-first: single primary screen, advanced features stay accessible */
 body {max-width:850px; margin:auto; background:#0d1117;}
 header {justify-content:center; padding:24px 0 4px;}
 header .orb {display:none;}
@@ -89,7 +88,7 @@ body[data-voice-state="processing"] .orb-core {animation:aurenRotate 2s linear i
 #sessionPanel[hidden] {display:none;}
 @media(max-width:520px) {.hero {padding:22px 4px 12px}.auren-orb {width:154px;height:154px}#chat #log {height:26vh}header {padding-top:12px}}
 
-/* v0.5 one-screen presentation */
+/* v0.5 definitive one-screen presentation. Existing features remain accessible. */
 html { min-height:100%; }
 body { max-width:700px; min-height:100dvh; padding:20px 22px 48px; }
 header { padding:16px 0 4px; margin:0; }
@@ -121,7 +120,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible {outline:2px so
 @media(max-width:520px){body{padding:14px 14px 38px;} .hero{min-height:330px;} .auren-orb{width:184px;height:184px;} .quick-controls{gap:7px;} #chatForm input{font-size:16px;} .latest-reply{font-size:.93rem;} }
 @media(prefers-reduced-motion:reduce){.auren-orb,.orb-core{animation:none!important; transition:none!important;}}
 
-/* v0.6 voice-only home screen */
+/* v0.6 voice-only home screen: no chat clutter unless intentionally opened. */
 body {max-width:720px;}
 .hero {min-height: min(63dvh, 590px); padding-top:30px; padding-bottom:10px;}
 #advancedNav[hidden] {display:none!important;}
@@ -145,11 +144,11 @@ body {max-width:720px;}
 #advancedNav button {font-family:system-ui,sans-serif;}
 @media(max-width:520px) {.hero {min-height:min(65dvh,530px)} .auren-orb {width:205px;height:205px} .quick-controls button {font-size:.77rem;} }
 
-/* Live speech captions */
+/* AUREN live speech caption — lightweight, legible, no extra settings */
 .auren-live-caption {max-width:560px;min-height:1.2em;margin:0!important;color:#f2e5cf!important;font:500 .95rem/1.5 system-ui,sans-serif!important;overflow-wrap:anywhere}
 .auren-live-caption[hidden]{display:none!important}
 
-/* AUREN v2 — Remastered Home */
+/* AUREN v2 — quiet, centered butler interface */
 :root { --gold:#d6b57b; }
 body { background: radial-gradient(ellipse at 50% 37%,#1c2029 0%,#0d1117 58%,#090c11 100%); }
 header { padding-top:22px; }
@@ -169,3 +168,35 @@ body[data-voice-state=processing] .auren-orb { filter:saturate(.95); }
 .auren-live-caption { background:#171b21bb; border:1px solid #57483066; border-radius:16px; padding:12px 17px; }
 .sr-only { position:absolute!important; width:1px;height:1px; padding:0;margin:-1px;overflow:hidden;clip:rect(0,0,0,0);white-space:nowrap;border:0; }
 @media(max-width:520px){.hero{min-height:min(68dvh,560px);gap:12px}.hero h2{font-size:1.55rem}.auren-orb{width:188px;height:188px}}
+
+/* v2.0.1 — stable, uncluttered live conversation captions */
+.auren-caption-slot {
+  width:min(100%,560px);
+  height:76px;
+  flex:0 0 76px;
+  overflow:hidden;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+  padding:0;
+}
+.auren-caption-slot .auren-live-caption {
+  width:100%;height:100%;margin:0!important;
+  display:-webkit-box!important;
+  -webkit-box-orient:vertical;
+  -webkit-line-clamp:2;
+  line-clamp:2;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  border:1px solid #57483066;
+  border-radius:16px;
+  background:#171b21bb;
+  color:#f2e5cf!important;
+  padding:13px 17px;
+  font:500 .94rem/1.55 system-ui,sans-serif!important;
+  overflow-wrap:anywhere;
+}
+.auren-caption-slot .auren-live-caption:empty { opacity:.4; }
+/* The previous full answer must also not shift controls when it is long. */
+#chat .latest-reply { height:82px; min-height:82px; max-height:82px; overflow:auto; scrollbar-width:thin; }
+@media(max-width:520px){ .auren-caption-slot {height:72px;flex-basis:72px;} }

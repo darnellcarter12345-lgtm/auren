@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -6,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101318">
   <title>AUREN · Voice Assistant</title>
-  <link rel="stylesheet" href="./styles.css?v=2.0.0">
+  <link rel="stylesheet" href="./styles.css?v=2.0.1">
 </head>
 <body>
   <div id="statusBar" role="status" aria-live="polite" hidden>
@@ -28,14 +27,9 @@
     <h2 id="aurenHeadline">At your service.</h2>
     <p id="heroState">AUREN is asleep</p>
     <p id="wakeHint" class="wake-hint">Say “Hey Auren” or tap to awaken</p>
-    <p id="liveTranscript" class="auren-live-caption" aria-live="polite" hidden></p>
-    <div class="quick-controls">
-      <button type="button" id="wakeBtn" class="ghost" aria-pressed="false">Enable “Hey Auren”</button>
-      <button type="button" id="panelToggle" class="ghost" aria-expanded="false">⚙ Settings</button>
-    </div>
-    <button type="button" id="testVoice" class="preview-voice">▶ Hear AUREN’s voice</button>
+    <div class="auren-caption-slot" aria-label="Live conversation"><p id="liveTranscript" class="auren-live-caption" aria-live="polite"></p></div>
+    <div class="quick-controls"><button type="button" id="wakeBtn" class="ghost" aria-pressed="false">Enable “Hey Auren”</button><button type="button" id="panelToggle" class="ghost" aria-expanded="false">⚙ Settings</button></div>
   </div>
-
   <nav id="advancedNav" hidden aria-label="Manage AUREN">
     <button data-tab="chat" class="active">Home</button>
     <button data-tab="memory">Memory</button>
@@ -47,28 +41,23 @@
   <main>
     <section id="chat" class="tab active">
       <div id="latestReply" class="latest-reply" role="status" aria-live="polite">Ready when you are.</div>
-      <details id="conversationDetails" class="conversation-details">
-        <summary>Text chat & history</summary>
-        <div id="log"></div>
-        <form id="chatForm">
-          <input id="chatInput" autocomplete="off" placeholder='Try: remember that I prefer dark mode   (type "help")'>
-          <button>Send</button>
-        </form>
-        <div class="voice-controls" aria-label="Voice controls">
-          <button type="button" id="micBtn" class="ghost" aria-pressed="false">🎙 Speak to AUREN</button>
-          <label class="check"><input type="checkbox" id="speakReplies"> Read replies aloud</label>
-          <button type="button" id="stopSpeech" class="ghost">Stop speaking</button>
-          <span class="hint" id="voiceStatus" role="status" aria-live="polite">Voice initializing…</span>
-        </div>
+      <details id="conversationDetails" class="conversation-details"><summary>Text chat & history</summary><div id="log"></div>
+      <form id="chatForm">
+        <input id="chatInput" autocomplete="off" placeholder='Try: remember that I prefer dark mode   (type "help")'>
+        <button>Send</button>
+      </form>
+      <div class="voice-controls" aria-label="Voice controls">
+        <button type="button" id="micBtn" class="ghost" aria-pressed="false">🎙 Speak to AUREN</button>
+        <label class="check"><input type="checkbox" id="speakReplies"> Read replies aloud</label>
+        <button type="button" id="stopSpeech" class="ghost">Stop speaking</button>
+        <span class="hint" id="voiceStatus" role="status" aria-live="polite">Voice initializing…</span>
+      </div>
       </details>
-
       <div class="card" id="sessionPanel" hidden>
-        <b>This conversation's notes</b>
-        <span class="hint">temporary &mdash; never saved, gone on reload</span>
+        <b>This conversation's notes</b> <span class="hint">temporary &mdash; never saved, gone on reload</span>
         <div id="sessionList"></div>
         <button type="button" id="sessionClear" class="ghost" hidden>Clear session notes</button>
       </div>
-
       <p class="hint" id="voiceDisclaimer">Voice availability depends on your browser. For open-ended conversations, connect the optional AI Worker in settings. Spoken responses use your browser voice engine.</p>
     </section>
 
@@ -99,31 +88,23 @@
     </section>
 
     <section id="reminders" class="tab">
-      <div class="card">
-        <b>Reminders &mdash; PLANNED, not built yet.</b>
-        <p>Planned for a later milestone: in-app reminders, then browser notifications. Nothing on this tab works yet.</p>
-      </div>
+      <div class="card"><b>Reminders &mdash; PLANNED, not built yet.</b><br>
+      Planned for a later milestone: in-app reminders, then browser notifications. Nothing on this tab works yet.</div>
     </section>
 
     <section id="settings" class="tab">
       <div class="card">
         <h3>Connect AUREN's AI brain</h3>
         <p class="hint">Paste the address of your free Cloudflare AI Worker. Do not paste API keys here. Natural conversation will work after you deploy and connect the Worker.</p>
-        <div class="row">
-          <input id="aiEndpoint" type="url" placeholder="https://auren-ai.YOURNAME.workers.dev" aria-label="AI Worker URL">
-          <button id="saveAIEndpoint" type="button">Connect AI</button>
-          <button id="clearAIEndpoint" type="button" class="ghost">Disconnect</button>
-        </div>
+        <div class="row"><input id="aiEndpoint" type="url" placeholder="https://auren-ai.YOURNAME.workers.dev" aria-label="AI Worker URL"><button id="saveAIEndpoint" type="button">Connect AI</button><button id="clearAIEndpoint" type="button" class="ghost">Disconnect</button></div>
         <p class="hint">Messages and relevant non-sensitive memories are sent to Cloudflare for answers. Memory commands remain on your device. The AI cannot save memories itself.</p>
       </div>
-
       <div class="card">
         <h3>Privacy</h3>
         <label class="check"><input type="checkbox" id="saveHistory"> Keep chat history on this device</label>
         <p class="hint">Messages containing sensitive details or session notes are never kept in history, even when this is on. Only the most recent 200 messages are kept. Chat history is never included in backups.</p>
         <p class="hint">AUREN has no lock screen yet (planned). Anyone who can open this browser profile can read your memories.</p>
       </div>
-
       <div class="card">
         <h3>Export backup</h3>
         <label class="check"><input type="checkbox" id="expSensitive"> Include sensitive memories</label>
@@ -131,23 +112,18 @@
         <p class="hint">Without a passphrase the file is plain, readable text. If you set one and forget it, the backup cannot be recovered.</p>
         <button id="exportBtn">Export backup (.json)</button>
       </div>
-
       <div class="card">
         <h3>Import backup</h3>
         <input id="impPass" type="password" autocomplete="off" placeholder="Passphrase (only if the backup is encrypted)">
         <p class="hint">The file is checked before anything is saved, and you will see a summary to approve.</p>
-        <label class="btn">Choose backup file
-          <input type="file" id="importFile" accept=".json,application/json" hidden>
-        </label>
+        <label class="btn">Choose backup file <input type="file" id="importFile" accept=".json,application/json" hidden></label>
       </div>
-
       <div class="card">
         <h3>Storage</h3>
         <p id="persistStatus" class="hint"></p>
         <p id="usageStatus" class="hint"></p>
         <button id="clearChat" class="ghost">Clear chat history</button>
       </div>
-
       <div class="card danger">
         <h3>Delete everything</h3>
         <p class="hint">Permanently erases all memories, projects and chat history from this device. Export a backup first.</p>
@@ -159,6 +135,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=135"></script>
+  <script type="module" src="./app.js?v=201"></script>
 </body>
 </html>
