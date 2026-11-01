@@ -1,4 +1,4 @@
-// AUREN v2.11.1 — topic-switch patience, simplified orb status and subtle Central clock
+// AUREN v2.11.2 — topic-switch patience, simplified orb status and subtle Central clock
 // AUREN — js/app.js
 // Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
 // v0.2: status banner for storage problems, session panel, privacy controls, safe backup import.
@@ -127,6 +127,9 @@ const voice = createVoice({
   },
   onSpoken: text => voiceCaptionSpoken(text),
   onTranscript: async transcript => {
+    // A voice interruption pauses the briefing everywhere, including its own page.
+    // Keep its current segment available; resume only on an explicit request.
+    if (briefingPlayer.active) briefingPlayer.pause();
     if (!captionSpeaking) { showCaption(transcript, 'YOU'); clearCaption(2500); }
     $('chatInput').value = transcript;
     try { await send(transcript); }
@@ -1451,13 +1454,24 @@ async function send(text) {
       await addMessage('auren',`In Dallas, it is ${clock}, Central Time.`);return;
     }
     // An imminent departure is NOT a request to schedule; never infer a conflict hours away.
-    const leaving=text.trim().match(/^(?:i\s+(?:need|have|got)\s+to|i(?:'m| am)\s+going\s+to)\s+(?:leave|head out|go)(?:\s+(?:for|to)\s+(.+?))?\s+in\s+(\d{1,3})\s*(minutes?|mins?|hours?|hrs?)/i);
+    const leaving=text.trim().match(/^(?:i\s+(?:need|have|got)\s+to|i(?:'m| am)\s+going\s+to)\s+(?:leave|head out|go)(?:\s+(?:for|to)\s+(.+?))?\s+in\s+(\d{1,3})\s*(minutes?|mins?|hours?|hrs?)\b/i);
     if(leaving){
       const mins=Number(leaving[2])*(/^h/i.test(leaving[3])?60:1),leaveAt=Date.now()+mins*60000;
       const soon=plans.filter(p=>{const at=eventTimestamp(p);return at>=Date.now()&&at<=leaveAt+15*60000;}).sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
       const destination=leaving[1]?' for '+leaving[1].trim().replace(/[.!?]+$/,''):'';
-      const conflict=soon.length?` You also have ${soon[0].title} at ${spokenClock(soon[0].time)}. That is close to when you plan to leave; I cannot estimate travel time.`:'';
-      await addMessage('auren',`Understood. You plan to leave${destination} in ${mins} ${mins===1?'minute':'minutes'}.${conflict}`);return;
+      const conflict=soon.length?` Your ${soon[0].title} is scheduled for ${readableDate(soon[0].date)} at ${spokenClock(soon[0].time)}, close to your departure.`:'';
+      const clear=soon.length?'':' I do not see an immediate conflict with your saved AUREN appointments. I cannot tell whether you have enough travel time without knowing the journey.';
+      await addMessage('auren',`Understood. You plan to leave${destination} in ${mins} ${mins===1?'minute':'minutes'}.${conflict}${clear}`);return;
+    }
+    // Acknowledge the user's own timing assessment without inventing a conflicting event.
+    if (/^(?:(?:i|we) (?:have|got|do have) (?:enough|plenty of|lots of) time|there(?:'s| is) (?:enough|plenty of) time|i(?:'m| am) not (?:in a rush|running late))[.!?]*$/i.test(text.trim())) {
+      await addMessage('auren', 'Understood. If you have enough time, there is no need to rush. I will follow your lead.');
+      return;
+    }
+    // Distinguish AUREN's own planner from external device calendars.
+    if (/\b(?:you (?:can't|cannot|couldn't)|you (?:said|told me) (?:you )?can't|can't you|why can't you)\b.*\b(?:schedule|calendar|appointment|event|add|save)\b/i.test(text)) {
+      await addMessage('auren', 'I can add and change appointments in Your Day, AUREN’s built-in planner, after your confirmation. External calendar apps are separate. What would you like me to schedule?');
+      return;
     }
     const directPlanner=normalizedPlannerRequest(text);
     if(directPlanner){
