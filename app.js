@@ -1,4 +1,4 @@
-// AUREN v2.10.1 — contextual repeat and precise near-term schedule language
+// AUREN v2.10.5 — combined clear times, calendar export, general help intent
 // AUREN — js/app.js
 // Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
 // v0.2: status banner for storage problems, session panel, privacy controls, safe backup import.
@@ -444,7 +444,24 @@ function planningOpportunity(text){
 let lastDiscussedPlanId=null;
 let reviewPending=false;
 function savePlans(){ localStorage.setItem(PLAN_KEY,JSON.stringify(plans)); refreshUpNext(); }
-function formatClock(time){const [h,m]=time.split(':').map(Number);return new Date(2020,0,1,h,m).toLocaleTimeString([], {hour:'numeric',minute:'2-digit'});}
+// Keep written clock times unambiguous regardless of browser locale.
+function formatClock(time){
+ const [h,m]=String(time).split(':').map(Number);
+ if(!Number.isInteger(h)||h<0||h>23||!Number.isInteger(m)||m<0||m>59)return String(time);
+ return `${h%12||12}:${String(m).padStart(2,'0')} ${h<12?'AM':'PM'}`;
+}
+// AUREN speaks the time conversationally, making noon/midnight and AM/PM clear.
+function spokenClock(time){
+ const [h,m]=String(time).split(':').map(Number);
+ if(!Number.isInteger(h)||h<0||h>23||!Number.isInteger(m)||m<0||m>59)return String(time);
+ if(h===0&&m===0)return 'midnight';
+ if(h===12&&m===0)return 'noon';
+ const hr=h%12||12;
+ const digits=m?`${hr}:${String(m).padStart(2,'0')}`:String(hr);
+ const period=h<5?'at night':h<12?'in the morning':h<17?'in the afternoon':h<21?'in the evening':'at night';
+ return `${digits} ${period}`;
+}
+function spokenDateTime(date,time){return `${readableDate(date)} at ${spokenClock(time)}`;}
 function plansFor(date){return plans.filter(p=>p.date===date).sort((a,b)=>a.time.localeCompare(b.time));}
 const weekdayNames=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
 function parseISO(date){const [y,m,d]=date.split('-').map(Number);return new Date(y,m-1,d,12);}
@@ -497,6 +514,50 @@ function checkReminders(){
 setInterval(()=>{checkReminders();upNextIndex++;renderUpNext();},5000);
 window.addEventListener('pageshow',checkReminders);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkReminders();});
+// Calendar integration is explicitly opt-in. An .ics download lets the user
+// import an event into Apple Calendar, Google Calendar or Outlook. No direct
+// external calendar write or background sync is claimed.
+let calendarOffer = null;
+function calendarEscape(s) { return String(s||'').replace(/\\/g,'\\\\').replace(/\r?\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;'); }
+function calendarDateUTC(ms) { return new Date(ms).toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z$/,'Z'); }
+function prepareCalendarOffer(kind, item) {
+  const when = kind==='appointment' ? eventTimestamp(item) : new Date(item.at).getTime();
+  if(!Number.isFinite(when)) return;
+  calendarOffer={kind, title:kind==='appointment'?item.title:'Reminder: '+item.text,
+    when, duration:kind==='appointment'?Math.max(1, Number(item.duration)||60):5};
+}
+function downloadCalendarFile(offer) {
+  const start=offer.when, end=start+offer.duration*60000;
+  const uidText='auren-'+Date.now()+'-'+Math.floor(Math.random()*1e7)+'@auren.local';
+  const lines=['BEGIN:VCALENDAR','VERSION:2.0','PRODID:-//AUREN//Calendar Export//EN',
+   'CALSCALE:GREGORIAN','BEGIN:VEVENT','UID:'+uidText,
+   'DTSTAMP:'+calendarDateUTC(Date.now()),'DTSTART:'+calendarDateUTC(start),
+   'DTEND:'+calendarDateUTC(end),'SUMMARY:'+calendarEscape(offer.title),
+   'DESCRIPTION:'+calendarEscape('Imported from AUREN. Confirm the calendar app import to save this event.'),
+   'END:VEVENT','END:VCALENDAR'];
+  const blob=new Blob([lines.join('\r\n')+'\r\n'],{type:'text/calendar;charset=utf-8'});
+  const url=URL.createObjectURL(blob), a=document.createElement('a');
+  a.href=url; a.download='AUREN-calendar-event.ics'; document.body.append(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(url),60000);
+}
+function calendarOfferReply(text) {
+ if(!calendarOffer) return null;
+ const v=String(text||'').trim().toLowerCase().replace(/[.!?]+$/,'');
+ if(/^(?:yes|yeah|yep|sure|please|go ahead|add it|add to (?:my |the )?calendar|calendar please|do it)$/.test(v)){
+   const offered=calendarOffer;calendarOffer=null;
+   downloadCalendarFile(offered);
+   return 'I have prepared a calendar file. Open the downloaded file and confirm the import in your calendar app. It is not added until you approve the import.';
+ }
+ calendarOffer=null;
+ if(/^(?:no|nope|no thanks|not now|nah)$/.test(v))return 'Very well. It remains saved in AUREN only.';
+ return null;
+}
+function calendarOfferPrompt() {
+ if(!calendarOffer)return '';
+ return calendarOffer.kind==='appointment'
+ ? ' Would you also like a copy for your device calendar?'
+ : ' Would you like to add this reminder to your device calendar as well?';
+}
 let pendingReminder=null;
 function findReminder(t){const words=t.toLowerCase();return reminders.find(r=>!r.fired&&words.includes(r.text.toLowerCase()))||null;}
 
@@ -516,8 +577,8 @@ function eventReminder(event,minutes) {
  const item={id:uid(),text:event.title,at:new Date(when).toISOString(),fired:false,eventId:event.id,offsetMinutes:minutes};
  reminders.push(item);
  try{saveReminders();}catch(error){reminders=reminders.filter(r=>r.id!==item.id);return `I saved ${event.title}, but couldn't save its reminder on this device.`;}
- refreshUpNext();
- return `Your reminder is saved for ${minutes} minutes before ${event.title}. It can alert you while AUREN is open.`;
+ refreshUpNext();prepareCalendarOffer('reminder',item);
+ return `Your reminder is saved for ${minutes} minutes before ${event.title}. It can alert you while AUREN is open.`+calendarOfferPrompt();
 }
 function linkedReminderForLastEvent(text) {
  if(!/^(?:please\s+)?(?:remind me|set (?:a )?reminder|and remind me)\b/i.test(text))return null;
@@ -553,7 +614,8 @@ function saveRelativeReminder(subject, at) {
  reminders.push(item);
  try {saveReminders();} catch(error) {reminders=reminders.filter(r=>r.id!==item.id);return 'I could not save that reminder. Please try again.';}
  refreshUpNext();
- return `Reminder set for ${new Date(at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}.`;
+ prepareCalendarOffer('reminder',item);
+ return `Reminder set for ${new Date(at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}.`+calendarOfferPrompt();
 }
 // Small, local phrase bank: rotates wording without saving private conversations.
 // Distinct contexts get distinct sequences; the same phrase is not repeated consecutively.
@@ -601,7 +663,7 @@ function reminderSpeech(t){
    const p=pendingReminder;pendingReminder=null;
    if(p.kind==='linked'){const event=plans.find(e=>e.id===p.eventId);return event?eventReminder(event,p.minutes):'That appointment no longer exists. No reminder was saved.';}
    if(p.kind==='remove'){const existing=reminders.find(r=>r.id===p.id);reminders=reminders.filter(r=>r.id!==p.id);try{saveReminders();}catch(e){if(existing)reminders.push(existing);return 'I could not save that change.';}refreshUpNext();return 'Certainly. That reminder has been removed.';}
-   const item={id:uid(),text:p.text,at:p.at,fired:false};reminders.push(item);try{saveReminders();}catch(e){reminders=reminders.filter(r=>r.id!==item.id);return 'I could not save that reminder.';}refreshUpNext();return 'Certainly. I will remind you '+new Date(item.at).toLocaleString([],{weekday:'long',hour:'numeric',minute:'2-digit'})+'.';
+   const item={id:uid(),text:p.text,at:p.at,fired:false};reminders.push(item);try{saveReminders();}catch(e){reminders=reminders.filter(r=>r.id!==item.id);return 'I could not save that reminder.';}refreshUpNext();prepareCalendarOffer('reminder',item);return 'Certainly. I will remind you '+new Date(item.at).toLocaleString([],{weekday:'long',hour:'numeric',minute:'2-digit'})+'.'+calendarOfferPrompt();
   }
   if(/^(?:no|nope|cancel|never mind|not now)\b/i.test(text)){pendingReminder=null;return 'Very well. No reminder has been changed.';}
   // A new request cancels the old pending draft instead of hijacking it.
@@ -658,7 +720,7 @@ $('weatherCity').addEventListener('change',()=>{const city=$('weatherCity').valu
 function weekSummary(date){
  const items=weekItems(date);
  if(!items.length)return 'There are no plans saved for this week. That is only what is in this planner.';
- const groups=new Map();for(const p of items){const name=weekdayNames[parseISO(p.date).getDay()];if(!groups.has(name))groups.set(name,[]);groups.get(name).push(`${p.title} at ${formatClock(p.time)}`);}
+ const groups=new Map();for(const p of items){const name=weekdayNames[parseISO(p.date).getDay()];if(!groups.has(name))groups.set(name,[]);groups.get(name).push(`${p.title} at ${spokenClock(p.time)}`);}
  const spoken=[...groups].map(([day,entries])=>`${day}: ${entries.slice(0,3).join(', ')}${entries.length>3?', and more':''}`).join('. ');
  return `This week you have ${items.length} ${items.length===1?'plan':'plans'}. ${spoken}.`;
 }
@@ -717,7 +779,7 @@ function changeDescription(p){const name=p.title||plans.find(e=>e.id===p.id)?.ti
 let planClarification=null;
 function extractLooseTime(t){const m=String(t).match(/^(?:at\s+|to\s+|make\s+(?:it|that)\s+)?(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?$/i);return m?timeFromText('at '+m[0].replace(/^(?:at|to|make (?:it|that))\s+/i,'')):timeFromText(t);}
 function durationMention(t){return /\b\d+\s*(?:hours?|minutes?)\b/i.test(t);}
-function planSummary(date){const items=plansFor(date); if(!items.length)return 'You have nothing scheduled for this day.';const names=items.slice(0,5).map(p=>`${p.title} at ${formatClock(p.time)}`).join(', ');return `You have ${items.length} ${items.length===1?'plan':'plans'}: ${names}${items.length>5?', and others':''}.`;}
+function planSummary(date){const items=plansFor(date); if(!items.length)return 'You have nothing scheduled for this day.';const names=items.slice(0,5).map(p=>`${p.title} at ${spokenClock(p.time)}`).join(', ');return `You have ${items.length} ${items.length===1?'plan':'plans'}: ${names}${items.length>5?', and others':''}.`;}
 function renderDay(){
  const node=$('dayTimeline');
  node.replaceChildren();
@@ -788,7 +850,10 @@ $('planForm').onsubmit=e=>{
     pendingPlan=null;
     $('planTitle').value='';
     renderDay();
-    showStatus(overlapping.length ? `Appointment saved. Note: it overlaps ${overlapping[0].title}${overlapping.length>1?' and '+(overlapping.length-1)+' more':''}.` : 'Appointment saved.', overlapping.length ? 'info':'ok');
+     const calBtn=document.createElement('button');calBtn.type='button';calBtn.textContent='Add to device calendar';
+     calBtn.className='ghost';calBtn.onclick=()=>{downloadCalendarFile({kind:'appointment',title:event.title,when:eventTimestamp(event),duration:event.duration||60});showStatus('Calendar file prepared. Open it and confirm the import.', 'info');};
+     const day=$('dayTimeline');day.prepend(calBtn);
+     showStatus(overlapping.length ? `Appointment saved. Note: it overlaps ${overlapping[0].title}${overlapping.length>1?' and '+(overlapping.length-1)+' more':''}.` : 'Appointment saved.', overlapping.length ? 'info':'ok');
   }catch(error){
     plans=plans.filter(item=>item.id!==event.id);
     showStatus('Could not save appointment: '+(error?.message||'storage unavailable'), 'error');
@@ -917,7 +982,35 @@ function timeFromText(text){
  return `${String(h).padStart(2,'0')}:${String(minute).padStart(2,'0')}`;
 }
 function durationFromText(t){const m=t.match(/\b(\d+)\s*(hour|hours|minute|minutes)\b/i);return m?Math.min(720,Number(m[1])*(m[2].toLowerCase().startsWith('hour')?60:1)):60;}
-async function planSpeech(text){const t=text.trim();
+// Route natural requests to the *local AUREN planner* before general AI.
+// No event is saved until the user has confirmed the proposed action.
+function normalizedPlannerRequest(raw){
+ const t=String(raw||'').trim();
+ // Never treat ordinary mentions of leaving/going somewhere as save commands.
+ if(/^(?:i (?:need|have|want|plan) to|i'm (?:going|heading)|we (?:need|have) to)\b/i.test(t))return null;
+ const lead=t.match(/^(?:(?:hey\s+)?auren[,! ]*)?(?:(?:can|could|would|will) you\s+|i(?:'d| would) like (?:you )?to\s+|please\s+)(.*)$/i);
+ const cleaned=(lead?lead[1]:t).replace(/[?.!]+$/,'').trim();
+ // Common ways of asking to put a new appointment on the calendar.
+ if(/^(?:put|add|schedule|book|create|set up|plan|move|change|reschedule|remove|delete|cancel)\b/i.test(cleaned))return cleaned;
+ const alternative=cleaned.match(/^(?:make|set)\s+(?:me\s+)?(?:an?\s+)?(?:appointment|event|plan)\s+(?:for\s+)?(.+)$/i);
+ if(alternative)return 'schedule '+alternative[1];
+ const record=cleaned.match(/^(?:put|write|mark)\s+(.+?)\s+(?:on|in|into)\s+(?:my\s+)?(?:calendar|schedule|planner)$/i);
+ if(record)return 'schedule '+record[1];
+ const ask=cleaned.match(/^(?:can you|could you)\s+(?:put|add|schedule|book|create)\s+(.+)$/i);
+ if(ask)return 'schedule '+ask[1];
+ return null;
+}
+function plannerCapabilityReply(t){
+ if(/^(?:can you|could you|are you able to|do you know how to)\s+(?:add|edit|change|move|reschedule|remove|delete|manage|update)\s+(?:my\s+|an?\s+|the\s+)?(?:appointments?|events?|schedule|calendar|plans?)\??[.!]*$/i.test(t.trim()))
+  return 'Yes. I can add, move, and remove appointments in your AUREN planner, with your confirmation. I can prepare a calendar file for you to import into Apple Calendar, Google Calendar, or Outlook. External calendars require your approval for import.';
+ return null;
+}
+async function planSpeech(text){
+ const raw=String(text||'').trim();
+ const capability=plannerCapabilityReply(raw);
+ if(capability)return capability;
+ const normalized=normalizedPlannerRequest(raw);
+ const t=normalized||raw;
  if(planningOffer){
    if(/^(?:no|not now|maybe later|never mind|nah)\b/i.test(t)){planningOffer=null;return 'Of course. I shall leave your schedule as it is.';}
    if(/^(?:yes|yeah|sure|okay|please|let.s|sounds good)\b/i.test(t)){planningOffer=null;return 'Certainly. What would you like to make time for, and when?';}
@@ -1003,7 +1096,7 @@ async function planSpeech(text){const t=text.trim();
   const combinedReminder=/\bremind\s+me\b/i.test(t)?reminderOffsetMinutes(t):null;
   if(p.kind!=='delete'&&!p.conflictAcknowledged){const latest=conflictingEvents(p,p.kind==='move'?p.id:null);if(latest.length){const prompt=conflictAdvice(p);return prompt||'That time now conflicts with another event.';}}
   pendingPlan=null;
-  if(p.kind==='add'){if(!p.title||!p.time)return 'I still need the name and time before saving that.';const event={id:uid(),title:p.title.slice(0,120),date:p.date,time:p.time,duration:p.duration||60};plans.push(event);try{savePlans();}catch(e){plans=plans.filter(x=>x.id!==event.id);return 'I could not save that event on this device.';}lastDiscussedPlanId=event.id;renderDay();const saved=`I've added ${event.title} for ${readableDate(event.date)} at ${formatClock(event.time)} (${localTimeZone()}).`;return combinedReminder!==null?saved+' '+eventReminder(event,combinedReminder):saved;}
+  if(p.kind==='add'){if(!p.title||!p.time)return 'I still need the name and time before saving that.';const event={id:uid(),title:p.title.slice(0,120),date:p.date,time:p.time,duration:p.duration||60};plans.push(event);try{savePlans();}catch(e){plans=plans.filter(x=>x.id!==event.id);return 'I could not save that event on this device.';}lastDiscussedPlanId=event.id;renderDay();const saved=`I've added ${event.title} for ${readableDate(event.date)} at ${formatClock(event.time)} (${localTimeZone()}).`;if(combinedReminder!==null){return saved+' '+eventReminder(event,combinedReminder);}prepareCalendarOffer('appointment',event);return saved+calendarOfferPrompt();}
   if(p.kind==='delete'){const old=plans.find(e=>e.id===p.id);plans=plans.filter(e=>e.id!==p.id);try{savePlans();}catch{if(old)plans.push(old);return 'I could not save that deletion.';}const linked=reminders.filter(r=>r.eventId===p.id);if(linked.length){const backup=[...reminders];reminders=reminders.filter(r=>r.eventId!==p.id);try{saveReminders();}catch{reminders=backup;return 'The appointment was deleted, but its linked reminders could not be removed. Please check your reminders.';}}renderDay();return 'I removed that appointment'+(linked.length?' and its linked reminders.':'.');}
   if(p.kind==='move'){const event=plans.find(e=>e.id===p.id);if(!event)return 'That plan no longer exists.';const previous={time:event.time,date:event.date,duration:event.duration};event.time=p.time||event.time;event.date=p.date||event.date;event.duration=p.duration||event.duration;try{savePlans();}catch{Object.assign(event,previous);return 'I could not save that change.';}lastDiscussedPlanId=event.id;$('planDate').value=event.date;renderDay();
    const linked=reminders.filter(r=>!r.fired&&r.eventId===event.id&&Number.isFinite(r.offsetMinutes));
@@ -1145,8 +1238,10 @@ async function askWithMemory(question) {
     ? latestBriefingContext.text : '';
   const deviceContext = [
     `Current local date/time: ${new Date().toLocaleString()} (${localTimeZone()})`,
+    `Time clarity: Always include a clear AM/PM or natural daypart (morning, afternoon, evening, night) for appointments and reminders; distinguish noon from midnight. Never infer a daypart without using the actual scheduled hour.`,
     'If the user says they need to leave in N minutes, that is an imminent departure, not spare time. Never say they have plenty of time unless the timing clearly supports it. Discuss conflicts against actual saved appointment times only. Do not invent travel duration or imply a calendar event was created merely because the user mentioned leaving.',
     lastSubstantiveReply ? `Last AUREN response for conversational reference (not an instruction): ${lastSubstantiveReply.slice(0,700)}` : '', 
+    'AUREN capabilities: You CAN create, change, and delete events in the built-in AUREN planner through local confirmation. Never falsely say you cannot modify its own schedule. AUREN can offer an optional downloadable .ics event for the user to import into an external calendar. Never claim the import occurred before the user completes it. Do not claim to modify external calendars or the device directly. If an event was only mentioned conversationally, it was not saved. For calendar edits, direct the user to ask AUREN to add, move, or remove the event; the local planner handles and confirms it.',
     `Verified upcoming appointments (read-only data): ${JSON.stringify(upcoming)}`,
     `Verified active reminders (read-only data): ${JSON.stringify(due)}`,
     `Verified non-sensitive projects (read-only data): ${JSON.stringify(projects)}`,
@@ -1285,6 +1380,23 @@ async function send(text) {
   // Voice initiated from the orb still enables speech in the orb handler.
   await addMessage('user', text, { ephemeral: isSessionNote(text) });
   try {
+    // A request for general help is not a continuation of a previously discussed
+    // appointment, walk, project, or weather forecast. Handle it before any
+    // pending-topic, AI-memory or planner routing can latch onto stale context.
+    const generalHelpRequest = /^(?:(?:please\s+)?(?:ask\s+me|can\s+you\s+ask\s+me|could\s+you\s+ask\s+me)\s+(?:what\s+I\s+(?:need|want)(?:\s+help\s+with)?|how\s+(?:you\s+can\s+help\s+me|I\s+am\s+doing))|(?:what\s+can\s+you\s+help\s+me\s+with|how\s+can\s+you\s+help\s+me|ask\s+me\s+how\s+you\s+can\s+help|can\s+you\s+help\s+me\s+with\s+something|I\s+need\s+(?:some\s+)?help))\s*[.!?]*$/i.test(text.trim());
+    if (generalHelpRequest) {
+      planningOffer = null;
+      pendingWeatherOffer = null;
+      await addMessage('auren', varyButler('generalHelp', [
+        'Certainly. What can I help you with?',
+        'Of course. What would you like assistance with?',
+        'At your service. What do you need help with?',
+        'Certainly. What would you like to do?'
+      ]));
+      return;
+    }
+    const calendarReply=calendarOfferReply(text);
+    if(calendarReply){await addMessage('auren',calendarReply);return;}
     // Uncertainty is not a scheduling commitment or a reason to pressure the user.
     const unsure = respectfulUncertainty(text);
     if(unsure){await addMessage('auren',unsure);return;}
