@@ -1,16 +1,11 @@
-AUREN v2.6 — Advanced Butler Intelligence
+AUREN v2.6.1 — Fluid Rescheduling
 
-Based on AUREN v2.6 Free Weather Intelligence app.js.
-BACK UP your existing app.js, then replace ONLY app.js in your GitHub repository.
-Keep existing weather.js from Free Weather Intelligence and voice.js from iPhone Recovery.
-Commit changes and refresh. Do not clear website data or browser storage.
+Back up the current app.js, then replace only app.js in GitHub. Keep voice.js and weather.js unchanged. Commit and refresh. Do NOT clear website data.
 
-New spoken/text commands:
-- Do I have scheduling conflicts this week?
-- What is my busiest day this week?
-- When am I free tomorrow?
-- I prefer mornings.
-- What are my scheduling preferences?
-- Stop suggesting things. / Enable suggestions.
+Test: Reschedule a saved appointment -> give new day -> reply yes.
+Test: Ask to move an appointment without day -> say Friday -> yes.
+Test: Create overlapping appointment -> accept suggested opening once -> should save without repeated question.
+Test: At suggested opening ask What day? -> answer names date and hour without losing context.
+Test: Tapping Your Day / Briefing / Projects reads a short heading when spoken replies are enabled.
 
-Notes: checks device-local planner only; never modifies appointments without approval; preferences stored in localStorage; no new API or AI costs.
+No new paid API calls. Device-local scheduling.

@@ -507,7 +507,14 @@ function renderDay(){
  }
 }
 function openScreen(screen){ void activateScreen(screen); }
-document.querySelectorAll('[data-screen]').forEach(button=>button.addEventListener('click',()=>openScreen(button.dataset.screen)));
+document.querySelectorAll('[data-screen]').forEach(button=>button.addEventListener('click',()=>{
+  const screen=button.dataset.screen;
+  openScreen(screen);
+  if(voice.enabled){
+    const names={planner:'Your day. Here are your saved appointments.',briefing:'Your briefing is ready.',projects:'Your projects.',chat:'At your service.'};
+    if(names[screen])voice.speak(names[screen]);
+  }
+}));
 document.querySelectorAll('.back-home').forEach(b=>b.addEventListener('click',()=>openScreen('chat')));
 const projectsBack=el('button','back-home','← Home');projectsBack.type='button';projectsBack.onclick=()=>openScreen('chat');$('projects').prepend(projectsBack);
 $('planDate').addEventListener('change',renderDay);
@@ -552,6 +559,19 @@ async function planSpeech(text){const t=text.trim();
  if(planClarification){
   const previous=planClarification;
   if(/^(?:cancel|nevermind|never mind|no thanks)\b/i.test(t)){planClarification=null;return 'Of course. No changes made.';}
+  if(previous.kind==='move-when'){
+    const day=parseDateIntent(t),at=extractLooseTime(t);
+    if(at==='ambiguous')return 'Would that be AM or PM?';
+    if(day || at){
+      planClarification=null;
+      pendingPlan={...previous.plan,date:day||previous.plan.date,time:at||previous.plan.time};
+      const conflict=conflictAdvice(pendingPlan);
+      return conflict||`Shall I move ${previous.plan.title} to ${readableDate(pendingPlan.date)} at ${formatClock(pendingPlan.time)}?`;
+    }
+    if(/\b(?:what day|which appointment|which event)\b/i.test(t))return `We're changing ${previous.plan.title}, currently on ${readableDate(previous.plan.date)} at ${formatClock(previous.plan.time)}. What new day or time would you like?`;
+    if(!/^(?:schedule|add|move|change|remove|delete)\b/i.test(t))return `What new day or time would you like for ${previous.plan.title}?`;
+    planClarification=null;
+  }
   if(previous.kind==='time'){
     const given=extractLooseTime(t);
     if(given==='ambiguous')return 'Was that AM or PM?';
@@ -565,23 +585,52 @@ async function planSpeech(text){const t=text.trim();
   if(/^(?:schedule|add|move|change|remove|delete|what|discuss)\b/i.test(t))planClarification=null;
   else return previous.kind==='which'?'Which event do you mean?':'Please tell me the time, including AM or PM.';
  }
- if(pendingPlan&&pendingPlan.suggestedTime&&!pendingPlan.conflictAcknowledged){
-  if(/^(?:yes|yeah|sure|okay|use that|that works|please do)\b/i.test(t)){
-   // The user has already approved the offered free time. That single "yes"
-   // is authorization to complete the pending action; do not ask twice.
-   pendingPlan.time=pendingPlan.suggestedTime;
-   pendingPlan.suggestedTime=null;
-   pendingPlan.conflictAcknowledged=true;
-   // Fall through to the ordinary confirmed-action handler below.
-
+ // A single accepted suggested slot is a completed confirmation, not a fresh prompt.
+ if(pendingPlan && pendingPlan.suggestedTime && !pendingPlan.conflictAcknowledged){
+  if(/^(?:yes|yeah|yep|sure|okay|ok|use that|that works|please do|go ahead|do it|sounds good|confirm)\b/i.test(t)){
+    pendingPlan.time=pendingPlan.suggestedTime;
+    pendingPlan.suggestedTime=null;
+    pendingPlan.conflictAcknowledged=true;
+    // Continue into the confirmation handler below.
+  }else if(/^(?:no|nope|cancel|never mind|forget it|leave it)\b/i.test(t)){
+    pendingPlan=null;return 'Of course. Nothing has been changed.';
+  }else if(/^(?:keep|use original|anyway|overlap)\b/i.test(t)){
+    pendingPlan.suggestedTime=null;
+    pendingPlan.conflictAcknowledged=true;
+    return `That overlaps an existing appointment. Shall I ${changeDescription(pendingPlan)} anyway?`;
+  }else{
+    const date=parseDateIntent(t);
+    const alternate=extractLooseTime(t);
+    if(date || (alternate && alternate!=='ambiguous')){
+      if(date)pendingPlan.date=date;
+      if(alternate && alternate!=='ambiguous')pendingPlan.time=alternate;
+      pendingPlan.suggestedTime=null;
+      const conflict=conflictAdvice(pendingPlan);
+      return conflict||`Certainly. Shall I ${changeDescription(pendingPlan)}?`;
+    }
+    if(/\b(?:what day|which day|what date|which date|when is that|what time|which time)\b/i.test(t)){
+      return `The suggested opening is ${readableDate(pendingPlan.date)} at ${formatClock(pendingPlan.suggestedTime)}. Would you like me to use it?`;
+    }
+    return 'You can accept that opening, tell me another day or time, or leave the appointment unchanged.';
   }
-  const alternate=extractLooseTime(t);
-  if(alternate&&alternate!=='ambiguous'){pendingPlan.time=alternate;const conflict=conflictAdvice(pendingPlan);return conflict||`Shall I ${changeDescription(pendingPlan)}?`;}
-  if(/^(?:no|nope|cancel|never mind)\b/i.test(t)){pendingPlan=null;return 'Of course. No changes made.';}
-  if(/^(?:keep|use original|anyway|overlap)\b/i.test(t)){pendingPlan.suggestedTime=null;pendingPlan.conflictAcknowledged=true;return `That would overlap another plan. Shall I ${changeDescription(pendingPlan)} anyway?`;}
-  return 'Would you prefer the available time, a different time, or to cancel?';
  }
- if(pendingPlan && /^(yes|yeah|yep|correct|please do|do it|sure|confirm|go ahead|that's right)\b/i.test(t)){
+ // Keep a rescheduling conversation anchored to the selected appointment.
+ if(pendingPlan && pendingPlan.kind==='move' && !pendingPlan.suggestedTime){
+  if(/\b(?:what day|which day|what date|which date|what time|when is (?:it|that)|what are we moving)\b/i.test(t)){
+    const original=plans.find(p=>p.id===pendingPlan.id);
+    return `We're moving ${original?.title||'the appointment'} from ${original?readableDate(original.date):'its original date'} to ${readableDate(pendingPlan.date)} at ${formatClock(pendingPlan.time)}. Is that right?`;
+  }
+  const dateOnly=parseDateIntent(t);
+  const timeOnly=extractLooseTime(t);
+  const isRevision=/^(?:actually|instead|rather|no[,]? (?:make|move|try)|how about|what about|could we|can we|let.s|tomorrow|today|(?:on )?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i.test(t);
+  if((dateOnly||timeOnly&&timeOnly!=='ambiguous') && isRevision){
+    if(dateOnly)pendingPlan.date=dateOnly;
+    if(timeOnly && timeOnly!=='ambiguous')pendingPlan.time=timeOnly;
+    const conflict=conflictAdvice(pendingPlan);
+    return conflict||`Certainly. Shall I move it to ${readableDate(pendingPlan.date)} at ${formatClock(pendingPlan.time)}?`;
+  }
+ }
+ if(pendingPlan && /^(yes|yeah|yep|okay|ok|that works|sounds good|correct|please do|do it|sure|confirm|go ahead|that's right)\b/i.test(t)){
   const p=pendingPlan;
   if(p.kind!=='delete'&&!p.conflictAcknowledged){const latest=conflictingEvents(p,p.kind==='move'?p.id:null);if(latest.length){const prompt=conflictAdvice(p);return prompt||'That time now conflicts with another event.';}}
   pendingPlan=null;
@@ -609,7 +658,7 @@ async function planSpeech(text){const t=text.trim();
    if(time||date||hasDuration){pendingPlan={kind:'move',id:event.id,time:time||event.time,date:date||event.date,duration:hasDuration?durationFromText(t):event.duration};return conflictAdvice(pendingPlan)||`Shall I update ${event.title}${hasDuration?' to '+pendingPlan.duration+' minutes':''}${time?' at '+formatClock(time):''}?`;}
   }
  }
- if(/\b(?:move|change|reschedule)\b/i.test(t)){const time=timeFromText(t);const event=findMatchingEvent(t);if(!event)return 'Which event would you like me to change?';if(time==='ambiguous')return 'Did you mean AM or PM? Please include that when giving the new time.';const explicitDate=!!parseDateIntent(t);if(!time&&!explicitDate)return 'What new day or time would you prefer?';pendingPlan={kind:'move',id:event.id,time:time||event.time,date:explicitDate?proposedDay(t):event.date,duration:/\b\d+\s*(?:hours?|minutes?)\b/i.test(t)?durationFromText(t):event.duration};lastDiscussedPlanId=event.id;return conflictAdvice(pendingPlan)||`Shall I move ${event.title} to ${formatClock(pendingPlan.time)} on ${readableDate(pendingPlan.date)}?`;}
+ if(/\b(?:move|change|reschedule)\b/i.test(t)){const time=timeFromText(t);const event=findMatchingEvent(t);if(!event)return 'Which event would you like me to change?';if(time==='ambiguous')return 'Did you mean AM or PM? Please include that when giving the new time.';const explicitDate=!!parseDateIntent(t);if(!time&&!explicitDate){planClarification={kind:'move-when',plan:{kind:'move',id:event.id,title:event.title,date:event.date,time:event.time,duration:event.duration}};lastDiscussedPlanId=event.id;return `Certainly. Which day or time should I move ${event.title} to?`;}pendingPlan={kind:'move',id:event.id,time:time||event.time,date:explicitDate?proposedDay(t):event.date,duration:/\b\d+\s*(?:hours?|minutes?)\b/i.test(t)?durationFromText(t):event.duration};lastDiscussedPlanId=event.id;return conflictAdvice(pendingPlan)||`Shall I move ${event.title} to ${formatClock(pendingPlan.time)} on ${readableDate(pendingPlan.date)}?`;}
  return null;
 }
 // The planner only changes data after confirmation, not from arbitrary AI text.
