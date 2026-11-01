@@ -28,18 +28,21 @@ try {
   const stored = JSON.parse(localStorage.getItem(CONVERSATION_KEY) || '[]');
   if (Array.isArray(stored)) aiRecent.push(...stored.filter(v =>
     v && ['user', 'assistant'].includes(v.role) && typeof v.content === 'string'
-  ).slice(-10).map(v => ({role:v.role, content:v.content.slice(0,500)})));
+  ).slice(-20).map(v => ({role:v.role, content:v.content.slice(0,650)})));
 } catch { /* Keep working without saved history. */ }
 function rememberConversationTurn(question, answer) {
   const sensitive = classify(question + ' ' + answer);
   // Never keep sensitive chat in the AI context cache.
   if (sensitive.blocked.length || sensitive.sensitive.length) return;
-  aiRecent.push({role:'user', content:question.slice(0,500)},
-    {role:'assistant', content:answer.slice(0,500)});
-  if (aiRecent.length > 10) aiRecent.splice(0, aiRecent.length - 10);
+  aiRecent.push({role:'user', content:question.slice(0,650)},
+    {role:'assistant', content:answer.slice(0,650)});
+  if (aiRecent.length > 20) aiRecent.splice(0, aiRecent.length - 20);
   try { localStorage.setItem(CONVERSATION_KEY, JSON.stringify(aiRecent)); } catch {}
 }
 let latestBriefingContext = null;
+try { const saved = JSON.parse(sessionStorage.getItem('auren_latest_briefing_v213') || 'null');
+  if (saved && typeof saved.text === 'string' && Date.now()-saved.at < 45*60000) latestBriefingContext = saved;
+} catch {}
 
 const aiEndpointInput = $('aiEndpoint');
 window.addEventListener('auren:ai-endpoint-updated', () => { aiEndpointInput.value = getAIEndpoint(); });
@@ -1011,6 +1014,7 @@ $('playBriefing').onclick=async()=>{
   const weather=result?.success?' '+result.spoken:'';
   const briefingText = `${butlerGreeting()}. ${summary}${extra}${weather}`.replace(/(?:Would you like|Shall I|Do you want)[^.!?]*[?]/gi,'').trim();
   latestBriefingContext = { text: briefingText.slice(0, 1200), at: Date.now() };
+  try { sessionStorage.setItem('auren_latest_briefing_v213',JSON.stringify(latestBriefingContext)); } catch {}
   await addMessage('auren', briefingText, {silent:true});
   briefingPlayer.start(briefingText);
 };
@@ -1406,36 +1410,33 @@ let lastWeatherDetails = null;
 let aurenLocation = null;
 let locationApproved = false;
 let lastAssurance = '';
-const LOCATION_PREF_KEY = 'auren_location_assistance_v2113';
+// AUREN v2.13: location is OFF by default, only used after permission.
+let locationRequestSequence = 0;
+let locationPending = false;
+let pendingLocationIntent = null;
 const locationPanel = document.createElement('div');
-locationPanel.className = 'card';
-const locationTitle = document.createElement('h3');
-locationTitle.textContent = 'Location assistance';
-const locationDesc = document.createElement('p');
-locationDesc.className = 'hint';
-locationDesc.textContent = 'Optional. Allow location only when you want nearby suggestions or maps. AUREN never tracks you in the background. Traffic must be checked in a maps service.';
-const locationButton = document.createElement('button');
-locationButton.type = 'button';
-locationButton.textContent = 'Allow location for this session';
-const locationStatus = document.createElement('p');
-locationStatus.className = 'hint';
-locationStatus.textContent = 'Location off.';
-locationButton.addEventListener('click', () => {
-  if (!navigator.geolocation) { locationStatus.textContent = 'Location is not available in this browser.'; return; }
-  locationStatus.textContent = 'Asking Safari for permission…';
-  navigator.geolocation.getCurrentPosition(position => {
-    aurenLocation = { latitude:position.coords.latitude, longitude:position.coords.longitude, accuracy:position.coords.accuracy };
-    locationApproved = true;
-    locationStatus.textContent = 'Location ready for this session. Ask for nearby places or traffic options.';
-    locationButton.textContent = 'Refresh location';
-  }, error => {
-    locationApproved = false;
-    aurenLocation = null;
-    locationStatus.textContent = error.code === 1 ? 'Permission denied. You can keep using AUREN without location.' : 'Location unavailable. Please try again.';
-  }, { enableHighAccuracy:false, maximumAge:300000, timeout:12000 });
-});
-locationPanel.append(locationTitle,locationDesc,locationButton,locationStatus);
-$('settings').append(locationPanel);
+locationPanel.className='card';
+const locationTitle=document.createElement('h3');locationTitle.textContent='Location privacy';
+const locationDesc=document.createElement('p');locationDesc.className='hint';
+locationDesc.textContent='OFF by default. One-time GPS requests only. Coordinates stay in this tab memory and are never sent to AUREN AI or saved. Maps opened by you follow their own privacy policies.';
+const locationButton=document.createElement('button');locationButton.type='button';
+const locationStatus=document.createElement('p');locationStatus.className='hint';
+function locationPaint(){locationButton.textContent=(locationApproved||locationPending)?'Turn location OFF':'Turn location ON';locationButton.setAttribute('aria-pressed',String(locationApproved||locationPending));locationStatus.textContent=locationPending?'Waiting for Safari permission…':locationApproved?'Location ON for this tab. Turn it OFF whenever you like.':'Location OFF. No coordinates being held.';}
+function locationOff(){locationRequestSequence++;locationApproved=false;locationPending=false;aurenLocation=null;pendingLocationIntent=null;locationPaint();}
+function locationOn(){if(!navigator.geolocation){locationStatus.textContent='Location is unavailable in this browser.';return false;}
+ const id=++locationRequestSequence;locationPending=true;locationPaint();
+ navigator.geolocation.getCurrentPosition(pos=>{if(id!==locationRequestSequence)return;locationPending=false;locationApproved=true;
+ aurenLocation={latitude:pos.coords.latitude,longitude:pos.coords.longitude,accuracy:pos.coords.accuracy};locationPaint();
+ if(pendingLocationIntent){const request=pendingLocationIntent;pendingLocationIntent=null;addMessage('auren','Location is on. For nearby suggestions, open Maps below; Maps may ask separately to use your location. I will not send your coordinates to AUREN AI.');const link=document.createElement('a');link.href=mapsSuggestionLink(request);link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open nearby map search';link.className='hint';$('log').append(link);}
+ },err=>{if(id!==locationRequestSequence)return;locationOff();locationStatus.textContent=err.code===1?'Safari denied permission. Enable it in browser settings if you wish.':'Could not get location. Nothing was saved.';},
+ {enableHighAccuracy:false,maximumAge:0,timeout:12000});return true;}
+locationButton.addEventListener('click',()=>{if(locationApproved||locationPending)locationOff();else locationOn();});
+locationPanel.append(locationTitle,locationDesc,locationButton,locationStatus);$('settings').append(locationPanel);locationPaint();
+function locationOffCommand(t){return /\b(?:turn|switch|set|shut|disable|stop)\s+(?:my\s+|the\s+)?location\s*(?:off)?\b/i.test(t)&&/\b(?:off|disable|stop|shut)\b/i.test(t)||/\b(?:stop using|forget|clear|delete)\s+(?:my\s+|the\s+)?location\b/i.test(t);}
+function locationOnCommand(t){return /\b(?:turn|switch|set|enable|activate)\s+(?:my\s+|the\s+)?location\s*(?:on)?\b/i.test(t)&&/\b(?:on|enable|activate)\b/i.test(t)||/\b(?:use my location|share my location for this)\b/i.test(t);}
+function locationRelevant(t){return /\b(?:nearby|near me|near where i am|around me|closest|where should i go|where can i go|somewhere to (?:go|eat|visit)|places to (?:go|eat|visit)|recommend (?:a|some|me a) (?:place|restaurant)|directions|drive time|traffic|how far from me)\b/i.test(t);}
+function offerLocationButton(){const b=document.createElement('button');b.type='button';b.textContent='Enable location for this tab';b.addEventListener('click',()=>locationOn());$('log').append(b);}
+
 
 function personalizeMeetingText(text) {
   let t = String(text||'');
@@ -1450,12 +1451,22 @@ function mapsSuggestionLink(query) {
   return 'https://www.google.com/maps/search/?'+params;
 }
 async function send(text) {
+  // Explicit voice/text location controls. Safari may require tapping the permission button.
+  if (locationOffCommand(text)) {locationOff();await addMessage('user',text);await addMessage('auren','Location is OFF. I cleared the coordinates AUREN was holding. Safari website permission can be revoked separately in browser settings.');return;}
+  if (locationOnCommand(text)||pendingLocationIntent&&/^(?:yes|sure|okay|ok|go ahead|please do|enable it)[.! ]*$/i.test(String(text).trim())) {
+    await addMessage('user',text);await addMessage('auren','I can enable location for this tab, with your permission. Tap Enable below if Safari requires it.');offerLocationButton();return;
+  }
+  if (!locationApproved&&locationRelevant(text)) {pendingLocationIntent=text.slice(0,120);await addMessage('user',text);await addMessage('auren','Location could help with that. Would you like to enable it just for this tab? You can also tell me a city or neighborhood instead. Nothing is turned on automatically.');offerLocationButton();return;}
+  if (pendingLocationIntent&&/^(?:no|no thanks|not now|cancel)[.! ]*$/i.test(String(text).trim())) {pendingLocationIntent=null;await addMessage('user',text);await addMessage('auren','Understood. Location remains off. Tell me an area if you would still like suggestions.');return;}
   // A simple request for reassurance is about the most recent statement,
   // not an invitation to replay unrelated memories or apologize automatically.
   if (isReassuranceRequest(text)) {
     await addMessage('user',text);
     if (lastSubstantiveReply) {
-      await addMessage('auren', 'Let me be precise: '+personalizeMeetingText(lastSubstantiveReply)+' I can only confirm saved appointments by checking Your Day; traffic requires a live maps check.');
+      let check;
+        try { check=await askWithMemory('Please verify your last answer, rather than merely repeating it. I asked: '+text+'. What can be checked against my plans and what remains uncertain?'); }
+        catch { check='I cannot independently verify that statement right now. Check Your Day for saved appointments.'; }
+        await addMessage('auren',personalizeMeetingText(check));
     } else await addMessage('auren','Which detail would you like me to verify?');
     return;
   }
@@ -1490,7 +1501,7 @@ async function send(text) {
     const trafficRequest=/\b(?:traffic|how busy (?:the )?roads|route|directions|drive time)\b/i.test(text);
     if(nearbyRequest || trafficRequest){
       if(!locationApproved || !aurenLocation){
-        await addMessage('auren','I can help with local suggestions. To use your location, open Settings and choose Allow location for this session. You can also tell me an area instead.');
+        await addMessage('auren','Location is off. You can enable it in Settings or provide an area instead.');offerLocationButton();
       } else {
         const subject=trafficRequest ? 'traffic and directions' : 'nearby places';
         await addMessage('auren',`I can help you look up ${subject}, but I cannot verify live road conditions inside AUREN yet. Would you like to open a maps search?`);
