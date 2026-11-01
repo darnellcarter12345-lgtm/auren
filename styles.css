@@ -318,3 +318,56 @@ header { position:relative!important; max-width:820px; margin-inline:auto!import
 /* v2.4: one quiet, rotating upcoming line; no extra dashboard or controls. */
 #latestReply{color:#dbc49b;max-width:570px;margin:12px auto 0;text-align:center;line-height:1.55;font-size:clamp(.87rem,2.1vw,1rem);overflow-wrap:anywhere;}
 @media(max-width:520px){#latestReply{padding:0 12px;font-size:.88rem;}}
+
+/* v2.6.5 — stable, legible live voice text (override earlier caption rules) */
+.auren-caption-slot {
+  width:min(100%, 600px);
+  height:104px;
+  min-height:104px;
+  max-height:104px;
+  flex:0 0 104px;
+  overflow:hidden;
+  display:flex;
+  align-items:stretch;
+  justify-content:center;
+  box-sizing:border-box;
+}
+.auren-caption-slot .auren-live-caption,
+#liveTranscript.auren-live-caption {
+  display:block!important;
+  width:100%;
+  height:100%;
+  min-height:0;
+  max-height:none;
+  margin:0!important;
+  padding:12px 16px;
+  overflow-y:auto;
+  overflow-x:hidden;
+  -webkit-line-clamp:unset;
+  line-clamp:unset;
+  -webkit-box-orient:initial;
+  text-overflow:clip;
+  white-space:normal;
+  overflow-wrap:break-word;
+  word-break:normal;
+  box-sizing:border-box;
+  border:1px solid rgba(214,181,123,.25);
+  border-radius:16px;
+  background:rgba(23,27,33,.92);
+  color:#f2e5cf!important;
+  font:500 1rem/1.5 system-ui,-apple-system,sans-serif!important;
+  letter-spacing:0;
+  text-align:left;
+  scrollbar-width:thin;
+  -webkit-font-smoothing:antialiased;
+}
+#chat .latest-reply {
+  overflow-wrap:break-word;
+  word-break:normal;
+  white-space:normal;
+  line-height:1.5;
+}
+@media (max-width:520px) {
+  .auren-caption-slot { height:100px; min-height:100px; max-height:100px; flex-basis:100px; }
+  #liveTranscript.auren-live-caption {font-size:.94rem!important; padding:11px 13px;}
+}

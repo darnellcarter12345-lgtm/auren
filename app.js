@@ -24,14 +24,33 @@ aiEndpointInput.value = getAIEndpoint();
 $('saveAIEndpoint').onclick = () => { try { setAIEndpoint(aiEndpointInput.value); showStatus('AUREN AI connection saved on this browser.', 'ok'); } catch (e) { showStatus(e.message, 'error'); } };
 $('clearAIEndpoint').onclick = () => { setAIEndpoint(''); aiEndpointInput.value = ''; showStatus('AI connection removed.', 'info'); };
 let storageOk = false, sinceTrim = 0;
-// Keep live captions inside one fixed-size panel; long text never moves the orb.
-function showCaption(speaker, content) {
+// Stable, readable captions. Updates are throttled so speech progress does not flicker.
+let captionFrame = null;
+let captionPending = null;
+let captionLastDraw = 0;
+function renderCaption() {
+  captionFrame = null;
+  if (!captionPending) return;
+  const { speaker, content } = captionPending;
   const panel = $('liveTranscript');
-  const full = String(content || '').trim();
-  // Keep the newest words visible while speaking, without changing the panel height.
-  const MAX = 155;
-  const visible = full.length > MAX ? '…' + full.slice(-MAX).trimStart() : full;
-  panel.textContent = full ? `${speaker}: ${visible}` : '';
+  if (!panel) return;
+  const full = String(content || '').replace(/\s+/g, ' ').trim();
+  // Preserve complete words when displaying the recent part of a long response.
+  const LIMIT = 220;
+  let visible = full;
+  if (full.length > LIMIT) {
+    const tail = full.slice(-LIMIT);
+    const space = tail.indexOf(' ');
+    visible = '…' + (space >= 0 ? tail.slice(space + 1) : tail);
+  }
+  const output = full ? `${speaker}: ${visible}` : '';
+  if (panel.textContent !== output) panel.textContent = output;
+  captionLastDraw = Date.now();
+}
+function showCaption(speaker, content) {
+  captionPending = { speaker, content };
+  if (captionFrame !== null) return;
+  captionFrame = setTimeout(renderCaption, Math.max(0, 100 - (Date.now() - captionLastDraw)));
 }
 const voice = createVoice({
   onInterim: partial => showCaption('You', partial),
