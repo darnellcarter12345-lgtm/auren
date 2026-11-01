@@ -17,6 +17,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   let desiredMode = 'off';
   let currentUtterance = null;
   let fixedVoice = null;
+  let audioPrimed = false;
   let spokenText = '';
   let interrupted = false;
   let interruptionsEnabled = false; // Privacy-conscious default: background voices cannot interrupt.
@@ -273,8 +274,26 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     speaking = false; spokenText = '';
     if (!responding) listenSoon(120);
   }
+  // iOS does not grant an independent "always allow audio" permission. Speech
+  // synthesis may need its audio session initialized from a direct user gesture.
+  function primeAudio() {
+    if (!synth || !available().speak) return false;
+    enabled = true;
+    try {
+      synth.resume();
+      if (!audioPrimed && mobileWebKit && !speaking) {
+        const warmup = new SpeechSynthesisUtterance(' ');
+        warmup.volume = 0;
+        warmup.lang = 'en-GB';
+        synth.speak(warmup);
+        audioPrimed = true;
+      }
+      return true;
+    } catch (error) { report('iPhone audio is unavailable. Try tapping the orb again.'); return false; }
+  }
   function speak(text) {
     if (!enabled || !available().speak || !text) return;
+    try { synth.resume(); } catch {}
     // A fresh answer replaces prior speech; stop timers/recognition only once.
     // Keep recognition running during speech where Safari permits, so the user
     // can interrupt. Spoken-voice echo is filtered in the recognition handler.
@@ -330,7 +349,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     }
   });
   return {
-    available, speak, stopSpeaking, startListening, stopListening, setWakeMode,
+    available, speak, primeAudio, stopSpeaking, startListening, stopListening, setWakeMode,
     getVoices() { return synth?.getVoices?.() || []; },
     setVoicePreference(uri) { preferredVoiceURI = String(uri || ""); fixedVoice = null; },
     setVoiceStyle({ rate, pitch } = {}) {

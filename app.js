@@ -11,6 +11,7 @@ import { buildBackup, encryptBackup, decryptBackup, validateBackup, applyPlan, d
 import { loadSettings, saveSettings } from './settings.js';
 import { createVoice } from './voice.js';
 import { getAIEndpoint, setAIEndpoint, askAI } from './ai.js';
+import { getWeatherBriefing } from './weather.js';
 
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -125,7 +126,7 @@ $('orbControl').addEventListener('click', () => {
     return;
   }
   try {
-    if (capabilities.speak) { voice.setEnabled(true); $('speakReplies').checked = true; }
+    if (capabilities.speak) { voice.primeAudio(); voice.setEnabled(true); $('speakReplies').checked = true; }
     if (voice.speaking) {
       // Stop the reply first, then listen for the correction on this same user gesture.
       voice.stopSpeaking();
@@ -413,6 +414,8 @@ function setPlannerScope(scope){plannerScope=scope;setScopeButtons({day:'viewDay
 function setBriefingScope(scope){briefingScope=scope;setScopeButtons({day:'briefDay',week:'briefWeek'},scope);$('briefingScopeLabel').textContent=scope==='week'?'Your week’s plans':'Today’s plans';}
 $('viewDay').onclick=()=>setPlannerScope('day');$('viewWeek').onclick=()=>setPlannerScope('week');
 $('briefDay').onclick=()=>setBriefingScope('day');$('briefWeek').onclick=()=>setBriefingScope('week');
+const weatherCityField=document.createElement('input');weatherCityField.id='weatherCity';weatherCityField.type='text';weatherCityField.maxLength=80;weatherCityField.setAttribute('aria-label','Weather city');weatherCityField.placeholder='Weather city';weatherCityField.value=localStorage.getItem('auren_weather_city')||'Dallas';const weatherCityWrap=document.createElement('label');weatherCityWrap.className='hint';weatherCityWrap.textContent='Weather city ';weatherCityWrap.append(weatherCityField);$('settings').append(weatherCityWrap);
+$('weatherCity').addEventListener('change',()=>{const city=$('weatherCity').value.trim().slice(0,80); if(city){localStorage.setItem('auren_weather_city',city); $('weatherCity').value=city;}});
 function weekSummary(date){
  const items=weekItems(date);
  if(!items.length)return 'There are no plans saved for this week. That is only what is in this planner.';
@@ -511,7 +514,23 @@ $('planForm').onsubmit=async e=>{e.preventDefault();pendingPlan={kind:'add',titl
 function prepareSpokenReview(){if(capabilities.speak){voice.setEnabled(true);$('speakReplies').checked=true;} if(capabilities.listen && !voice.awake)voice.startListening();voice.setReviewMode?.(true);reviewPending=true;}
 function beginReview(){prepareSpokenReview();const date=$('planDate').value;addMessage('auren',planSummary(date));}
 // Spoken review remains available through the daily briefing and natural conversation.
-$('playBriefing').onclick=()=>{prepareSpokenReview();const date=localDate();const summary=weekOrDaySummary(date,briefingScope);const today=new Date();const end=briefingScope==='week'?new Date(today.getTime()+7*86400000):new Date(today.getFullYear(),today.getMonth(),today.getDate()+1);const due=reminders.filter(r=>!r.fired&&new Date(r.at)>=today&&new Date(r.at)<end).sort((a,b)=>a.at.localeCompare(b.at));const extra=due.length?' You also have '+due.length+' upcoming '+(due.length===1?'reminder':'reminders')+'.':'';addMessage('auren',`Good morning. ${summary}${extra}`);};
+$('playBriefing').onclick=async()=>{
+  // Prime speech during the click, BEFORE any asynchronous weather request.
+  voice.primeAudio();
+  prepareSpokenReview();
+  const date=localDate();
+  const summary=weekOrDaySummary(date,briefingScope);
+  const today=new Date();
+  const end=briefingScope==='week'?new Date(today.getTime()+7*86400000):new Date(today.getFullYear(),today.getMonth(),today.getDate()+1);
+  const due=reminders.filter(r=>!r.fired&&new Date(r.at)>=today&&new Date(r.at)<end).sort((a,b)=>a.at.localeCompare(b.at));
+  const extra=due.length?' You also have '+due.length+' upcoming '+(due.length===1?'reminder':'reminders')+'.':'';
+  const city=localStorage.getItem('auren_weather_city')||'Dallas';
+  $('briefingWeatherStatus').textContent='Checking weather for '+city+'…';
+  const result=await getWeatherBriefing(city,briefingScope);
+  $('briefingWeatherStatus').textContent=result.success?'Weather: '+result.display:'Weather unavailable — schedule still works.';
+  const weather=result.success?' '+result.spoken:'';
+  await addMessage('auren',`Good morning. ${summary}${extra}${weather}`);
+};
 function proposedDay(text){return parseDateIntent(text)||$('planDate').value||localDate();}
 function timeFromText(text){
  const m=text.match(/\b(?:at|to|for)\s+(\d{1,2})(?::(\d\d))?\s*(a\.?m\.?|p\.?m\.?)?\b/i);

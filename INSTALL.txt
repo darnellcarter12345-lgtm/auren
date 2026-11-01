@@ -1,5 +1,1 @@
-AUREN v2.4 - Reminders + Up Next
-Replace index.html, styles.css, app.js, and voice.js in GitHub.
-Other files and Cloudflare Worker stay unchanged.
-Reminders are device-local and only checked while webpage is open; iPhone background/locked screen alerts are not supported.
-Note: v2.3.2 voice.js is included unchanged for compatibility.
+AUREN v2.5 — replace app.js, voice.js, index.html; ADD weather.js. Keep other modules unchanged. Open site in Safari on iPhone and tap orb once to initiate browser voice. iOS has no Always Allow toggle for continuous web speech; audio and microphone are separate. Weather defaults to Dallas (change Weather city in Settings). No GPS permission is requested.
