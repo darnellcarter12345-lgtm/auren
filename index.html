@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101318">
   <title>AUREN · Voice Assistant</title>
-  <link rel="stylesheet" href="./styles.css?v=2.2.1">
+  <link rel="stylesheet" href="./styles.css?v=2.2.2">
 </head>
 <body>
   <div id="statusBar" role="status" aria-live="polite" hidden>
@@ -20,6 +20,7 @@
       <p class="sub"><span class="sr-only" id="status">starting&hellip;</span></p>
     </div>
   </header>
+  <button type="button" id="panelToggle" class="ghost" aria-expanded="false" aria-controls="settings" aria-label="Open Settings">⚙</button>
   <noscript><p class="card">AUREN needs JavaScript enabled.</p></noscript>
 
   <div class="hero" aria-label="AUREN voice assistant">
@@ -28,7 +29,7 @@
     <p id="heroState" hidden>AUREN is asleep</p>
     <p id="wakeHint" class="wake-hint">Tap to awaken</p>
     <div class="auren-caption-slot" aria-label="Live conversation"><p id="liveTranscript" class="auren-live-caption" aria-live="polite"></p></div>
-    <div class="quick-controls"><button type="button" id="wakeBtn" class="ghost" hidden aria-pressed="false">Enable “Hey Auren”</button><button type="button" id="panelToggle" class="ghost" aria-expanded="false" aria-label="Settings">⚙</button></div>
+    <div class="quick-controls"><button type="button" id="wakeBtn" class="ghost" hidden aria-pressed="false">Enable “Hey Auren”</button></div>
     <div class="home-shortcuts" aria-label="AUREN shortcuts">
       <button type="button" data-screen="planner"><span aria-hidden="true">▦</span>Your Day</button>
       <button type="button" data-screen="briefing"><span aria-hidden="true">☀</span>Briefing</button>
@@ -161,6 +162,6 @@
     </section>
   </main>
 
-  <script type="module" src="./app.js?v=220"></script>
+  <script type="module" src="./app.js?v=222"></script>
 </body>
 </html>

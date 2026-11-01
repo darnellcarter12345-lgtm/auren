@@ -109,29 +109,37 @@ async function activateScreen(screen) {
   if (screen === 'planner') renderDay();
   window.scrollTo({top:0,behavior:'instant'});
 }
-$('panelToggle').onclick = () => {
-  const settingsOpen = $('settings').classList.contains('active');
+$('panelToggle').addEventListener('click', (event) => {
+  event.preventDefault();
+  const settingsOpen = document.body.dataset.screen === 'settings';
   void activateScreen(settingsOpen ? lastNonSettingsScreen : 'settings');
-};
-// One deliberate tap per action. Rapid repeated taps must never queue voices.
+});
+// Direct click actions are synchronous to preserve Safari's microphone gesture permission.
 let lastOrbTap = 0;
-$('orbControl').onclick = () => {
+$('orbControl').addEventListener('click', () => {
   const now = Date.now();
-  if (now - lastOrbTap < 250) return;
+  if (now - lastOrbTap < 220) return; // suppress accidental double-taps only
   lastOrbTap = now;
-  if (capabilities.speak) { voice.setEnabled(true); $('speakReplies').checked = true; }
-  // If speaking, a tap stops the answer and opens the mic; no new speech is queued.
-  if (voice.speaking) {
-    voice.stopSpeaking();
-    voice.stopListening();
-    voice.startListening();
-  } else if (voice.awake) {
-    voice.setWakeMode(true); // one tap sleeps, wake scanner remains authorized
-  } else {
-    voice.startListening(); // wake on direct click; preserve wake scanner after silence
+  if (!capabilities.listen) {
+    showStatus('Microphone recognition is unavailable here. You can still type in Text chat.', 'error');
+    return;
   }
-  syncVoiceUI();
-};
+  try {
+    if (capabilities.speak) { voice.setEnabled(true); $('speakReplies').checked = true; }
+    if (voice.speaking) {
+      // Stop the reply first, then listen for the correction on this same user gesture.
+      voice.stopSpeaking();
+      voice.startListening();
+    } else if (voice.awake) {
+      voice.setWakeMode(true); // sleep; keep wake phrase on where supported
+    } else {
+      voice.startListening(); // awaken immediately, without waiting for a wake phrase
+    }
+    syncVoiceUI();
+  } catch (error) {
+    showStatus('Could not activate the microphone: ' + (error?.message || 'browser permission denied'), 'error');
+  }
+});
 // Voice preview is intentionally removed: one voice, one simple main control.
 $('wakeBtn').onclick = () => {
   if (capabilities.speak) voice.setEnabled(true);
@@ -297,6 +305,15 @@ try { const saved=JSON.parse(localStorage.getItem(PLAN_KEY)||'[]'); if(Array.isA
 const localDate=(d=new Date())=>`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
 $('planDate').value=localDate();
 let pendingPlan=null;
+let planningOffer=null;
+let lastPlanningOfferAt=0;
+const PLANNING_OFFER_COOLDOWN_MS=10*60*1000;
+function planningOpportunity(text){
+  const t=String(text||'').trim();
+  if(t.length<12 || t.length>280 || /[?]$/.test(t) || /^(?:no|yes|cancel|forget|remember|schedule|add|move|delete)\b/i.test(t))return null;
+  if(/\b(?:deadline|due (?:on|by|tomorrow|next)|need to finish|have to finish|a lot to do|busy (?:tomorrow|this week|next week)|falling behind)\b/i.test(t))return 'Would you like me to help you make time for that in your planner?';
+  return null;
+}
 let lastDiscussedPlanId=null;
 let reviewPending=false;
 function savePlans(){ localStorage.setItem(PLAN_KEY,JSON.stringify(plans)); }
@@ -318,6 +335,12 @@ function proposedDay(text){const t=text.toLowerCase(); if(/\btomorrow\b/.test(t)
 function timeFromText(text){let m=text.match(/\b(?:at|for)\s+(\d{1,2})(?::(\d\d))?\s*(am|pm)?\b/i);if(!m)return null;let h=Number(m[1]),min=Number(m[2]||0);const ap=(m[3]||'').toLowerCase();if(h>23||min>59)return null;if(ap){if(h<1||h>12)return null;h=h%12+(ap==='pm'?12:0);}else if(h>=1&&h<=7)h+=12;return `${String(h).padStart(2,'0')}:${String(min).padStart(2,'0')}`;}
 function durationFromText(t){const m=t.match(/\b(\d+)\s*(hour|hours|minute|minutes)\b/i);return m?Math.min(720,Number(m[1])*(m[2].toLowerCase().startsWith('hour')?60:1)):60;}
 async function planSpeech(text){const t=text.trim();
+ if(planningOffer){
+   if(/^(?:no|not now|maybe later|never mind|nah)\b/i.test(t)){planningOffer=null;return 'Of course. I shall leave your schedule as it is.';}
+   if(/^(?:yes|yeah|sure|okay|please|let.s|sounds good)\b/i.test(t)){planningOffer=null;return 'Certainly. What would you like to make time for, and when?';}
+   planningOffer=null; // unrelated conversation: don't nag or hold an offer open
+ }
+
  if(pendingPlan && /^(yes|yeah|yep|correct|please do|do it|sure|confirm|go ahead|that's right)\b/i.test(t)){
   const p=pendingPlan;pendingPlan=null;
   if(p.kind==='add'){if(!p.title||!p.time)return 'I still need the name and time before saving that.';const event={id:uid(),title:p.title.slice(0,120),date:p.date,time:p.time,duration:p.duration||60};plans.push(event);try{savePlans();}catch(e){plans=plans.filter(x=>x.id!==event.id);return 'I could not save that event on this device.';}lastDiscussedPlanId=event.id;renderDay();return `Certainly. I have added ${event.title} at ${formatClock(event.time)}.`;}
@@ -466,6 +489,8 @@ async function send(text) {
       || /^(?:for now|just for now|this session|for this session|save session note)\s+/i.test(text);
     const planResponse = await planSpeech(text);
     const memoryDispute = isLocal || planResponse ? null : await memoryDisputeReply(text);
+    const planningSuggestion = !isLocal && !planResponse && !memoryDispute && !pendingPlan && !planningOffer
+      && Date.now()-lastPlanningOfferAt>PLANNING_OFFER_COOLDOWN_MS ? planningOpportunity(text) : null;
     if (planResponse) {
       await addMessage('auren', planResponse);
     } else if (isLocal) {
@@ -488,7 +513,8 @@ async function send(text) {
     } else {
       $('latestReply').textContent = 'Thinking…';
       const answer = await askWithMemory(text);
-      await addMessage('auren', answer);
+      if(planningSuggestion){planningOffer={prompt:planningSuggestion};lastPlanningOfferAt=Date.now();}
+      await addMessage('auren', planningSuggestion ? `${answer}\n\n${planningSuggestion}` : answer);
     }
   } catch (e) {
     // Make request failures audible too; previously err:true suppressed voice output,

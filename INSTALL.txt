@@ -1,3 +1,4 @@
-AUREN v2.2.1 — Settings + Mobile Fix
-Replace index.html, styles.css and app.js in GitHub. Keep voice.js and all other files unchanged.
-Settings gear now opens and closes deterministically, returning to the last screen. Mobile layout and touch targets improved. Safari microphone and background wake limitations remain.
+AUREN v2.2.2 — Settings tap + orb touch + gentle planning initiative.
+Replace index.html, styles.css, app.js only. Keep voice.js and your other modules unchanged.
+Hard-refresh Mac and mobile; test settings open/close, orb wake/sleep, three shortcuts, planner.
+Planning suggestions are opt-in and never auto-save events.

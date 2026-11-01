@@ -284,3 +284,12 @@ body{width:100%;overflow-x:clip;}
   #chatForm input{min-width:0}
 }
 @media(max-width:360px){.home-shortcuts button{font-size:.7rem}.home-shortcuts button span{font-size:1.25rem}.day-item{grid-template-columns:59px minmax(0,1fr) 38px}}
+
+/* v2.2.2: persistent Settings control and reliable touch targets */
+#panelToggle{position:fixed!important;top:max(12px,env(safe-area-inset-top))!important;right:max(12px,env(safe-area-inset-right))!important;display:grid!important;place-items:center;min-width:48px;min-height:48px;z-index:1000!important;pointer-events:auto!important;cursor:pointer;touch-action:manipulation}
+#panelToggle:focus-visible,.auren-orb:focus-visible,.home-shortcuts button:focus-visible{outline:2px solid #d6b57b;outline-offset:4px}
+#orbControl{position:relative;z-index:3;pointer-events:auto;touch-action:manipulation}
+#orbControl .orb-core{pointer-events:none}
+.home-shortcuts button{position:relative;z-index:3;touch-action:manipulation}
+#advancedNav[hidden]{display:none!important}
+@media(max-width:600px){#panelToggle{top:max(10px,env(safe-area-inset-top))!important;right:max(10px,env(safe-area-inset-right))!important}}
