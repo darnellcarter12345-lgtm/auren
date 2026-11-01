@@ -431,11 +431,44 @@ setInterval(()=>{checkReminders();upNextIndex++;renderUpNext();},12000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkReminders();});
 let pendingReminder=null;
 function findReminder(t){const words=t.toLowerCase();return reminders.find(r=>!r.fired&&words.includes(r.text.toLowerCase()))||null;}
+
+// Step 3: appointments and relative reminders share a verified, device-local save path.
+// Reminders can alert while AUREN is open; this does not promise background push notifications.
+function reminderOffsetMinutes(text) {
+ const match=String(text).match(/\b(\d{1,3})\s*(minutes?|mins?|hours?|hrs?)\s+(?:before|prior to)\b/i);
+ if(!match)return null;
+ const amount=Number(match[1])*(/^(?:hour|hr)/i.test(match[2])?60:1);
+ return amount>0&&amount<=10080?amount:null;
+}
+function eventReminder(event,minutes) {
+ if(!event||!Number.isFinite(minutes)||minutes<=0)return 'I need an appointment and a valid reminder interval.';
+ const eventAt=eventTimestamp(event);
+ const when=eventAt-minutes*60000;
+ if(!Number.isFinite(when)||when<=Date.now())return `I saved ${event.title}, but the requested reminder time has already passed. Please choose another interval.`;
+ const item={id:uid(),text:event.title,at:new Date(when).toISOString(),fired:false,eventId:event.id,offsetMinutes:minutes};
+ reminders.push(item);
+ try{saveReminders();}catch(error){reminders=reminders.filter(r=>r.id!==item.id);return `I saved ${event.title}, but couldn't save its reminder on this device.`;}
+ refreshUpNext();
+ return `Your reminder is saved for ${minutes} minutes before ${event.title}. It can alert you while AUREN is open.`;
+}
+function linkedReminderForLastEvent(text) {
+ if(!/^(?:please\s+)?(?:remind me|set (?:a )?reminder|and remind me)\b/i.test(text))return null;
+ if(!/\b(?:before (?:it|that|the appointment|the event)|prior to (?:it|that))\b/i.test(text))return null;
+ const minutes=reminderOffsetMinutes(text);
+ if(minutes===null)return 'How long before the appointment should I remind you?';
+ const event=plans.find(p=>p.id===lastDiscussedPlanId);
+ if(!event)return 'Which appointment should that reminder be linked to?';
+ if(eventTimestamp(event)<=Date.now())return 'That appointment has already passed.';
+ pendingReminder={kind:'linked',eventId:event.id,minutes};
+ return `Shall I set a reminder ${minutes} minutes before ${event.title}?`;
+}
+
 function reminderSpeech(t){
  const text=t.trim();
  if(pendingReminder){
   if(/^(?:yes|yeah|yep|sure|correct|confirm|do it|please do|go ahead)\b/i.test(text)){
    const p=pendingReminder;pendingReminder=null;
+   if(p.kind==='linked'){const event=plans.find(e=>e.id===p.eventId);return event?eventReminder(event,p.minutes):'That appointment no longer exists. No reminder was saved.';}
    if(p.kind==='remove'){const existing=reminders.find(r=>r.id===p.id);reminders=reminders.filter(r=>r.id!==p.id);try{saveReminders();}catch(e){if(existing)reminders.push(existing);return 'I could not save that change.';}refreshUpNext();return 'Certainly. That reminder has been removed.';}
    const item={id:uid(),text:p.text,at:p.at,fired:false};reminders.push(item);try{saveReminders();}catch(e){reminders=reminders.filter(r=>r.id!==item.id);return 'I could not save that reminder.';}refreshUpNext();return 'Certainly. I will remind you '+new Date(item.at).toLocaleString([],{weekday:'long',hour:'numeric',minute:'2-digit'})+'.';
   }
@@ -449,6 +482,7 @@ function reminderSpeech(t){
   pendingReminder={kind:'remove',id:r.id};return 'Shall I remove your reminder for '+r.text+'?';
  }
  if(!/^(?:please\s+)?(?:remind me|set (?:a )?reminder)\b/i.test(text))return null;
+ const linked=linkedReminderForLastEvent(text);if(linked!==null)return linked;
  const before=text.match(/\b(\d{1,3})\s*(minutes?|hours?)\s+before\s+(?:my\s+|the\s+)?(.+?)(?:[.!?]|$)/i);
  if(before){
   const offset=Number(before[1])*(before[2].toLowerCase().startsWith('hour')?60:1);
@@ -717,11 +751,15 @@ async function planSpeech(text){const t=text.trim();
  }
  if(pendingPlan && /^(yes|yeah|yep|okay|ok|that works|sounds good|correct|please do|do it|sure|confirm|go ahead|that's right)\b/i.test(t)){
   const p=pendingPlan;
+  const combinedReminder=/\bremind\s+me\b/i.test(t)?reminderOffsetMinutes(t):null;
   if(p.kind!=='delete'&&!p.conflictAcknowledged){const latest=conflictingEvents(p,p.kind==='move'?p.id:null);if(latest.length){const prompt=conflictAdvice(p);return prompt||'That time now conflicts with another event.';}}
   pendingPlan=null;
-  if(p.kind==='add'){if(!p.title||!p.time)return 'I still need the name and time before saving that.';const event={id:uid(),title:p.title.slice(0,120),date:p.date,time:p.time,duration:p.duration||60};plans.push(event);try{savePlans();}catch(e){plans=plans.filter(x=>x.id!==event.id);return 'I could not save that event on this device.';}lastDiscussedPlanId=event.id;renderDay();return `Certainly. I have added ${event.title} for ${readableDate(event.date)} at ${formatClock(event.time)} (${localTimeZone()}).`;}
-  if(p.kind==='delete'){const old=plans.find(e=>e.id===p.id);plans=plans.filter(e=>e.id!==p.id);try{savePlans();}catch{if(old)plans.push(old);return 'I could not save that deletion.';}renderDay();return 'Certainly. I have removed that plan.';}
-  if(p.kind==='move'){const event=plans.find(e=>e.id===p.id);if(!event)return 'That plan no longer exists.';const previous={time:event.time,date:event.date,duration:event.duration};event.time=p.time||event.time;event.date=p.date||event.date;event.duration=p.duration||event.duration;try{savePlans();}catch{Object.assign(event,previous);return 'I could not save that change.';}lastDiscussedPlanId=event.id;$('planDate').value=event.date;renderDay();return `Certainly. Moved ${event.title} to ${formatClock(event.time)} on ${event.date}.`;}
+  if(p.kind==='add'){if(!p.title||!p.time)return 'I still need the name and time before saving that.';const event={id:uid(),title:p.title.slice(0,120),date:p.date,time:p.time,duration:p.duration||60};plans.push(event);try{savePlans();}catch(e){plans=plans.filter(x=>x.id!==event.id);return 'I could not save that event on this device.';}lastDiscussedPlanId=event.id;renderDay();const saved=`I've added ${event.title} for ${readableDate(event.date)} at ${formatClock(event.time)} (${localTimeZone()}).`;return combinedReminder!==null?saved+' '+eventReminder(event,combinedReminder):saved;}
+  if(p.kind==='delete'){const old=plans.find(e=>e.id===p.id);plans=plans.filter(e=>e.id!==p.id);try{savePlans();}catch{if(old)plans.push(old);return 'I could not save that deletion.';}const linked=reminders.filter(r=>r.eventId===p.id);if(linked.length){const backup=[...reminders];reminders=reminders.filter(r=>r.eventId!==p.id);try{saveReminders();}catch{reminders=backup;return 'The appointment was deleted, but its linked reminders could not be removed. Please check your reminders.';}}renderDay();return 'I removed that appointment'+(linked.length?' and its linked reminders.':'.');}
+  if(p.kind==='move'){const event=plans.find(e=>e.id===p.id);if(!event)return 'That plan no longer exists.';const previous={time:event.time,date:event.date,duration:event.duration};event.time=p.time||event.time;event.date=p.date||event.date;event.duration=p.duration||event.duration;try{savePlans();}catch{Object.assign(event,previous);return 'I could not save that change.';}lastDiscussedPlanId=event.id;$('planDate').value=event.date;renderDay();
+   const linked=reminders.filter(r=>!r.fired&&r.eventId===event.id&&Number.isFinite(r.offsetMinutes));
+   if(linked.length){const original=linked.map(r=>({r,at:r.at}));for(const r of linked){const next=eventTimestamp(event)-r.offsetMinutes*60000;if(next>Date.now())r.at=new Date(next).toISOString();else r.fired=true;}try{saveReminders();}catch(error){original.forEach(({r,at})=>r.at=at);return `Moved ${event.title}, but I couldn't update its linked reminders. Please check them.`;}}
+   return `Moved ${event.title} to ${formatClock(event.time)} on ${readableDate(event.date)}.${linked.length?' Its linked reminders were updated.':''}`;}
  }
  if(pendingPlan&&/^(no|nope|cancel|don't|do not|never mind)\b/i.test(t)){pendingPlan=null;return 'Of course. I have made no changes.';}
  if(pendingPlan && /^(?:actually|wait|instead|make (?:it|that)|change (?:it|that))\b/i.test(t)){

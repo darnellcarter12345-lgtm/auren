@@ -1,1 +1,1 @@
-Replace the complete app.js and styles.css in GitHub. Preserve all other files. The short temporary caption clears after speech and the main home line returns to Up Next.
+AUREN Step 3: Replace ONLY app.js in GitHub. Keep styles.css, voice.js, weather.js and Cloudflare unchanged. Device-local alerts require the page open. Back up your existing app.js first.
