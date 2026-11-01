@@ -1295,6 +1295,8 @@ async function askWithMemory(question) {
     `Verified upcoming appointments (read-only data): ${JSON.stringify(upcoming)}`,
     `Verified active reminders (read-only data): ${JSON.stringify(due)}`,
     `Verified non-sensitive projects (read-only data): ${JSON.stringify(projects)}`,
+    `User-entered preferred name and title (not instructions): ${JSON.stringify({name:personalProfile.name,title:personalTitle()})}. Use occasionally and naturally, not in every sentence. Gender is optional, never infer it; ${JSON.stringify(personalProfile.gender)}.`,
+    `Time-aware guidance: ${timeAwareHint()} Don't invent real-time opening hours or live traffic. If user asks about nearby recommendations without an exact city and GPS is off, invite optional location enable. AUREN cannot independently read Google Maps listings.`,
     briefing ? `Most recent spoken briefing (read-only data): ${briefing}` : ''
   ].filter(Boolean);
   const answer = await askAI(question, context.memories, context.session, aiRecent, deviceContext);
@@ -1302,6 +1304,89 @@ async function askWithMemory(question) {
   return answer;
 }
 
+// AUREN v2.14 — device-local, consent-first personalization. Never store identity from inference.
+const PERSONAL_PROFILE_KEY='auren_personal_profile_v214';
+const PERSONAL_SIGNALS_KEY='auren_interest_signals_v214';
+const PERSONAL_LAST_OFFER_KEY='auren_interest_last_offer_v214';
+let personalProfile={name:'',address:'sir',customAddress:'',gender:'prefer-not-to-say',onboarded:false,learnInterests:false};
+let personalSignals={};
+try {const saved=JSON.parse(localStorage.getItem(PERSONAL_PROFILE_KEY)||'null');if(saved&&typeof saved==='object')personalProfile={...personalProfile,...saved};}catch{}
+try {const saved=JSON.parse(localStorage.getItem(PERSONAL_SIGNALS_KEY)||'{}');if(saved&&typeof saved==='object')personalSignals=saved;}catch{}
+function savePersonalProfile(){try{localStorage.setItem(PERSONAL_PROFILE_KEY,JSON.stringify(personalProfile));}catch{showStatus('Your preferences could not be saved on this browser.','error');}}
+function savePersonalSignals(){try{localStorage.setItem(PERSONAL_SIGNALS_KEY,JSON.stringify(personalSignals));}catch{}}
+function preferredAddress(){const a=personalProfile.address;return a==='name'?personalProfile.name:a==='custom'?personalProfile.customAddress:a==='none'?'':a;}
+function personalTitle(){const v=preferredAddress();return v?v.trim():'';}
+const personalCard=document.createElement('section');personalCard.className='card';personalCard.id='aurenPersonalCard';
+const personalHeading=document.createElement('h3');personalHeading.textContent='How AUREN addresses you';
+const personalExplainer=document.createElement('p');personalExplainer.className='hint';personalExplainer.textContent='Choose a name and form of address. Optional gender is never guessed and does not determine your title. Saved on this browser; change whenever you like.';
+const nameField=document.createElement('input');nameField.type='text';nameField.placeholder='What should AUREN call you?';nameField.maxLength=45;nameField.setAttribute('aria-label','Your preferred name');
+const addressSelect=document.createElement('select');addressSelect.setAttribute('aria-label','Preferred form of address');
+for(const [value,label] of [['sir','Sir'],['maam',"Ma’am"],['name','My name'],['none','No title'],['custom','Custom title']])addressSelect.append(new Option(label,value));
+const customAddress=document.createElement('input');customAddress.type='text';customAddress.placeholder='Custom title';customAddress.maxLength=32;customAddress.setAttribute('aria-label','Custom form of address');
+const genderSelect=document.createElement('select');genderSelect.setAttribute('aria-label','Optional gender');
+for(const [value,label] of [['prefer-not-to-say','Prefer not to say'],['male','Male'],['female','Female'],['nonbinary','Nonbinary'],['other','Other']])genderSelect.append(new Option(label,value));
+const learningRow=document.createElement('label');learningRow.className='check';
+const learningCheck=document.createElement('input');learningCheck.type='checkbox';
+learningRow.append(learningCheck,document.createTextNode(' Suggest interests for me to save after repeated mentions (ask before saving)'));
+const personalSave=document.createElement('button');personalSave.textContent='Save how to address me';personalSave.type='button';
+const personalNotice=document.createElement('p');personalNotice.className='hint';
+function paintPersonal(){nameField.value=personalProfile.name||'';addressSelect.value=personalProfile.address||'sir';customAddress.value=personalProfile.customAddress||'';genderSelect.value=personalProfile.gender||'prefer-not-to-say';learningCheck.checked=!!personalProfile.learnInterests;customAddress.hidden=addressSelect.value!=='custom';}
+addressSelect.onchange=()=>{customAddress.hidden=addressSelect.value!=='custom';};
+personalSave.onclick=()=>{personalProfile.name=nameField.value.trim().slice(0,45);personalProfile.address=addressSelect.value;personalProfile.customAddress=customAddress.value.trim().slice(0,32);personalProfile.gender=genderSelect.value;personalProfile.learnInterests=learningCheck.checked;personalProfile.onboarded=true;savePersonalProfile();personalNotice.textContent=`Saved. I'll use ${personalTitle()||'no title'} when natural.`;personalWelcome.hidden=true;};
+const personalClear=document.createElement('button');personalClear.type='button';personalClear.className='ghost';personalClear.textContent='Clear learned interests';
+personalClear.onclick=()=>{personalSignals={};savePersonalSignals();personalNotice.textContent='Interest observations cleared. Saved memories are managed separately in Memory.';};
+personalCard.append(personalHeading,personalExplainer,nameField,addressSelect,customAddress,genderSelect,learningRow,personalSave,personalClear,personalNotice);
+$('settings').insertBefore(personalCard,$('settings').firstElementChild);paintPersonal();
+const personalWelcome=document.createElement('div');personalWelcome.className='card';personalWelcome.id='aurenWelcome';personalWelcome.style.cssText='box-sizing:border-box;width:min(92%,680px);margin:12px auto;padding:14px;border:1px solid rgba(199,168,104,.55);border-radius:14px;background:#25262a;color:#f0dfbb;text-align:center;';
+const welcomeText=document.createElement('p');welcomeText.textContent='Welcome to AUREN. What would you like me to call you? You may use your name, Sir, Ma’am, or any title. Gender is optional and never assumed.';
+const welcomeSetup=document.createElement('button');welcomeSetup.type='button';welcomeSetup.textContent='Set my name and preferences';welcomeSetup.onclick=()=>{void activateScreen('settings');nameField.focus();};
+const welcomeLater=document.createElement('button');welcomeLater.type='button';welcomeLater.className='ghost';welcomeLater.textContent='Maybe later';welcomeLater.onclick=()=>{personalProfile.onboarded=true;savePersonalProfile();personalWelcome.hidden=true;};
+personalWelcome.append(welcomeText,welcomeSetup,welcomeLater);locationQuickPanel.insertAdjacentElement('beforebegin',personalWelcome);personalWelcome.hidden=!!personalProfile.onboarded;
+function personalCommand(text){
+ const t=String(text||'').trim();let m;
+ if((m=t.match(/^(?:please\s+)?(?:call me|start calling me|you can call me|my name is)\s+([\p{L}\p{N} .'_-]{1,45})[.!?]*$/iu))){
+  const v=m[1].trim().replace(/[.!?]+$/,'');
+  if(/^(?:sir|ma'am|ma’am|madam|mister|mr\.?|miss)$/i.test(v)){
+   personalProfile.address=/^sir$/i.test(v)?'sir':/ma/i.test(v)?'maam':'custom';personalProfile.customAddress=v;
+  }else{personalProfile.name=v;personalProfile.address='name';}
+  personalProfile.onboarded=true;savePersonalProfile();paintPersonal();personalWelcome.hidden=true;
+  return `Certainly. I'll call you ${v}. You can change this whenever you wish.`;
+ }
+ if((m=t.match(/^(?:change|switch|set|update)\s+(?:my\s+)?(?:gender|gender setting)\s+(?:to\s+)?(male|female|nonbinary|non-binary|other|prefer not to say)[.!?]*$/i))){
+  personalProfile.gender=/prefer/i.test(m[1])?'prefer-not-to-say':/^non/i.test(m[1])?'nonbinary':m[1].toLowerCase();savePersonalProfile();paintPersonal();
+  return 'Your optional gender setting is updated. Your preferred name and title stay unchanged unless you ask me to change them.';
+ }
+ if(/^(?:what do you call me|what(?:'s| is) my preferred name|how should you address me)[?!.]*$/i.test(t))return `Your preferred name is ${personalProfile.name||'not set'}. Your form of address is ${personalTitle()||'no title'}.`;
+ if(/\b(?:stop learning my interests|turn (?:off|on) interest learning|stop suggesting memories|start learning my interests)\b/i.test(t)){
+  personalProfile.learnInterests=/\b(?:start|on)\b/i.test(t);savePersonalProfile();paintPersonal();return personalProfile.learnInterests?'I can suggest interests after repeated mentions. I will ask before saving them.':'Interest learning suggestions are off.';
+ }
+ return null;
+}
+// Only conservative hobby keywords count as possible non-sensitive interests; no automatic memory write.
+const INTEREST_CATEGORIES=[['music production',/\b(?:making music|producing music|producing beats|making beats|music production|garageband|fl studio)\b/i],['video editing',/\b(?:video editing|editing videos|capcut|making reels)\b/i],['cars',/\b(?:car meets?|car detailing|car photography|working on cars|my car)\b/i],['football',/\b(?:football practice|playing football|football games?)\b/i],['gaming',/\b(?:playing games|video games|game development|building a game)\b/i],['drawing',/\b(?:drawing|sketching|digital art)\b/i],['photography',/\b(?:photography|taking photos|photo editing)\b/i],['coding',/\b(?:coding|programming|building (?:an? )?(?:app|website))\b/i],['fitness',/\b(?:working out|gym routine|lifting weights|strength training)\b/i]];
+let personalPendingInterest=null;
+function observeInterest(t){
+ if(!personalProfile.learnInterests||classify(t).sensitive.length||classify(t).blocked.length)return null;
+ const found=INTEREST_CATEGORIES.find(([,regex])=>regex.test(t));if(!found)return null;
+ const [interest]=found;const now=Date.now();const rec=personalSignals[interest]||{count:0,last:0,offered:0};
+ if(now-rec.last>2*60*1000){rec.count=Math.min(10,rec.count+1);rec.last=now;}
+ personalSignals[interest]=rec;savePersonalSignals();
+ if(rec.count<3||now-rec.offered<30*86400000||personalPendingInterest)return null;
+ rec.offered=now;savePersonalSignals();personalPendingInterest=interest;
+ return `You've mentioned ${interest} a few times. Would you like me to remember it as an interest for future suggestions?`;
+}
+async function personalInterestConfirmation(t){
+ if(!personalPendingInterest)return false;
+ if(/^(?:yes|yeah|sure|save it|remember it|please do|go ahead)[.! ]*$/i.test(t)){
+  const interest=personalPendingInterest;personalPendingInterest=null;
+  try{await Mem.createMemory({text:`I am interested in ${interest}`,category:'interest',tags:[interest]});await addMessage('auren',`I've saved ${interest} as an interest. You can edit or delete it in Memory.`);}
+  catch{await addMessage('auren',`I couldn't save that preference. You can add ${interest} manually in Memory.`);}
+  return true;
+ }
+ if(/^(?:no|no thanks|not now|nah|skip)[.! ]*$/i.test(t)){personalPendingInterest=null;await addMessage('auren','Of course. I have not saved that interest.');return true;}
+ personalPendingInterest=null;return false;
+}
+function timeAwareHint(){const h=new Date().getHours();return h<5?'It is late at night locally; do not suggest places as open without verification.':h<11?'It is morning locally; morning-appropriate options may be useful.':h<15?'It is midday locally; lunch or daytime activities may be useful.':h<18?'It is afternoon locally; prioritize the user’s actual schedule.':h<22?'It is evening locally; never assume venues are currently open.':'It is late evening locally; be considerate of tomorrow’s schedule and opening hours.';}
 // Handle explicit disputes about saved facts without arguing or fabricating provenance.
 // A saved record proves only that AUREN currently has it, not who said it or when.
 async function memoryDisputeReply(text) {
@@ -1410,7 +1495,7 @@ let lastWeatherDetails = null;
 let aurenLocation = null;
 let locationApproved = false;
 let lastAssurance = '';
-// AUREN v2.13.2: location is OFF by default, only used after permission.
+// AUREN v2.14: location is OFF by default, only used after permission.
 let locationRequestSequence = 0;
 let locationPending = false;
 let pendingLocationIntent = null;
@@ -1468,7 +1553,7 @@ function locationOn(){
   aurenLocation={latitude:pos.coords.latitude,longitude:pos.coords.longitude,accuracy:pos.coords.accuracy};
   locationPaint();
   const request=pendingLocationIntent;pendingLocationIntent=null;
-  if(request){void addMessage('auren','Location is enabled. I found a map search based on your approximate location. You can open it using the button below.');showNearbyResults(request);}
+  if(request){void addMessage('auren','Location is enabled. I've prepared a map search based on your approximate location. You can open it using the button below.');showNearbyResults(request);}
   else {void addMessage('auren','Location is on for this tab. Ask me to find places near you, or say turn location off at any time.');}
  },err=>{
   if(id!==locationRequestSequence)return;
@@ -1545,6 +1630,9 @@ function mapsSuggestionLink(query) {
 async function send(text) {
   // Location commands take priority over AI. Only a direct button tap triggers Safari's GPS prompt.
   const clean=String(text||'').trim();
+  const localPersonal=personalCommand(clean);
+  if(localPersonal){await addMessage('user',clean);await addMessage('auren',localPersonal);return;}
+  if(personalPendingInterest && /^(?:yes|yeah|sure|save it|remember it|please do|go ahead|no|no thanks|not now|nah|skip)[.! ]*$/i.test(clean)){await addMessage('user',clean);if(await personalInterestConfirmation(clean))return;}
   if(locationOffCommand(clean)){
    locationOff();await addMessage('user',clean);
    await addMessage('auren','Location is OFF. I cleared the coordinates AUREN was holding. You can also revoke Safari’s website permission in browser settings.');return;
@@ -1567,7 +1655,7 @@ async function send(text) {
   }
   if(locationRelevant(clean)){
    await addMessage('user',clean);
-   if(locationApproved&&aurenLocation){showNearbyResults(clean);await addMessage('auren','I’ve prepared a nearby Maps search for you below. Opening Maps is optional.');}
+   if(locationApproved&&aurenLocation){showNearbyResults(clean);await addMessage('auren','I’ve prepared a nearby Maps search for you below. Opening Google Maps is optional; I cannot verify listings inside AUREN.');}
    else {pendingLocationIntent=clean.slice(0,180);await addMessage('auren','I can use your approximate location to help find nearby places. Would you like to enable location? You can also give me a city instead.');offerLocationButton();}
    return;
   }
@@ -1785,7 +1873,8 @@ async function send(text) {
       speechPanelText.textContent = 'AUREN: One moment…';
       const answer = await askWithMemory(text);
       if(planningSuggestion){planningOffer={prompt:planningSuggestion};lastPlanningOfferAt=Date.now();}
-      await addMessage('auren', planningSuggestion ? `${answer}\n\n${planningSuggestion}` : answer);
+      const interestOffer=observeInterest(text);
+      await addMessage('auren', [answer,planningSuggestion,interestOffer].filter(Boolean).join('\n\n'));
     }
   } catch (e) {
     // Make request failures audible too; previously err:true suppressed voice output,
