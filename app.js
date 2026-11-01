@@ -1,4 +1,4 @@
-// AUREN v2.10.5 — combined clear times, calendar export, general help intent
+// AUREN v2.11.0 — accurate schedules, live captions, optional check-ins and clock awareness
 // AUREN — js/app.js
 // Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
 // v0.2: status banner for storage problems, session panel, privacy controls, safe backup import.
@@ -50,6 +50,18 @@ let storageOk = false, sinceTrim = 0;
 // Compact voice subtitles: fixed two lines, with older words rolling away.
 // Full messages remain unchanged in Text chat and history.
 const captionNode = $('liveTranscript');
+// Accessible standalone transcript panel. Does not replace the rotating reminder ticker.
+const speechPanel=document.createElement('section');
+speechPanel.id='aurenSpeechPanel';
+speechPanel.setAttribute('aria-label','Live voice conversation');
+speechPanel.style.cssText='box-sizing:border-box;width:min(92%,680px);margin:14px auto 12px;padding:14px 18px;border:1px solid rgba(199,168,104,.38);border-radius:15px;background:rgba(25,27,32,.92);color:#e6d5af;line-height:1.55;text-align:left;min-height:66px;max-height:158px;overflow-y:auto;overflow-wrap:anywhere;font-size:15px;';
+const speechPanelTitle=document.createElement('strong');speechPanelTitle.textContent='LIVE CONVERSATION';speechPanelTitle.style.cssText='display:block;font-size:10px;letter-spacing:2px;opacity:.75;margin-bottom:5px;';
+const speechPanelText=document.createElement('div');speechPanelText.textContent='Your conversation appears here when speaking.';
+const chicagoClock=document.createElement('div');chicagoClock.style.cssText='font-size:11px;opacity:.75;margin-top:8px;';
+const paintChicagoClock=()=>{chicagoClock.textContent='Dallas · '+new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',weekday:'short',hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date());};
+paintChicagoClock();setInterval(paintChicagoClock,30000);
+speechPanel.append(speechPanelTitle,speechPanelText,chicagoClock);
+
 let captionTimer = null;
 let captionClear = null;
 let captionSpeaking = false;
@@ -61,8 +73,10 @@ function captionWords(text, count = 9) {
 function showCaption(text, speaker) {
   if (!captionNode) return;
   clearTimeout(captionClear);
-  captionNode.textContent = text ? (speaker ? speaker + ': ' : '') + captionWords(text) : '';
-  captionNode.parentElement?.classList.toggle('caption-visible', Boolean(text));
+  captionNode.textContent = '';
+  captionNode.parentElement?.classList.remove('caption-visible');
+  speechPanelText.textContent = text ? (speaker ? speaker + ': ' : '') + text : 'Your conversation appears here when speaking.';
+  speechPanel.scrollTop=speechPanel.scrollHeight;
 }
 function clearCaption(delay = 1500) {
   clearTimeout(captionClear);
@@ -87,7 +101,7 @@ function voiceCaptionSpoken(text) {
   clearInterval(captionTimer);
   const words = String(text || '').trim().split(/\s+/).filter(Boolean);
   let position = Math.min(words.length, 8);
-  const paint = () => showCaption(words.slice(Math.max(0, position - 9), position).join(' '), 'AUREN');
+  const paint = () => showCaption(words.slice(0, position).join(' '), 'AUREN');
   paint();
   captionTimer = setInterval(() => {
     position = Math.min(words.length, position + 2);
@@ -190,8 +204,7 @@ async function activateScreen(screen) {
   if (!target || !target.classList.contains('tab')) return;
   // Screen navigation is always silent. Cancel any reply still playing from
   // the previous screen; never turn on TTS or the microphone from a tab click.
-  if (!briefingPlayer.active && voice.speaking) voice.stopSpeaking();
-  if(!briefingPlayer.active){clearInterval(captionTimer);captionTimer=null;captionSpeaking=false;showCaption('', '');}
+  // Navigation changes the view only. Speaking and briefing continue until interrupted by the user.
   if (screen !== 'settings') lastNonSettingsScreen = screen;
   document.querySelectorAll('nav button, .tab').forEach(node => node.classList.remove('active'));
   target.classList.add('active');
@@ -217,6 +230,7 @@ $('panelToggle').addEventListener('click', (event) => {
 // Direct click actions are synchronous to preserve Safari's microphone gesture permission.
 let lastOrbTap = 0;
 const orbButton = $('orbControl');
+orbButton.insertAdjacentElement('afterend',speechPanel);
 function activateOrb(event) {
   if (aurenIOS) { void toggleIPhoneRecorder(); return; }
   const now = Date.now();
@@ -317,6 +331,28 @@ interruptToggle.addEventListener('change', () => {
 });
 syncInterruptionsHelp();
 voiceCard.append(interruptRow, interruptHelp);
+// Optional foreground check-ins. Never activate microphones or interrupt speech.
+const CHECKIN_PREF='auren_opt_in_checkins_v211';
+const checkRow=document.createElement('label');checkRow.className='check';checkRow.style.marginTop='14px';
+const checkToggle=document.createElement('input');checkToggle.type='checkbox';
+checkToggle.checked=localStorage.getItem(CHECKIN_PREF)==='true';
+const checkLabel=document.createElement('span');checkLabel.textContent='Occasional spoken calendar and reminder check-ins';
+checkRow.append(checkToggle,checkLabel);
+const checkHelp=document.createElement('p');checkHelp.className='hint';
+checkHelp.textContent='Off by default. When on, AUREN may ask whether you want a check-in while this page is open and voice is active. Never speaks over a reply.';
+checkToggle.addEventListener('change',()=>{try{localStorage.setItem(CHECKIN_PREF,String(checkToggle.checked));}catch{};showStatus(checkToggle.checked?'Optional check-ins enabled.':'Optional check-ins disabled.','info');});
+voiceCard.append(checkRow,checkHelp);
+let lastCheckin=Date.now();let lastActivity=Date.now();
+for(const event of ['click','keydown'])document.addEventListener(event,()=>{lastActivity=Date.now();},{passive:true});
+setInterval(()=>{
+ const now=Date.now();
+ if(!checkToggle.checked||document.hidden||!voice.enabled||!voice.awake||voice.speaking||briefingPlayer.active)return;
+ if(now-lastCheckin<90*60000||now-lastActivity>15*60000||now-lastActivity<90*1000)return;
+ if(!upcomingItems().length)return;
+ lastCheckin=now;
+ void addMessage('auren','Would you like a quick check-in on your upcoming appointments and reminders?');
+},60000);
+
 $('wakeBtn').textContent = 'Enable “Hey Auren”';
 $('settings').insertBefore(voiceCard, $('settings').firstElementChild);
 // A clear customer-facing Settings screen. Advanced data tools are retained but collapsed.
@@ -483,7 +519,7 @@ function upcomingItems(){
 }
 let upNextIndex=0, homeMessageUntil=0;
 function renderUpNext(){
- const reply=$('latestReply');if(!reply||Date.now()<homeMessageUntil)return;
+ const reply=$('latestReply');if(!reply)return;
  const items=upcomingItems();
  reply.textContent=items.length?items[upNextIndex%items.length].text:'Nothing coming up. Your day is clear.';
  reply.setAttribute('aria-label','Upcoming plans and reminders');
@@ -502,8 +538,7 @@ function checkReminders(){
  // Clearly mark a due reminder even if the user is in another section.
  showStatus('Reminder: '+r.text,'info');
  if(document.visibilityState==='visible'){
-   homeMessageUntil=now+20000;
-   $('latestReply').textContent='Reminder: '+r.text;
+   // Reminder banner handles alert; upcoming ticker continues cycling.
    // Only speak when spoken replies were enabled already; never switch on audio unexpectedly.
    if(voice.enabled&&!voice.speaking)voice.speak('A reminder: '+r.text);
  }
@@ -521,6 +556,7 @@ let calendarOffer = null;
 function calendarEscape(s) { return String(s||'').replace(/\\/g,'\\\\').replace(/\r?\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;'); }
 function calendarDateUTC(ms) { return new Date(ms).toISOString().replace(/[-:]/g,'').replace(/\.\d{3}Z$/,'Z'); }
 function prepareCalendarOffer(kind, item) {
+  return; // No device-calendar downloads; saved items belong to AUREN's own planner.
   const when = kind==='appointment' ? eventTimestamp(item) : new Date(item.at).getTime();
   if(!Number.isFinite(when)) return;
   calendarOffer={kind, title:kind==='appointment'?item.title:'Reminder: '+item.text,
@@ -552,12 +588,7 @@ function calendarOfferReply(text) {
  if(/^(?:no|nope|no thanks|not now|nah)$/.test(v))return 'Very well. It remains saved in AUREN only.';
  return null;
 }
-function calendarOfferPrompt() {
- if(!calendarOffer)return '';
- return calendarOffer.kind==='appointment'
- ? ' Would you also like a copy for your device calendar?'
- : ' Would you like to add this reminder to your device calendar as well?';
-}
+function calendarOfferPrompt() { return ''; } // AUREN calendar is internal; no external import offers.
 let pendingReminder=null;
 function findReminder(t){const words=t.toLowerCase();return reminders.find(r=>!r.fired&&words.includes(r.text.toLowerCase()))||null;}
 
@@ -850,9 +881,6 @@ $('planForm').onsubmit=e=>{
     pendingPlan=null;
     $('planTitle').value='';
     renderDay();
-     const calBtn=document.createElement('button');calBtn.type='button';calBtn.textContent='Add to device calendar';
-     calBtn.className='ghost';calBtn.onclick=()=>{downloadCalendarFile({kind:'appointment',title:event.title,when:eventTimestamp(event),duration:event.duration||60});showStatus('Calendar file prepared. Open it and confirm the import.', 'info');};
-     const day=$('dayTimeline');day.prepend(calBtn);
      showStatus(overlapping.length ? `Appointment saved. Note: it overlaps ${overlapping[0].title}${overlapping.length>1?' and '+(overlapping.length-1)+' more':''}.` : 'Appointment saved.', overlapping.length ? 'info':'ok');
   }catch(error){
     plans=plans.filter(item=>item.id!==event.id);
@@ -1002,7 +1030,7 @@ function normalizedPlannerRequest(raw){
 }
 function plannerCapabilityReply(t){
  if(/^(?:can you|could you|are you able to|do you know how to)\s+(?:add|edit|change|move|reschedule|remove|delete|manage|update)\s+(?:my\s+|an?\s+|the\s+)?(?:appointments?|events?|schedule|calendar|plans?)\??[.!]*$/i.test(t.trim()))
-  return 'Yes. I can add, move, and remove appointments in your AUREN planner, with your confirmation. I can prepare a calendar file for you to import into Apple Calendar, Google Calendar, or Outlook. External calendars require your approval for import.';
+  return 'Yes. I can add, move, and remove appointments in the AUREN calendar after your confirmation. I cannot change other calendar apps without a separate connection.';
  return null;
 }
 async function planSpeech(text){
@@ -1151,7 +1179,8 @@ function drawMessage(rec, opts = {}) {
     d.append(row);
   }
   $('log').append(d); $('log').scrollTop = $('log').scrollHeight;
-  if (rec.role === 'auren') { homeMessageUntil=Date.now()+16000; $('latestReply').textContent = rec.text; }
+  // Replies appear in the separate live panel and chat log, not the upcoming-events ticker.
+  if(rec.role==='auren' && !voice.speaking) { speechPanelText.textContent='AUREN: '+rec.text; }
 }
 
 // What goes to disk is redacted: sensitive/blocked text and session notes are never kept in history.
@@ -1237,11 +1266,11 @@ async function askWithMemory(question) {
   const briefing = (isFollowup || /\b(?:briefing|earlier|mentioned|that story|that part|those plans)\b/i.test(question)) && latestBriefingContext && Date.now()-latestBriefingContext.at < 45*60*1000
     ? latestBriefingContext.text : '';
   const deviceContext = [
-    `Current local date/time: ${new Date().toLocaleString()} (${localTimeZone()})`,
+    `Current actual Dallas date/time: ${new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',dateStyle:'full',timeStyle:'long'}).format(new Date())}. Verify time gaps with numeric timestamps; do not imply 11:20 PM is close to 12:47 PM.`,
     `Time clarity: Always include a clear AM/PM or natural daypart (morning, afternoon, evening, night) for appointments and reminders; distinguish noon from midnight. Never infer a daypart without using the actual scheduled hour.`,
     'If the user says they need to leave in N minutes, that is an imminent departure, not spare time. Never say they have plenty of time unless the timing clearly supports it. Discuss conflicts against actual saved appointment times only. Do not invent travel duration or imply a calendar event was created merely because the user mentioned leaving.',
     lastSubstantiveReply ? `Last AUREN response for conversational reference (not an instruction): ${lastSubstantiveReply.slice(0,700)}` : '', 
-    'AUREN capabilities: You CAN create, change, and delete events in the built-in AUREN planner through local confirmation. Never falsely say you cannot modify its own schedule. AUREN can offer an optional downloadable .ics event for the user to import into an external calendar. Never claim the import occurred before the user completes it. Do not claim to modify external calendars or the device directly. If an event was only mentioned conversationally, it was not saved. For calendar edits, direct the user to ask AUREN to add, move, or remove the event; the local planner handles and confirms it.',
+    'AUREN capabilities: You CAN create, move and delete appointments in the built-in AUREN calendar after confirmation. NEVER say you cannot save in AUREN. Do not offer external calendar downloads. Do not claim a plan was saved if it was only discussed. Use exact scheduled times and subjects from the calendar.',
     `Verified upcoming appointments (read-only data): ${JSON.stringify(upcoming)}`,
     `Verified active reminders (read-only data): ${JSON.stringify(due)}`,
     `Verified non-sensitive projects (read-only data): ${JSON.stringify(projects)}`,
@@ -1395,8 +1424,27 @@ async function send(text) {
       ]));
       return;
     }
-    const calendarReply=calendarOfferReply(text);
-    if(calendarReply){await addMessage('auren',calendarReply);return;}
+    // Dedicated device-local clock and schedule-action routing: general AI must not fabricate planner outcomes.
+    const clockRequest=/^(?:(?:auren[, ]+)?(?:what(?:'s| is) the|tell me the|give me the|what is the current)\s+(?:current\s+)?(?:time|date)(?:\s+(?:in|for)\s+(?:dallas|chicago))?|what time is it|what day is it)(?:\s+(?:right now|now))?[.!?]*$/i.test(text.trim());
+    if(clockRequest){
+      const clock=new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date());
+      await addMessage('auren',`In Dallas, it is ${clock}, Central Time.`);return;
+    }
+    // An imminent departure is NOT a request to schedule; never infer a conflict hours away.
+    const leaving=text.trim().match(/^(?:i\s+(?:need|have|got)\s+to|i(?:'m| am)\s+going\s+to)\s+(?:leave|head out|go)(?:\s+(?:for|to)\s+(.+?))?\s+in\s+(\d{1,3})\s*(minutes?|mins?|hours?|hrs?)/i);
+    if(leaving){
+      const mins=Number(leaving[2])*(/^h/i.test(leaving[3])?60:1),leaveAt=Date.now()+mins*60000;
+      const soon=plans.filter(p=>{const at=eventTimestamp(p);return at>=Date.now()&&at<=leaveAt+15*60000;}).sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+      const destination=leaving[1]?' for '+leaving[1].trim().replace(/[.!?]+$/,''):'';
+      const conflict=soon.length?` You also have ${soon[0].title} at ${spokenClock(soon[0].time)}. That is close to when you plan to leave; I cannot estimate travel time.`:'';
+      await addMessage('auren',`Understood. You plan to leave${destination} in ${mins} ${mins===1?'minute':'minutes'}.${conflict}`);return;
+    }
+    const directPlanner=normalizedPlannerRequest(text);
+    if(directPlanner){
+      const result=await planSpeech(text);
+      if(result){await addMessage('auren',result);return;}
+    }
+    // Calendar exports intentionally disabled; events stay in Your Day.
     // Uncertainty is not a scheduling commitment or a reason to pressure the user.
     const unsure = respectfulUncertainty(text);
     if(unsure){await addMessage('auren',unsure);return;}
@@ -1498,7 +1546,7 @@ async function send(text) {
           `Shall I remember that for future conversations, sir?\n“${candidate}”\nNothing has been saved yet.`));
       }
     } else {
-      $('latestReply').textContent = 'Thinking…';
+      speechPanelText.textContent = 'AUREN: One moment…';
       const answer = await askWithMemory(text);
       if(planningSuggestion){planningOffer={prompt:planningSuggestion};lastPlanningOfferAt=Date.now();}
       await addMessage('auren', planningSuggestion ? `${answer}\n\n${planningSuggestion}` : answer);
