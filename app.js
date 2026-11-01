@@ -1,3 +1,5 @@
+// AUREN v2.20 — Maps return navigation, concise replies, responsive live captions
+// AUREN v2.19 — intent-first directions, immediate Maps popup, contextual responses
 // AUREN v2.16.7 — Smart Places controls in Settings; conversation stays clean.
 // AUREN v2.16.4 — startup reference repair; topic-switch patience, simplified orb status and subtle Central clock
 // AUREN — js/app.js
@@ -121,7 +123,7 @@ function voiceCaptionSpoken(text) {
     if (!captionSpeaking || !sentences.length) return;
     showCaption(sentences[index], 'AUREN');
     if (index < sentences.length - 1) {
-      const ms = Math.max(650, Math.min(1900, sentences[index].length * 17));
+      const ms = Math.max(450, Math.min(1350, sentences[index].length * 14));
       captionTimer = setTimeout(() => { index++; next(); }, ms);
     }
   };
@@ -246,6 +248,8 @@ async function activateScreen(screen) {
   const tab = document.querySelector(`nav button[data-tab="${screen}"]`);
   if (tab) tab.classList.add('active');
   document.body.dataset.screen = screen;
+  const activeMapsOverlay=document.getElementById('aurenMapsTemporaryOverlay');
+  if(activeMapsOverlay)activeMapsOverlay.style.display='none';
   const inSettings = screen === 'settings';
   advancedNav.hidden = !inSettings;
   $('panelToggle').setAttribute('aria-expanded', String(inSettings));
@@ -1265,7 +1269,7 @@ function drawMessage(rec, opts = {}) {
   }
   $('log').append(d); $('log').scrollTop = $('log').scrollHeight;
   // Replies appear in the separate live panel and chat log, not the upcoming-events ticker.
-  if(rec.role==='auren' && !voice.speaking) { speechPanelText.textContent='AUREN: '+rec.text; }
+  if(rec.role==='auren' && !voice.speaking) { const first=String(rec.text||'').match(/[^.!?\n]+(?:[.!?]+|$)/)?.[0]?.trim()||rec.text; showCaption(first,'AUREN'); }
 }
 
 // What goes to disk is redacted: sensitive/blocked text and session notes are never kept in history.
@@ -2162,14 +2166,32 @@ aurenPlaces = (() => {
   // Only route explicit navigation phrasing; normal questions stay with the AI.
   // Natural destinations and imperfect Safari voice transcripts are handled locally,
   // before generic traffic advice or the AI model can reinterpret navigation as a question.
-  const navigationIntent=/\b(?:take me(?:\s+find)?(?:\s+directions)?\s+to|take me\s+find\s+directions\s+to|(?:find|show|get|give)(?:\s+me)?\s+(?:the\s+)?directions\s+to|navigate(?:\s+me)?\s+to|route(?:\s+me)?\s+to|bring\s+up\s+(?:google\s+)?maps\s+(?:for|to)|how\s+(?:do\s+i|can\s+i)\s+get\s+to|drive\s+me\s+to|go\s+to)\s+(.{2,130})$/i;
+  // Navigation is a user intention, not a claim that AUREN can drive a car.
+  // Avoid passing requests for directions to the general chatbot.
   function destinationFrom(text) {
-    const t=String(text||'').trim().replace(/^(?:hey\s+)?auren[,.! ]*/i,'').replace(/^(?:(?:please|can you|could you|would you)\s+)/i,'').replace(/[.!?]+$/,'').trim();
-    let match=t.match(navigationIntent);
-    if(!match)match=t.match(/^(?:take\s+me\s+(?:to\s+)?(?:find\s+)?(?:directions\s+)?to|take\s+me\s+find\s+directions\s+to)\s+(.{2,130})$/i);
-    if(!match) return '';
-    let dest=match[1].trim().replace(/^(?:the\s+nearest|the\s+closest)\s+/i,'').replace(/\s+(?:please|for me)$/i,'').trim();
-    if(!dest || /^(?:settings|text chat|history|home|the home screen|my schedule|my calendar|sleep|work|school)$/i.test(dest))return '';
+    let t=String(text||'').normalize('NFKC').replace(/[’]/g,"'").trim();
+    t=t.replace(/^(?:(?:hey|hi|okay|ok)\s+)?auren\s*[,!:.]?\s*/i,'')
+       .replace(/^(?:(?:can|could|would|will)\s+you\s+|please\s+|i\s+(?:want|need)\s+(?:you\s+)?to\s+)/i,'')
+       .replace(/[.!?]+$/,'').trim();
+    // Covers speech-recognition insertions: 'take me find directions to Chipotle'.
+    const starters=[
+      /^(?:take|bring|drive|guide|lead)\s+me\s+(?:(?:to|find|show|get|the|some|directions|direction|route|routes|for)\s+){0,5}(?:to\s+)?(.+)$/i,
+      /^(?:navigate|route)\s+(?:me\s+)?(?:to\s+)?(.+)$/i,
+      /^(?:(?:find|show|get|give)\s+(?:me\s+)?(?:the\s+)?(?:directions?|route|way)\s+(?:to|for)\s+)(.+)$/i,
+      /^(?:(?:how\s+(?:do|can|would)\s+i\s+(?:get|drive|go)\s+to)|(?:where\s+is\s+the\s+(?:nearest|closest))|(?:open|pull\s+up|bring\s+up)\s+(?:google\s+)?maps\s+(?:for|to))\s+(.+)$/i,
+      /^(?:go|head|drive)\s+to\s+(.+)$/i,
+      /^(?:directions?\s+(?:to|for))\s+(.+)$/i
+    ];
+    let m=null;
+    for(const pattern of starters){m=t.match(pattern);if(m)break;}
+    if(!m)return '';
+    let dest=m[1].trim().replace(/^(?:(?:me|to|the)\s+)+/i,'')
+      .replace(/^(?:nearest|closest|a|an)\s+/i,'')
+      .replace(/\s+(?:please|for me|near me|nearby|around me)$/i,'').trim();
+    if(!dest||dest.length<2||dest.length>110)return '';
+    // Avoid routing application commands or abstract requests to Google Maps.
+    if(/^(?:settings?|text chat|history|the home screen|my (?:schedule|calendar|memories)|sleep|bed|the next sentence|the previous page)$/i.test(dest))return '';
+    if(/^(?:do|be|have|feel|know|say|tell|help|see|find out|remember|understand)\b/i.test(dest))return '';
     return dest;
   }
   // For named-business searches: don't require businesses to be in a hard-coded list.
@@ -2189,7 +2211,7 @@ aurenPlaces = (() => {
   const action=(label,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=fn;actions.append(b);return b;};
   const show=(title,message)=>{heading.textContent=title;content.replaceChildren();if(message){const p=document.createElement('p');p.textContent=message;content.append(p);}actions.replaceChildren();panel.style.display='block';};
   const hide=()=>{panel.style.display='none';content.replaceChildren();actions.replaceChildren();};
-  const clear=()=>{requestId++;phase='idle';pending='';coords=null;results=[];mapPending=false;returned=false;hide();closePopup();};
+  const clear=()=>{requestId++;phase='idle';pending='';coords=null;results=[];mapPending=false;returned=false;hide();closePopup();const n=document.getElementById('aurenMapsReturnNotice');if(n)n.style.display='none';};
   // Temporary, request-only Maps overlay. No persistent location card on Home.
   const mapOverlay=document.createElement('div');mapOverlay.id='aurenMapsTemporaryOverlay';
   mapOverlay.style.cssText='position:fixed;inset:0;z-index:11000;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;padding:18px;box-sizing:border-box;';
@@ -2198,20 +2220,29 @@ aurenPlaces = (() => {
   const mapText=document.createElement('p');mapText.style.lineHeight='1.5';
   const mapChoices=document.createElement('div');mapChoices.style.cssText='display:flex;gap:9px;flex-wrap:wrap;flex-direction:column;margin-top:14px;';
   mapCard.append(mapTitle,mapText,mapChoices);mapOverlay.append(mapCard);document.body.append(mapOverlay);
+  const returnNotice=document.createElement('div');returnNotice.id='aurenMapsReturnNotice';
+  returnNotice.style.cssText='position:fixed;right:16px;bottom:18px;z-index:9000;max-width:min(420px,calc(100vw - 32px));padding:14px;background:#22252b;color:#f2e1bf;border:1px solid #c7a868;border-radius:14px;box-shadow:0 6px 25px #0008;display:none;';
+  const noticeText=document.createElement('p');noticeText.style.cssText='margin:0 0 10px;line-height:1.4';
+  const noticeClose=document.createElement('button');noticeClose.type='button';noticeClose.textContent='Dismiss';noticeClose.onclick=()=>{returnNotice.style.display='none';};
+  const noticeAgain=document.createElement('button');noticeAgain.type='button';noticeAgain.textContent='More options';noticeAgain.style.marginLeft='8px';noticeAgain.onclick=()=>{returnNotice.style.display='none';displayResults(false);};
+  returnNotice.append(noticeText,noticeClose,noticeAgain);document.body.append(returnNotice);
+  let greetingCount=0;const greetings=['Welcome back. Did you find what you needed?','Back from Maps. Would you like another option?','Good to have you back. How did the search go?','Welcome back. Need more places to choose from?','How was the map search? I can help you find something else.'];
   const popupButton=(label,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.style.cssText='border-radius:10px;padding:12px;cursor:pointer;';b.onclick=fn;mapChoices.append(b);return b;};
   function closePopup(){mapOverlay.style.display='none';mapChoices.replaceChildren();}
+  mapOverlay.addEventListener('click',e=>{if(e.target===mapOverlay)closePopup();});
+  document.addEventListener('keydown',e=>{if(e.key==='Escape'&&mapOverlay.style.display!=='none')closePopup();});
   function showPopup(message,places=[]){
     mapText.textContent=message;mapChoices.replaceChildren();mapOverlay.style.display='flex';
     const top=places.slice(0,4);
     for(const r of top)popupButton(r.name+' · '+r.km.toFixed(1)+' km · Open in Google Maps',()=>openMap(mapLink(r)));
     if(!coords)popupButton('Allow location & find nearby options',enable);
-    popupButton(top.length?'See more in Google Maps':'Open Google Maps search',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
+    popupButton('Open '+pending.slice(0,60)+' in Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
     popupButton('Not now / Close',closePopup);
     popupButton('Finish this search',finish);
   }
   const distanceKm=(a,b,c,d)=>{const R=6371,rad=x=>x*Math.PI/180,dl=rad(c-a),dn=rad(d-b),v=Math.sin(dl/2)**2+Math.cos(rad(a))*Math.cos(rad(c))*Math.sin(dn/2)**2;return 2*R*Math.atan2(Math.sqrt(v),Math.sqrt(1-v));};
   const mapLink=(r)=>'https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(r.lat+','+r.lon+' '+r.name);
-  function openMap(url){lastMapClick=Date.now();mapPending=true;returned=false;closePopup();const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener noreferrer';document.body.append(a);a.click();a.remove();}
+  function openMap(url){returnNotice.style.display='none';lastMapClick=Date.now();mapPending=true;returned=false;closePopup();const a=document.createElement('a');a.href=url;a.target='_blank';a.rel='noopener noreferrer';document.body.append(a);a.click();a.remove();}
   // Put the actual clickable Maps link in Text Chat instead of hiding it in Settings.
   // Construct the URL locally; location coordinates reach Google only if the person clicks it.
   function appendMapsLink(query, label='Open results in Google Maps') {
@@ -2288,13 +2319,16 @@ aurenPlaces = (() => {
     if(phase==='consent'&&no.test(t)){await addMessage('user',t);clear();await addMessage('auren','Of course. I will not use your location.');return true;}
     if(destinationFrom(t)||namedPlaceSearch(t)||placeIntent.test(t)||broadPlaceIntent.test(t)){
       await addMessage('user',t);request(t);
-      await addMessage('auren',locationApproved&&aurenLocation?'Your Google Maps option is ready on screen. I am also checking for nearby locations.':'I have brought up a Google Maps button on your screen. You can open it now, or allow location to find nearby options.');
+      await addMessage('auren',locationApproved&&aurenLocation?'Of course. I have opened your Maps options on screen and am checking nearby locations.':'Of course. I have brought up '+pending+' in Google Maps. Tap the button on screen to open it.');
       return true;
     }
     return false;
   }
   function onReturn(){if(!mapPending||returned||Date.now()-lastMapClick<1000||Date.now()-lastMapClick>20*60*1000||document.hidden)return;returned=true;mapPending=false;
-    if(phase==='results'||phase==='searching'||phase==='consent'){void addMessage('auren','Welcome back. How did your Maps search go? Would you like another option, or are you finished?');showPopup('Welcome back. Would you like another place or are you finished searching?',results);}}
+    if(phase==='results'||phase==='searching'||phase==='consent'){
+      closePopup();const greeting=greetings[greetingCount++%greetings.length];noticeText.textContent=greeting;returnNotice.style.display='block';
+      void addMessage('auren',greeting,{silent:true});
+    }}
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)setTimeout(onReturn,450);});window.addEventListener('focus',()=>setTimeout(onReturn,450));
   // Location permissions and standing status stay in Settings; results are temporary and belong by the chat.
   return {handle,clear};
