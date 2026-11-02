@@ -1,3 +1,4 @@
+// AUREN v3.07 — Natural Conversation Flow; grounded follow-ups and low-friction declines.
 // AUREN v3.06 — Unified Personal Brain; consistent grounded context.
 // AUREN v3.05 — contextual conversation, selective initiative, persistent feedback.
 // AUREN v3.04 — Conversational sensitivity and grounded situation awareness.
@@ -3067,7 +3068,7 @@ function aurenUnifiedBrain(question){
 }
 function aurenUnifiedBrainGuidance(question){
  const snapshot=aurenUnifiedBrain(question);
- return `AUREN UNIFIED PERSONAL BRAIN v3.06 — READ-ONLY CONTEXT: ${JSON.stringify(snapshot)}. Priority: (1) current request and explicit corrections, (2) verified local records and saved user preferences, (3) recent conversation ONLY for a genuine follow-up, (4) optional situation-aware suggestion. Never let an older reminder draft, conversation subject or a check-in override a clear new topic. For action requests, the existing local handler alone performs and verifies the save; the AI must never claim a save, conversion, Maps opening, message delivery or external action happened. A reminder and appointment are different types, even when both display in Your Day. Ask ONE short clarifying question if essential information is missing; never repeat a detail already supplied. If a user says no/not now, accept it without offering the same topic again. Address user by saved name or preferred title only when appropriate; do not add either after every answer. Do not infer feelings, meals, sleep, weather or location from the clock or guess at personal facts. No autonomous monitoring or browser-closed check-ins. Respond to the question FIRST; skip unsolicited suggestions in action requests or when the user is frustrated.`;
+ return `AUREN UNIFIED PERSONAL BRAIN v3.07 — READ-ONLY CONTEXT: ${JSON.stringify(snapshot)}. Follow-up discipline: short day/time corrections should reuse a verified current schedule scope, never an old pending write. Do not repeat a clarification when the user already supplied the requested detail. A refusal needs only brief acknowledgment. Priority: (1) current request and explicit corrections, (2) verified local records and saved user preferences, (3) recent conversation ONLY for a genuine follow-up, (4) optional situation-aware suggestion. Never let an older reminder draft, conversation subject or a check-in override a clear new topic. For action requests, the existing local handler alone performs and verifies the save; the AI must never claim a save, conversion, Maps opening, message delivery or external action happened. A reminder and appointment are different types, even when both display in Your Day. Ask ONE short clarifying question if essential information is missing; never repeat a detail already supplied. If a user says no/not now, accept it without offering the same topic again. Address user by saved name or preferred title only when appropriate; do not add either after every answer. Do not infer feelings, meals, sleep, weather or location from the clock or guess at personal facts. No autonomous monitoring or browser-closed check-ins. Respond to the question FIRST; skip unsolicited suggestions in action requests or when the user is frustrated.`;
 }
 
 async function askWithMemory(question) {
@@ -4215,6 +4216,44 @@ async function aurenHandlePlaceDialogue(text){
  return true;
 }
 
+// AUREN v3.07 — bounded conversation flow. Read-only follow-ups go to verified
+// records; unfinished writes remain owned by their original confirmation tool.
+const AUREN_FLOW_WINDOW=6*60*1000;
+function aurenFlowInterpret(raw){
+ const q=String(raw||'').trim();
+ const plain=q.toLowerCase().replace(/[.!?]+$/,'').trim();
+ const hasWrite=!!(pendingPlan||pendingReminder||planClarification||pendingTaskChange||butler.pending||contextualMeetingDraft||pendingYourDayChoice||pendingRecordEdit);
+ if(!plain||hasWrite)return null;
+ // Never seize explicit commands or a completely new subject.
+ if(/^(?:remind|set |schedule|book |add |delete|remove|change|move |convert|find |search |navigate|directions|open |turn |enable |disable |remember |forget |save |call me |send )\b/i.test(plain))return null;
+ const schedule=dayConversation && Date.now()-Number(dayConversation.at||0)<AUREN_FLOW_WINDOW ? dayConversation:null;
+ const calendarFollow=plain.match(/^(?:(?:and|but|actually)[, ]+)?(?:what|how) about (tomorrow|today|the day after tomorrow|next week|this week)(?: instead)?$/i)
+  || plain.match(/^(?:(?:and|actually)[, ]+)?(tomorrow|today|the day after tomorrow|next week|this week)(?: instead| then)?$/i);
+ if(schedule&&calendarFollow){
+  const word=calendarFollow[1].toLowerCase();
+  const date=word==='today'?localDate():word==='tomorrow'?shiftedDate(localDate(),1):word==='the day after tomorrow'?shiftedDate(localDate(),2):word==='next week'?shiftedDate(weekStart(localDate()),7):weekStart(localDate());
+  return {type:'schedule',date,scope:word.includes('week')?'week':'day'};
+ }
+ const correction=schedule&&plain.match(/^(?:(?:sorry|actually|i meant|no i meant)[, ]+)(today|tomorrow|the day after tomorrow)(?: not (?:today|tomorrow))?$/i);
+ if(correction){const word=correction[1].toLowerCase();return {type:'schedule',date:word==='today'?localDate():shiftedDate(localDate(),word==='tomorrow'?1:2),scope:'day'};}
+ // Explicitly refusing an optional check-in is not permission to create or edit any record.
+ if(/^(?:no thanks|nah thanks|not right now|maybe later|i'm good|im good|not interested)$/i.test(plain))return {type:'decline'};
+ return null;
+}
+async function aurenFlowHandle(raw){
+ const flow=aurenFlowInterpret(raw);
+ if(!flow)return false;
+ await addMessage('user',raw);
+ if(flow.type==='schedule'){
+  noteDayConversation(flow.date,flow.scope);
+  rememberScheduleFocus(flow.date);
+  await addMessage('auren',aurenScheduleRead(flow.date,flow.scope).text);
+ }else if(flow.type==='decline'){
+  await addMessage('auren','Of course.');
+ }
+ return true;
+}
+
 async function send(text) {
   refreshPersonalProfile();
   const addressed = aurenAddressCommand(text);
@@ -4338,6 +4377,8 @@ async function send(text) {
     await addMessage('auren','There is no pending change for me to save. If you mean a reminder, tell me its subject and time. I will confirm it was saved only after checking.');
     return;
   }
+  // v3.07: Recheck actual saved records for indirect day/week follow-ups.
+  if(await aurenFlowHandle(text))return;
   const verifiedCapability=aurenVerifiedCapabilities(text);
   if(verifiedCapability){await addMessage('user',text);await addMessage('auren',verifiedCapability);return;}
   // Recovery is explicit and safe: only rerun a recent failed informational AI query.
