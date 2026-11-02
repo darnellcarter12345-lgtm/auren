@@ -1,3 +1,4 @@
+// AUREN v2.86 — Patient listening, reduced accidental interruptions.
 // AUREN v2.85 — Context-aware schedule clarification and corrected Safari loader.
 // AUREN v2.84 — Natural Your Day language and context-aware suggestions.
 // AUREN v2.83 — Verified reminder storage and real Your Day reminder entries.
@@ -83,7 +84,7 @@ import { NeedsConfirmationError, historySafe, classify } from './sensitive.js';
 import { Butler, isSessionNote } from './butler.js';
 import { buildBackup, encryptBackup, decryptBackup, validateBackup, applyPlan, describeReport, LIMITS } from './backup.js';
 import { loadSettings, saveSettings } from './settings.js';
-import { createVoice } from './voice.js?v=2.9.8';
+import { createVoice } from './voice.js?v=2.9.9';
 import { createIPhoneRecorder } from './iphone-voice.js?v=2.9.5';
 import { getAIEndpoint, setAIEndpoint, askAI } from './ai.js';
 import { getWeatherBriefing } from './weather.js';
@@ -422,7 +423,7 @@ voiceCard.append(voiceTestButton);
 
 // Interruptions are off by default to prevent nearby conversations from
 // cutting off AUREN. The setting is local to this browser and persists.
-const INTERRUPTIONS_KEY = 'auren_interruptions_enabled_v1';
+const INTERRUPTIONS_KEY = 'auren_interruptions_enabled_v286'; // New privacy-first default: off
 const interruptRow = document.createElement('label');
 interruptRow.className = 'check';
 interruptRow.style.marginTop = '16px';
@@ -439,8 +440,8 @@ interruptHelp.className = 'hint';
 interruptHelp.id = 'interruptionsHelp';
 function syncInterruptionsHelp() {
   interruptHelp.textContent = interruptToggle.checked
-    ? 'On — AUREN will try to hear you during replies. Nearby speech may occasionally interrupt it.'
-    : 'Off (recommended in busy places) — AUREN finishes speaking before listening for the next question.';
+    ? 'On — only a clear “Hey Auren” interruption is accepted during replies; the orb can always interrupt immediately.'
+    : 'Off (recommended) — AUREN finishes speaking before listening again. It also waits for a natural pause before answering.';
 }
 interruptToggle.addEventListener('change', () => {
   const value = voice.setInterruptionsEnabled(interruptToggle.checked);
