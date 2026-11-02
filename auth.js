@@ -1,4 +1,5 @@
-// AUREN v2.72.2 — fresh app module loading after sign-in.
+// AUREN v2.72.6 — reliable startup diagnostics, error report and module checks.
+// Preserves v2.72.2 Firebase sign-in and cloud sync.
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut, setPersistence, browserLocalPersistence, browserSessionPersistence } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
 import { mountCloudTransfer } from './cloud-sync.js?v=2.9.0';
@@ -18,6 +19,7 @@ const accountEmail=document.getElementById('aurenAccountEmail');
 const logout=document.getElementById('aurenSignOut');
 const intro=gate?.querySelector('.auren-auth-panel > p');
 let currentUser=null, appPromise=null, loaded=false, mountedUserId=null, busy=false;
+let diagnosticReport='';
 const message=v=>{if(status)status.textContent=v;};
 const gateVisible=visible=>{if(gate)gate.hidden=!visible;document.body.classList.toggle('auren-auth-locked',visible);};
 function setGateMode(mode, explanation=''){
@@ -34,16 +36,93 @@ function friendlyError(error){
   if(code.includes('network-request-failed'))return 'Could not reach Google. Check your connection.';
   return error?.message||'Unable to sign in.';
 }
+// These paths match app.js's direct imports. If the app fails to load,
+// isolate which dependency cannot be imported, rather than blaming auth.js.
+const APP_DEPENDENCIES = [
+  './db.js', './memory.js', './projects.js', './sensitive.js',
+  './butler.js', './backup.js', './settings.js',
+  './voice.js?v=2.9.8', './iphone-voice.js?v=2.9.5',
+  './ai.js', './weather.js'
+];
+function errorDetails(error) {
+  const details = [error?.name || 'Error', error?.message || String(error)];
+  if (error?.fileName) details.push('file: ' + error.fileName);
+  if (Number.isFinite(error?.lineNumber)) details.push('line: ' + error.lineNumber);
+  if (Number.isFinite(error?.columnNumber)) details.push('column: ' + error.columnNumber);
+  if (error?.stack) details.push('stack: ' + String(error.stack).slice(0,900));
+  return details.join(' | ');
+}
+function diagnosticElements() {
+  let panel=document.getElementById('aurenStartupDiagnostics');
+  if(panel)return panel;
+  panel=document.createElement('section');panel.id='aurenStartupDiagnostics';
+  panel.setAttribute('role','status');
+  panel.style.cssText='max-width:520px;margin:16px auto 0;padding:12px;text-align:left;border:1px solid #b69b64;border-radius:10px;color:#e8d8b8;background:#191a20;font:13px/1.5 system-ui,sans-serif;max-height:42vh;overflow:auto;';
+  const heading=document.createElement('strong');heading.textContent='AUREN Startup Diagnostics';
+  const output=document.createElement('pre');output.id='aurenDiagnosticsText';
+  output.style.cssText='white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.5 ui-monospace,Menlo,monospace;';
+  const copy=document.createElement('button');copy.type='button';copy.textContent='Copy Error Report';
+  copy.style.cssText='background:#c7a669;color:#151515;padding:10px 18px;border-radius:8px;border:0;font-weight:700;cursor:pointer;';
+  copy.addEventListener('click',async()=>{
+    try { await navigator.clipboard.writeText(diagnosticReport);copy.textContent='Report copied!'; }
+    catch(error) {
+      const field=document.createElement('textarea');field.value=diagnosticReport;field.style.cssText='width:100%;height:140px';panel.append(field);field.select();copy.textContent='Select and copy the report below';
+    }
+  });
+  panel.append(heading,output,copy);
+  (gate?.querySelector('.auren-auth-panel') || gate || document.body).append(panel);
+  return panel;
+}
+function displayDiagnosis(report) {
+  diagnosticReport=report;
+  const panel=diagnosticElements();panel.hidden=false;
+  const output=panel.querySelector('#aurenDiagnosticsText');
+  if(output)output.textContent=report;
+}
+async function runStartupDiagnosis(error) {
+  const entries=[
+    'AUREN diagnostics v2.72.6',
+    'Reported at: '+new Date().toISOString(),
+    'Page: '+location.pathname,
+    'Application: app.js?v=2.72.4',
+    'Original failure: '+errorDetails(error),
+    'Checking app dependencies independently...'
+  ];
+  displayDiagnosis(entries.join('\n'));
+  const failed=[];
+  // Importing one module at a time gives its own error instead of just app.js's error.
+  // Some modules import one another; a failure can therefore involve a dependency.
+  for(const path of APP_DEPENDENCIES) {
+    try {
+      const url=new URL(path,import.meta.url);
+      const response=await fetch(url.href,{cache:'no-store'});
+      if(!response.ok)throw new Error('HTTP '+response.status+' while loading this file');
+      await import(path);
+      entries.push('OK   '+path);
+    } catch(moduleError) {
+      failed.push({path,error:moduleError});
+      entries.push('FAIL '+path+' — '+errorDetails(moduleError));
+    }
+    displayDiagnosis(entries.join('\n'));
+  }
+  if(failed.length===1)entries.push('LIKELY PROBLEM FILE: '+failed[0].path+' (or one of its imports)');
+  else if(failed.length>1)entries.push('FAILING IMPORTS: '+failed.map(x=>x.path).join(', ')+'. One shared dependency may be responsible.');
+  else entries.push('All direct dependencies imported. The remaining error is likely inside app.js itself or during its startup execution.');
+  entries.push('Send this report to the developer. Diagnostics do not modify saved data.');
+  displayDiagnosis(entries.join('\n'));
+}
+
 async function openApp(user){
   if(!user||busy)return;
   if(loaded){setGateMode('ready');return;}
   busy=true;setGateMode('loading');
   try{
     // A fresh versioned URL makes Safari request the CURRENT deployed app.js.
-    if(!appPromise)appPromise=import('./app.js?v=2.72.2').catch(error=>{appPromise=null;throw error;});
+    if(!appPromise)appPromise=import('./app.js?v=2.72.4').catch(error=>{appPromise=null;throw error;});
     await appPromise;loaded=true;
     if(accountEmail)accountEmail.textContent=user.email||'Signed in';
     if(accountCard)accountCard.hidden=false;
+    const oldDiag=document.getElementById('aurenStartupDiagnostics');if(oldDiag)oldDiag.hidden=true;
     setGateMode('ready');
     if(mountedUserId!==user.uid){
       mountedUserId=user.uid;
@@ -52,6 +131,7 @@ async function openApp(user){
   }catch(error){
     console.error('AUREN application failed to load after sign-in:',error);
     setGateMode('error','Signed in, but the app could not start: '+String(error?.message||error).slice(0,160));
+    try { await runStartupDiagnosis(error); } catch(diagnosticError) {console.error('AUREN diagnostics failed',diagnosticError);displayDiagnosis('Diagnostics failed: '+errorDetails(diagnosticError)+'\nOriginal error: '+errorDetails(error));}
   }finally{busy=false;}
 }
 let firebaseApp,auth;
