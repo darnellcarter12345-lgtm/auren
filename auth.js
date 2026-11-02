@@ -1,4 +1,5 @@
-// AUREN v2.83 — Verified reminder entries and matching app loader.
+// AUREN v2.84 — Matching app loader and diagnostics.
+// AUREN v2.84 — Verified reminder entries and matching app loader.
 // AUREN v2.82 — Loads verified name recall upgrade.
 // AUREN v2.81 — Versioned Safari loader for reliable reminder routing.
 // AUREN v2.80.1 — Safari loader and diagnostics for v2.80.1.
@@ -88,7 +89,7 @@ function displayDiagnosis(report) {
 }
 async function runStartupDiagnosis(error) {
   const entries=[
-    'AUREN diagnostics v2.83',
+    'AUREN diagnostics v2.84',
     'Reported at: '+new Date().toISOString(),
     'Page: '+location.pathname,
     'Application: app.js?v=2.83',
@@ -107,8 +108,8 @@ async function runStartupDiagnosis(error) {
     entries.push('Deployed app.js header: '+head);
     entries.push('Deployed app.js size: '+new TextEncoder().encode(source).length+' bytes');
     if(!/^\/\/ AUREN v2\.83\b/m.test(source.slice(0,400))) {
-      entries.push('VERSION MISMATCH: deployed app.js does not begin with AUREN v2.83. Check GitHub commit, Pages deployment, and refresh.');
-    } else entries.push('Application version matches v2.83.');
+      entries.push('VERSION MISMATCH: deployed app.js does not begin with AUREN v2.84. Check GitHub commit, Pages deployment, and refresh.');
+    } else entries.push('Application version matches v2.84.');
   } catch(sourceError){entries.push('Could not verify deployed app.js: '+errorDetails(sourceError));}
   displayDiagnosis(entries.join('\n'));
   const failed=[];
