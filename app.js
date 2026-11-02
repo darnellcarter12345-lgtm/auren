@@ -1,3 +1,4 @@
+// AUREN v2.64 — Grounded schedule follow-ups and routine-fit guidance.
 // AUREN v2.63 — Unified grounded tasks, routines, appointments and reminder recommendations.
 // AUREN v2.62 — Grounded personal routine intelligence and realistic daily routine checks.
 // AUREN v2.61 — Read-only proactive preparation and attention checks from saved plans.
@@ -1415,6 +1416,34 @@ function unifiedDayReply(intent){
  if(appointments.length>1){const conflicts=savedDayIntelligence(date,'day').conflictPairs;if(conflicts.length)parts.push(`There ${conflicts.length===1?'is':'are'} ${conflicts.length} overlapping saved appointment pair${conflicts.length===1?'':'s'} to review.`);}
  parts.push('This is a suggested order based on saved dates, not a judgment of your personal priorities. No tasks or appointments were changed.');
  return parts.join(' ');
+}
+// v2.64: Read-only, short-lived schedule follow-up focus. No inferred event durations.
+let scheduleFollowupFocus=null;
+function rememberScheduleFocus(date,source='overview'){
+ const upcoming=plans.filter(p=>p.date===date&&eventTimestamp(p)>=Date.now()).sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+ scheduleFollowupFocus={date,source,eventId:upcoming[0]?.id||null,at:Date.now()};
+}
+function scheduleFollowupReply(raw){
+ const q=String(raw||'').trim().toLowerCase().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/,'').replace(/[.!?]+$/,'').trim();
+ const after=/^(?:what should i do after that|what (?:can|should) i do after (?:that|the meeting|my appointment)|what should i do afterward|what could i do afterward|and what about after that)$/.test(q);
+ const before=/^(?:can i (?:fit|squeeze) (?:my |a |the )?routine in before (?:the |my )?(?:meeting|appointment)|is there (?:enough )?time (?:for|to do) (?:my |a |the )?routine before (?:the |my )?(?:meeting|appointment)|do i have time for (?:my |a |the )?routine before (?:the |my )?(?:meeting|appointment)|can i do (?:my |a |the )?routine before (?:the |my )?(?:meeting|appointment))$/.test(q);
+ if(!after&&!before)return null;
+ const focus=scheduleFollowupFocus;
+ if(!focus||Date.now()-focus.at>10*60*1000)return 'Which appointment or day are you referring to? I do not have an active schedule reference.';
+ const events=plans.filter(p=>p.date===focus.date&&eventTimestamp(p)>=Date.now()).sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+ const focused=events.find(p=>p.id===focus.eventId)||events[0];
+ if(!focused)return `I cannot find an upcoming saved appointment for ${readableDate(focus.date)}. I will not assume your time is free.`;
+ focus.at=Date.now();focus.eventId=focused.id;
+ if(before){
+  const minutes=Math.floor((eventTimestamp(focused)-Date.now())/60000);
+  const routines=tasksOnDate(focus.date).filter(t=>t.repeat!=='once'&&!isTaskComplete(t,focus.date));
+  if(focus.date!==localDate())return `Your saved appointment ${focused.title} is on ${readableDate(focus.date)} at ${spokenClock(focused.time)}. ${routines.length?'Your saved routine list includes '+routines.slice(0,2).map(t=>t.title).join(' and ')+'. ':'I do not see an unfinished saved routine for that day. '}I cannot confirm a fit without knowing the routine duration and your travel or preparation needs.`;
+  return `There ${minutes===1?'is':'are'} about ${Math.max(0,minutes)} minute${minutes===1?'':'s'} until ${focused.title} at ${spokenClock(focused.time)}. ${routines.length?'Your unfinished saved routine'+(routines.length>1?'s include ':' is ')+routines.slice(0,2).map(t=>t.title).join(' and ')+'. ':'I do not see an unfinished saved routine for today. '}I cannot confirm it fits without knowing how long it takes and any travel or preparation time.`;
+ }
+ const index=events.findIndex(p=>p.id===focused.id),next=events[index+1];
+ if(next)return `After ${focused.title}, the next later appointment saved for ${readableDate(focus.date)} is ${next.title} at ${spokenClock(next.time)}. I do not know when ${focused.title} ends, so I cannot verify a free gap. You could review any unfinished tasks or routines between commitments if time allows.`;
+ const open=tasksOnDate(focus.date).filter(t=>!isTaskComplete(t,focus.date));
+ return `After ${focused.title}, I don't see another later appointment saved for ${readableDate(focus.date)}.${open.length?' You could consider '+open[0].title+' if time permits.':''} I don't know when the meeting ends or whether your unsaved time is free.`;
 }
 function smartDayPlanIntent(raw){
  const q=String(raw||'').trim().toLowerCase().replace(/^(?:hey\s+)?auren[, ]+/,'').replace(/[.!?]+$/,'').trim();
@@ -3048,9 +3077,13 @@ async function send(text) {
     const unifiedRequest=unifiedDayIntent(text);
     if(unifiedRequest){
       noteDayConversation(unifiedRequest.date,'day');
+      rememberScheduleFocus(unifiedRequest.date);
       await addMessage('auren',unifiedDayReply(unifiedRequest));
       return;
     }
+    // v2.64: Grounded short follow-ups after a unified daily recommendation.
+    const scheduleFollowup=scheduleFollowupReply(text);
+    if(scheduleFollowup!==null){await addMessage('auren',scheduleFollowup);return;}
     // v2.62: On-demand routine analysis, without inventing times or changing records.
     const routineRequest=personalRoutineIntent(text);
     if(routineRequest){
@@ -3067,6 +3100,7 @@ async function send(text) {
     const smartPlanRequest=smartDayPlanIntent(text);
     if(smartPlanRequest){
       noteDayConversation(smartPlanRequest.date,smartPlanRequest.scope);
+      rememberScheduleFocus(smartPlanRequest.date);
       await addMessage('auren',smartDayPlanReply(smartPlanRequest));
       return;
     }
