@@ -1,3 +1,4 @@
+// AUREN v3.09 — Adaptive Learning Over Time; transparent suggestion scores and user controls.
 // AUREN v3.08 — Trust & Attentiveness Engine; grounded tone, selective support, respectful correction.
 // AUREN v3.07 — Natural Conversation Flow; grounded follow-ups and low-friction declines.
 // AUREN v3.06 — Unified Personal Brain; consistent grounded context.
@@ -3131,6 +3132,7 @@ async function askWithMemory(question) {
     aurenCareAIGuidance(question),
     aurenButlerGuidance(),
     aurenRelationshipAIGuidance(),
+    aurenLearnGuidance(),
     aurenSituationAndEmotionGuidance(question),
     aurenAdaptiveGuidance(question),
     `Current actual Dallas date/time: ${new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',dateStyle:'full',timeStyle:'long'}).format(new Date())}. Verify time gaps with numeric timestamps; do not imply 11:20 PM is close to 12:47 PM.`,
@@ -3203,6 +3205,64 @@ function aurenCarePreference(raw){
  }
  return null;
 }
+// v3.09 — transparent, bounded suggestion preference learning.
+// All scores are based only on explicit feedback. No emotion or behavior profiling.
+const AUREN_LEARN_KEY='auren_suggestion_learning_v309';
+const AUREN_LEARN_TOPICS=['planning','meals','rest'];
+let aurenLearn={scores:{planning:0,meals:0,rest:0},examples:{},updated:0};
+try{
+ const saved=JSON.parse(localStorage.getItem(AUREN_LEARN_KEY)||'null');
+ if(saved&&typeof saved==='object'){
+  aurenLearn.updated=Number(saved.updated)||0;
+  for(const topic of AUREN_LEARN_TOPICS){
+   const n=Number(saved.scores?.[topic]);if(Number.isFinite(n))aurenLearn.scores[topic]=Math.max(-3,Math.min(3,Math.round(n)));
+  }
+ }
+}catch{}
+function aurenLearnSave(){
+ try{localStorage.setItem(AUREN_LEARN_KEY,JSON.stringify(aurenLearn));const read=JSON.parse(localStorage.getItem(AUREN_LEARN_KEY)||'null');return !!read&&read.updated===aurenLearn.updated;}catch{return false;}
+}
+function aurenLearnFeedback(topic,delta){
+ if(!AUREN_LEARN_TOPICS.includes(topic))return false;
+ const before=aurenLearn.scores[topic];
+ aurenLearn.scores[topic]=Math.max(-3,Math.min(3,before+delta));
+ aurenLearn.updated=Date.now();
+ if(aurenLearnSave())return true;
+ aurenLearn.scores[topic]=before;return false;
+}
+function aurenLearnReadout(){
+ const labels={planning:'Planning',meals:'Meals',rest:'Rest'};
+ return AUREN_LEARN_TOPICS.map(t=>`${labels[t]}: ${aurenLearn.scores[t]>0?'helpful':aurenLearn.scores[t]<0?'less preferred':'neutral'} (${aurenLearn.scores[t]})`).join(' · ');
+}
+function aurenLearnCommand(raw){
+ const q=String(raw||'').trim().toLowerCase();
+ if(/\b(?:what have you learned about my suggestions|show (?:me )?(?:your )?(?:learned )?suggestion preferences|review suggestion learning|what suggestions do i prefer)\b/.test(q))return 'Based on feedback you gave me: '+aurenLearnReadout()+'. You can reset these in Butler personality settings.';
+ if(/\b(?:reset|clear|forget) (?:my )?(?:suggestion learning|learned suggestion preferences|suggestion scores)\b/.test(q)){
+  const before={...aurenLearn,scores:{...aurenLearn.scores}};
+  aurenLearn.scores={planning:0,meals:0,rest:0};aurenLearn.updated=Date.now();
+  if(!aurenLearnSave()){aurenLearn=before;return 'I could not verify that the learned preferences were reset.';}
+  return 'Your learned suggestion scores have been reset. Explicit blocked topics remain unchanged.';
+ }
+ // Only adjust a score when the user unmistakably describes a suggestion type.
+ const topic=aurenRelationshipTopic(q);
+ if(topic&&/\b(?:that|those|your)\s+(?:planning|meal|food|rest|sleep|schedule)?\s*suggestions? (?:was|were|are) (?:helpful|useful|good|great)\b|\b(?:i (?:like|appreciate|love) (?:your|those|the))\s+(?:planning|meal|food|rest|sleep|schedule)\s+suggestions?\b/.test(q)){
+  return aurenLearnFeedback(topic,1)?`Understood. I'll keep ${topic} suggestions in mind when they're relevant.`:'I understood the feedback, but could not save it.';
+ }
+ if(topic&&/\b(?:those|your|the)\s+(?:planning|meal|food|rest|sleep|schedule)?\s*suggestions? (?:weren't|were not|aren't|are not) (?:helpful|useful)\b/.test(q)){
+  return aurenLearnFeedback(topic,-1)?`Understood. I'll suggest ${topic} less often.`:'I understood the feedback, but could not save it.';
+ }
+ return null;
+}
+function aurenLearnMaySuggest(topic){
+ // Mild negative feedback reduces proactive frequency, not user-initiated functionality.
+ const score=Number(aurenLearn.scores[topic]||0);
+ if(score<=-2)return false;
+ return true;
+}
+function aurenLearnGuidance(){
+ return 'EXPLICIT SUGGESTION LEARNING v3.09: '+JSON.stringify(aurenLearn.scores)+'. These numbers reflect only user feedback, not inferred personality or wellbeing. Respect blocked topics and current request first. Negative scores mean suggest less often, NEVER refuse an explicitly requested service. Scores alone do not justify initiating an unsolicited check-in. All existing save verifications remain required.';
+}
+
 // v3.03: opt-in, explicit-feedback learning; not inferred emotions or silent monitoring.
 const AUREN_RELATION_KEY='auren_relationship_feedback_v303';
 let aurenRelationship={declined:{},helpful:{},lastPrompt:null,quietUntil:0,updated:0};
@@ -3235,6 +3295,7 @@ function aurenRelationshipFeedback(raw){
  const recent=aurenRelationship.lastPrompt&&Date.now()-aurenRelationship.lastPrompt.at<120000;
  if(recent&&/^(?:no|no thanks|not now|maybe later|nah|no thank you)[.! ]*$/.test(q)){
    aurenRelationship.quietUntil=Date.now()+86400000;aurenRelationship.lastPrompt=null;aurenRelationship.updated=Date.now();
+   // A single polite decline is a temporary pause, not negative learning.
    return aurenRelationshipSave()?'Of course. I won’t bring that up again today.':'Of course. I’ll leave that for now.';
  }
  if(recent&&/^(?:yes|yes please|sure|okay|ok|sounds good)[.! ]*$/.test(q)){
@@ -3245,6 +3306,7 @@ function aurenRelationshipFeedback(raw){
  // Feedback about suggestions changes emphasis, not the user's records.
  if(recent&&/^(?:that was helpful|helpful suggestion|good suggestion|thanks for checking|i like that suggestion)[.! ]*$/.test(q)){
    const topic=aurenRelationship.lastPrompt.topic;aurenRelationship.helpful[topic]=Math.min(20,(aurenRelationship.helpful[topic]||0)+1);
+   aurenLearnFeedback(topic,1);
    aurenRelationship.lastPrompt=null;aurenRelationship.updated=Date.now();
    return aurenRelationshipSave()?'Glad that was useful. I’ll keep your feedback in mind.':'Glad that was useful.';
  }
@@ -3297,7 +3359,7 @@ function aurenAdaptiveGuidance(question){
  return `ADAPTIVE CONVERSATION v3.05 (explicit preferences, verified context only): ${JSON.stringify({replyLength:aurenAdaptive.replyLength,addressFrequency:aurenAdaptive.addressRate,proactiveWindow:aurenAdaptive.proactiveWindow,possibleFollowup:looksFollowup,recentConversation:looksFollowup?trail:[]})}. Answer the current request first. Resolve indirect followups using the preceding topic only when unique; otherwise ask one short, specific clarification. A new topic overrides stale pending suggestions. Do not repeat a question when a partial answer supplied a detail; ask only for what remains missing. Do not treat a polite statement, personal anecdote, or search request as a command to save a reminder. Keep replies concise when requested. Only suggest something based on actually stored plans or user-stated needs, when check-ins are enabled and not declined; never imply a notification was sent or an action completed without tool verification. Do not claim knowledge of feelings, meals, sleep or weather without evidence.`;
 }
 function aurenAdaptiveMayOffer(topic,hour){
- if(!aurenRelationshipMaySuggest(topic)||aurenAdaptive.lastOfferDay===localDate())return false;
+ if(!aurenLearnMaySuggest(topic)||!aurenRelationshipMaySuggest(topic)||aurenAdaptive.lastOfferDay===localDate())return false;
  if(aurenAdaptive.proactiveWindow==='morning'&&(hour<5||hour>=12))return false;
  if(aurenAdaptive.proactiveWindow==='afternoon'&&(hour<12||hour>=18))return false;
  if(aurenAdaptive.proactiveWindow==='evening'&&(hour<18||hour>=24))return false;
@@ -3806,6 +3868,20 @@ const feedbackClear=document.createElement('button');feedbackClear.type='button'
 function aurenPaintFeedback(){const declined=Object.keys(aurenRelationship.declined).filter(k=>aurenRelationship.declined[k]);feedbackExplain.textContent=declined.length?'AUREN will not initiate suggestions about: '+declined.join(', ')+'.':'No suggestion topics are blocked. You can say “stop asking about meals” or similar at any time.';}
 feedbackClear.addEventListener('click',()=>{const previous=aurenRelationship;aurenRelationship={declined:{},helpful:{},lastPrompt:null,quietUntil:0,updated:Date.now()};if(!aurenRelationshipSave()){aurenRelationship=previous;butlerStatus.textContent='Could not reset feedback.';}else butlerStatus.textContent='Suggestion feedback reset.';aurenPaintFeedback();});
 feedbackPanel.append(feedbackExplain,feedbackClear);butlerCard.append(feedbackPanel);aurenPaintFeedback();
+// v3.09: inspect and reset *learned scores* independently from explicit blocked topics.
+const learnPanel=document.createElement('div');learnPanel.style.cssText='margin-top:14px';
+const learnHeading=document.createElement('h4');learnHeading.textContent='Learned suggestion preferences';
+const learnExplain=document.createElement('p');learnExplain.className='hint';
+const learnReset=document.createElement('button');learnReset.type='button';learnReset.textContent='Reset learned suggestion scores';
+function aurenPaintLearning(){learnExplain.textContent=aurenLearnReadout()+'. Scores come only from explicit feedback; blocked topics are managed above.';}
+learnReset.addEventListener('click',()=>{
+ const before={...aurenLearn,scores:{...aurenLearn.scores}};
+ aurenLearn.scores={planning:0,meals:0,rest:0};aurenLearn.updated=Date.now();
+ if(!aurenLearnSave()){aurenLearn=before;butlerStatus.textContent='Could not reset learned suggestion scores.';}
+ else butlerStatus.textContent='Learned suggestion scores reset.';
+ aurenPaintLearning();
+});
+learnPanel.append(learnHeading,learnExplain,learnReset);butlerCard.append(learnPanel);aurenPaintLearning();
 
 butlerSave.addEventListener('click',()=>{
  const before={...aurenButler,care:aurenCare.checkins};
@@ -4297,6 +4373,8 @@ async function send(text) {
   }
   text=addressed.command;
   // v3.05: Persistent conversation preferences take precedence over generic AI.
+  const learnedCommand=aurenLearnCommand(text);
+  if(learnedCommand!==null){await addMessage('user',text);await addMessage('auren',learnedCommand);return;}
   const adaptiveCommand=aurenAdaptiveCommand(text);
   if(adaptiveCommand!==null){await addMessage('user',text);await addMessage('auren',adaptiveCommand);return;}
   // v3.03: Learn explicit corrections and honor opt-outs before other intents.
