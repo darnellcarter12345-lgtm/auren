@@ -1,3 +1,4 @@
+// AUREN v2.78 — Safe continuity bridge for local and AI responses.
 // AUREN v2.77 — Stable integration release; unchanged v2.76 planning features.
 // AUREN v2.76 — Integrated planning intelligence; builds on v2.75.
 // AUREN v2.75 — Verified personal meeting context, preserves v2.74 continuity.
@@ -2300,9 +2301,22 @@ async function trimHistory() {
   for (const m of all.slice(0, Math.max(0, all.length - HISTORY_LIMIT))) await del(STORES.messages, m.id);
 }
 
+// Only the immediately preceding non-sensitive user message may be paired with
+// a completed, visible AUREN answer. No permanent-memory records are created.
+let aurenPendingConversationTurn = null;
 async function addMessage(role, text, opts = {}) {
   const rec = { id: uid(), role, text, at: new Date().toISOString() };
   if (role === 'auren') rec.text = personalizeMeetingText(rec.text);
+  if (role === 'user') {
+    aurenPendingConversationTurn = {text: String(rec.text), at: Date.now()};
+  } else if (role === 'auren') {
+    const pending = aurenPendingConversationTurn;
+    aurenPendingConversationTurn = null;
+    if (pending && Date.now() - pending.at < 120000 && !opts.err && !opts.replay &&
+        !opts.silent && String(rec.text).trim() && String(rec.text) !== 'Thinking…') {
+      rememberConversationTurn(pending.text, rec.text);
+    }
+  }
   if (role === 'auren' && !opts.err && !opts.replay) rememberLastReply(rec.text);
   drawMessage(rec, opts);
   if (role === 'auren' && !opts.err && !opts.silent) voice.speak(rec.text);
@@ -2724,7 +2738,7 @@ async function askWithMemory(question) {
   const answer = await askAI(question, context.memories, context.session, aiRecent, deviceContext);
   const checkedAnswer = correctFalseCapabilityClaims(question, answer);
   lastFailedAIQuestion=null;
-  rememberConversationTurn(question, checkedAnswer);
+  // The completed reply is recorded once by addMessage, including locally handled replies.
   trackConversationAnchor(question,checkedAnswer);
   return checkedAnswer;
 }
