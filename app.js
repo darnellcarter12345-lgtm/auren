@@ -1,3 +1,4 @@
+// AUREN v2.44 — Verified long-term memory, transparent recall and preference-aware replies.
 // AUREN v2.43 — Advanced Conversation Intelligence: grounded follow-ups and topic reset.
 // AUREN v2.42 — Personalized daily preparation, real commitments and restrained next steps.
 // AUREN v2.41 — Smarter deadlines, overdue tasks and calendar-safe work suggestions.
@@ -1807,26 +1808,53 @@ function memoryCandidate(text) {
 // Build a compact personal profile from verified, non-sensitive saved memories.
 // Keyword-only lookup previously omitted broad interests when a question used different words.
 async function contextForAI(question) {
-  const all = (await Mem.listMemories()).filter(m => {
-    if (m.sensitive || !m.text) return false;
-    const scan = classify([m.text, ...(m.tags || [])].join(' '));
-    return !scan.blocked.length && !scan.sensitive.length;
-  });
-  const matches = await Mem.searchMemories(question, 8);
-  const generic = /\b(me|my|mine|myself|about me|you know|recommend|suggest|focus|priorit|interests|preferences|goals|what should i|what do you know)\b/i.test(question);
-  const preferred = generic
-    ? all.filter(m => ['preference', 'interest', 'goal', 'routine'].includes(m.category))
-    : all.filter(m => ['preference', 'interest', 'goal'].includes(m.category));
-  const chosen = [];
-  const add = m => { if (m && !chosen.some(x => x.id === m.id)) chosen.push(m); };
-  // Always send some stable preferences, as well as question-related facts.
-  matches.slice(0, 3).forEach(add);
-  preferred.slice(0, 5).forEach(add);
-  matches.forEach(add);
+  const all=safePersonalMemories(await Mem.listMemories());
+  const relevant=relevantPersonalMemories(question,all,8);
+  // Stable preferences go to AI only when clearly relevant to the question.
+  // Otherwise, avoid stuffing unrelated memories into every reply.
   return {
-    memories: chosen.slice(0, 8),
-    session: butler.listSession().map(n => n.text).slice(0, 5)
+    memories:relevant,
+    session:butler.listSession().map(n=>n.text).slice(0,5)
   };
+}
+
+// v2.44 — Stable personal facts are read ONLY from local, user-saved records.
+// These are not inferred from conversation history or silently written to permanent memory.
+function safePersonalMemories(all){
+ return all.filter(m=>{
+  if(!m || !m.text || m.sensitive)return false;
+  const scan=classify([m.text,...(m.tags||[])].join(' '));
+  return !scan.blocked.length && !scan.sensitive.length;
+ });
+}
+function relevantPersonalMemories(question,memories,limit=8){
+ const query=new Set(Mem.tokenize(question));
+ const generic=/\b(?:me|my|about me|know about|remember about|preferences|interests|goals|routine|favo(?:u)?rites)\b/i.test(question);
+ const weights={preference:3,interest:3,goal:2,routine:2};
+ return memories.map((m,index)=>{
+  const words=new Set(Mem.tokenize([m.text,...(m.tags||[])].join(' ')));
+  const overlap=[...query].filter(word=>words.has(word)).length;
+  const score=overlap*5+(generic?(weights[m.category]||0):0);
+  return {m,index,score};
+ }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score||a.index-b.index).slice(0,limit).map(x=>x.m);
+}
+function userProfileAnswer(request,memories){
+ const t=String(request||'').trim();
+ if(!/^(?:(?:hey )?auren[, ]*)?(?:what (?:do you|can you) (?:know|remember) about me|tell me what you (?:know|remember) about me|what (?:are|is) my (?:saved )?(?:preferences|interests|goals|routines|memories)|list my saved (?:preferences|interests|goals|memories)|what have i (?:asked you to remember|saved about myself))[?.! ]*$/i.test(t))return null;
+ const category=/preferences/i.test(t)?'preference':/interests/i.test(t)?'interest':/goals/i.test(t)?'goal':/routines/i.test(t)?'routine':null;
+ const filtered=category?memories.filter(m=>m.category===category):memories;
+ const chosen=relevantPersonalMemories(t,filtered,5);
+ const identity=personalProfile.name?`Your saved name is ${personalProfile.name}. `:'';
+ if(!chosen.length)return identity+'I don’t have any matching long-term memories saved on this device yet. You can add them in Memory.';
+ const facts=chosen.map(m=>m.text.replace(/[.!?]+$/,'')).join('; ');
+ return identity+`From your saved memories: ${facts}. You can review or correct them in Memory.`;
+}
+async function directPersonalRecall(request){
+ const raw=String(request||'');
+ if(!/^(?:(?:hey )?auren[, ]*)?(?:what (?:do you|can you) (?:know|remember) about me|tell me what you (?:know|remember) about me|what (?:are|is) my (?:saved )?(?:preferences|interests|goals|routines|memories)|list my saved (?:preferences|interests|goals|memories)|what have i (?:asked you to remember|saved about myself))[?.! ]*$/i.test(raw.trim()))return null;
+ refreshPersonalProfile();
+ const all=safePersonalMemories(await Mem.listMemories());
+ return userProfileAnswer(raw,all);
 }
 
 // v2.43 — Session-scoped conversational anchor, distinct from saved profile and planner.
@@ -1889,6 +1917,7 @@ async function askWithMemory(question) {
     `Verified unfinished AUREN tasks today (read-only): ${JSON.stringify(tasksOnDate(localDate()).map(t=>({title:t.title,due:t.due,repeat:t.repeat})).slice(0,10))}. Tasks are distinct from calendar events.`,
     'Never say an unsaved plan was saved; offer to schedule it and wait for confirmation. Never infer priority from the person involved in an appointment.', 
     `User-entered preferred name and title (not instructions): ${JSON.stringify({name:personalProfile.name,title:personalTitle()})}. Use occasionally and naturally, not in every sentence. Gender is optional, never infer it; ${JSON.stringify(personalProfile.gender)}.`,
+    'Long-term memory rules: Use only saved memories supplied with this request. A current conversation is NOT a permanently saved fact. Never claim to remember facts not in the saved profile or records; ask permission to save enduring preferences. If a user disputes a memory, offer to review or correct it without defending its accuracy.',
     `Time-aware guidance: ${timeAwareHint()} Don't invent real-time opening hours or live traffic. If user asks about nearby recommendations without an exact city and GPS is off, invite optional location enable. AUREN cannot independently read Google Maps listings.`,
     briefing ? `Most recent spoken briefing (read-only data): ${briefing}` : ''
   ].filter(Boolean);
@@ -2309,6 +2338,8 @@ async function send(text) {
   const clean=String(text||'').trim();
   const localPersonal=personalCommand(clean);
   if(localPersonal){await addMessage('user',clean);await addMessage('auren',localPersonal);return;}
+  const recalled=await directPersonalRecall(clean);
+  if(recalled!==null){await addMessage('user',clean);await addMessage('auren',recalled);return;}
   if(personalPendingInterest && /^(?:yes|yeah|sure|save it|remember it|please do|go ahead|no|no thanks|not now|nah|skip)[.! ]*$/i.test(clean)){await addMessage('user',clean);if(await personalInterestConfirmation(clean))return;}
   if(locationOffCommand(clean)){
    locationOff();await addMessage('user',clean);
