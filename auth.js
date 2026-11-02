@@ -1,3 +1,5 @@
+// AUREN v2.83 — Verified reminder entries and matching app loader.
+// AUREN v2.82 — Loads verified name recall upgrade.
 // AUREN v2.81 — Versioned Safari loader for reliable reminder routing.
 // AUREN v2.80.1 — Safari loader and diagnostics for v2.80.1.
 // AUREN v2.80 — Updated verified loader and diagnostics.
@@ -86,17 +88,17 @@ function displayDiagnosis(report) {
 }
 async function runStartupDiagnosis(error) {
   const entries=[
-    'AUREN diagnostics v2.81',
+    'AUREN diagnostics v2.83',
     'Reported at: '+new Date().toISOString(),
     'Page: '+location.pathname,
-    'Application: app.js?v=2.81',
+    'Application: app.js?v=2.83',
     'Original failure: '+errorDetails(error),
     'Checking deployed application source and dependencies...'
   ];
   displayDiagnosis(entries.join('\n'));
   try {
     // Explicit cache bypass lets us distinguish an outdated deployed app.js from a broken module.
-    const sourceURL=new URL('./app.js?v=2.81',import.meta.url);
+    const sourceURL=new URL('./app.js?v=2.83',import.meta.url);
     sourceURL.searchParams.set('diagnostics',String(Date.now()));
     const sourceResponse=await fetch(sourceURL.href,{cache:'no-store'});
     if(!sourceResponse.ok)throw new Error('HTTP '+sourceResponse.status+' loading deployed app.js');
@@ -104,9 +106,9 @@ async function runStartupDiagnosis(error) {
     const head=source.split('\n').slice(0,4).join(' | ').slice(0,300);
     entries.push('Deployed app.js header: '+head);
     entries.push('Deployed app.js size: '+new TextEncoder().encode(source).length+' bytes');
-    if(!/^\/\/ AUREN v2\.80\.1\b/m.test(source.slice(0,400))) {
-      entries.push('VERSION MISMATCH: deployed app.js does not begin with AUREN v2.81. Check GitHub commit, Pages deployment, and refresh.');
-    } else entries.push('Application version matches v2.81.');
+    if(!/^\/\/ AUREN v2\.83\b/m.test(source.slice(0,400))) {
+      entries.push('VERSION MISMATCH: deployed app.js does not begin with AUREN v2.83. Check GitHub commit, Pages deployment, and refresh.');
+    } else entries.push('Application version matches v2.83.');
   } catch(sourceError){entries.push('Could not verify deployed app.js: '+errorDetails(sourceError));}
   displayDiagnosis(entries.join('\n'));
   const failed=[];
@@ -138,7 +140,7 @@ async function openApp(user){
   busy=true;setGateMode('loading');
   try{
     // A fresh versioned URL makes Safari request the CURRENT deployed app.js.
-    if(!appPromise)appPromise=import('./app.js?v=2.81').catch(error=>{appPromise=null;throw error;});
+    if(!appPromise)appPromise=import('./app.js?v=2.83').catch(error=>{appPromise=null;throw error;});
     await appPromise;loaded=true;
     if(accountEmail)accountEmail.textContent=user.email||'Signed in';
     if(accountCard)accountCard.hidden=false;
