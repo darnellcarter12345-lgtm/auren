@@ -1,3 +1,5 @@
+// AUREN v2.74 — Unified briefing continuity and grounded follow-ups.
+// AUREN v2.73 — Verified capabilities and grounded AI response correction.
 // AUREN v2.72.7 — Fix deployed Safari syntax error in reference-safety string.
 // AUREN v2.72.4 — Fix Safari Unexpected identifier s in memory reply.
 // AUREN v2.72.3 — Corrected invalid regex in workload estimate lookup; full startup syntax repair.
@@ -1917,6 +1919,36 @@ const briefingPlayer = (() => {
   render();
   return {start,pause,resume,replay,ask,get active(){return playing;},get available(){return segments.length>0;},get position(){return position;}};
 })();
+// v2.74: Reuse the existing briefing context, not a competing memory store.
+// Only verified calendar/reminder/task summaries can answer grounded follow-ups.
+function rememberBriefingResult(text, date=localDate(), scope='day') {
+  const scan=classify(String(text||''));
+  if(scan.blocked.length || scan.sensitive.length) return;
+  latestBriefingContext={text:String(text).slice(0,1200),at:Date.now(),date,scope};
+  try{sessionStorage.setItem('auren_latest_briefing_v213',JSON.stringify(latestBriefingContext));}catch{}
+}
+function groundedBriefingFollowup(raw){
+  const context=latestBriefingContext;
+  if(!context || Date.now()-context.at>45*60000)return null;
+  const q=String(raw||'').trim().toLowerCase().replace(/[.!?]+$/,'');
+  const referencesBriefing=/\b(?:briefing|you (?:just )?(?:said|mentioned|told me)|what did you say|your summary|earlier summary|that overview)\b/.test(q);
+  const briefFollow=/^(?:what (?:did you (?:just )?(?:say|mention)|was (?:in|on) (?:my |the |that )?briefing)|(?:repeat|summarize|recap) (?:my |the |that |your )?briefing|can you (?:repeat|summarize) (?:that|the briefing)|what did (?:that|your) briefing (?:say|cover)|tell me more about (?:the|my|that) briefing|what about (?:the|my) briefing)$/.test(q);
+  if(briefFollow)return `Your most recent briefing was: ${context.text}`;
+  if(!referencesBriefing)return null;
+  const date=/\btomorrow\b/.test(q)?shiftedDate(localDate(),1):(context.date&&/^\d{4}-\d{2}-\d{2}$/.test(context.date)?context.date:localDate());
+  const scope=context.scope==='week'?'week':'day';
+  const report=savedDayIntelligence(date,scope);
+  if(/\b(?:next|first|soonest|afterward|after that|coming up)\b/.test(q)){
+    const next=report.events.filter(p=>eventTimestamp(p)>=Date.now()).sort((a,b)=>eventTimestamp(a)-eventTimestamp(b))[0];
+    return next?`The next appointment in your saved AUREN schedule is ${next.title}, ${readableDate(next.date)} at ${spokenClock(next.time)}.`:'I do not see another upcoming appointment in AUREN for that period. That does not mean your time is free.';
+  }
+  if(/\b(?:reminder|reminders)\b/.test(q))return report.due.length?`For that period, your saved reminders include ${report.due.slice(0,3).map(r=>r.text+' at '+new Date(r.at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})).join('; ')}.`:'There are no reminders saved for that period in AUREN.';
+  if(/\b(?:conflict|overlap)\b/.test(q))return report.conflictPairs.length?`Your saved schedule has overlapping appointments: ${report.conflictPairs.slice(0,3).map(([a,b])=>a.title+' and '+b.title).join('; ')}.`:'I found no overlapping saved appointments in that period.';
+  if(/\b(?:task|tasks|routine|routines)\b/.test(q))return taskBrief(date,scope,true)||'There are no unfinished tasks saved for that period.';
+  if(/\b(?:what|which|details|more)\b/.test(q))return `That briefing was based on the appointments and reminders saved in AUREN. ${report.spoken} ${taskBrief(date,scope,false)}`.trim();
+  return null;
+}
+
 function prepareSpokenReview(){
   // A briefing click requests a spoken briefing; it must not open a second
   // microphone session at the same time (especially unreliable on iPhone).
@@ -1954,8 +1986,7 @@ $('playBriefing').onclick=async()=>{
   const weather=result?.success?' '+result.spoken:'';
   const intelligence=savedDayIntelligence(date,briefingScope);
   const briefingText = `${butlerGreeting()}. ${intelligence.spoken}${weather}`.replace(/(?:Would you like|Shall I|Do you want)[^.!?]*[?]/gi,'').trim();
-  latestBriefingContext = { text: briefingText.slice(0, 1200), at: Date.now() };
-  try { sessionStorage.setItem('auren_latest_briefing_v213',JSON.stringify(latestBriefingContext)); } catch {}
+  rememberBriefingResult(briefingText,date,briefingScope);
   await addMessage('auren', briefingText, {silent:true});
   briefingPlayer.start(briefingText);
 };
@@ -2569,6 +2600,27 @@ function aurenStyleGuidance(question){
  return core+' Default to a compact, friendly answer of 1-3 sentences for straightforward matters. Give more detail for genuinely complex requests. Ask one clarifying question only if the missing information prevents progress.';
 }
 
+// v2.73: Capability answers must come from verified AUREN functionality,
+// never an external model's generic description of a chatbot.
+function aurenVerifiedCapabilities(question) {
+  const q=String(question||'').trim().toLowerCase().replace(/[.!?]+$/,'');
+  if (/^(?:what (?:can|do) you do|what are your (?:capabilities|features|functions)|what (?:features|capabilities) (?:do you have|are available)|how can you help me|tell me (?:what you can do|about your capabilities)|what can auren do|what are you able to do|are you limited|what are your limitations)$/.test(q)) {
+    return 'I can manage appointments in my built-in AUREN planner after your confirmation, set reminders while AUREN is open, track tasks and routines, save approved memories and projects, provide daily briefings, check weather, and help with questions through the connected AI service. I cannot directly edit Apple or Google Calendar, and reminders do not run when this page is closed.';
+  }
+  if (/^(?:can you|are you able to|do you (?:have the ability to|know how to))\s+(?:actually\s+)?(?:manage|edit|change|save|create|add|move|delete|reschedule|schedule|verify|check|view)\s+(?:my\s+|an?\s+|the\s+)?(?:calendar|appointments?|events?|schedule|plans?)(?:\s+in auren)?$/.test(q)) {
+    return 'Yes. I can view and change appointments in AUREN’s built-in planner, with confirmation before changes. I can verify what is saved there, but I cannot directly modify an external calendar app.';
+  }
+  return null;
+}
+function correctFalseCapabilityClaims(question, answer) {
+  const claim=String(answer||'');
+  if (/\b(?:i (?:do not|don't(?: have the ability to)?|cannot|can't|lack the ability to)|i have no (?:ability|access)|not able to)\b[^.!?]{0,240}\b(?:calendar|schedule|appointments?|plans?|reminders?|tasks?)\b/i.test(claim) &&
+      /\b(?:auren|you|your|calendar|schedule|appointments?|reminders?|tasks?|capabilit|features?|help)\b/i.test(String(question))) {
+    return 'To clarify my actual abilities: I can manage appointments in AUREN’s own planner after confirmation, check saved plans, manage local tasks, and set reminders while the page is open. I cannot change external calendar apps without a separate integration.';
+  }
+  return claim;
+}
+
 async function askWithMemory(question) {
   refreshPersonalProfile();
   const context = await contextForAI(question);
@@ -2586,7 +2638,7 @@ async function askWithMemory(question) {
   const projects = (await Proj.listProjects()).filter(p => !p.sensitive)
     .slice(0, 8).map(p => `${p.name.slice(0,90)} | ${p.status} | ${p.progress}%`);
   const isFollowup = /^(?:what about|tell me more|why|how|the (?:first|second|third)|first|second|third|explain|and |what did you mean|what was that)/i.test(question.trim());
-  const briefing = (isFollowup || /\b(?:briefing|earlier|mentioned|that story|that part|those plans)\b/i.test(question)) && latestBriefingContext && Date.now()-latestBriefingContext.at < 45*60*1000
+  const briefing = (isFollowup || /\b(?:briefing|earlier|mentioned|you (?:just )?said|that overview|your summary|that story|that part|those plans)\b/i.test(question)) && latestBriefingContext && Date.now()-latestBriefingContext.at < 45*60*1000
     ? latestBriefingContext.text : '';
   const deviceContext = [
     correctionContext(question),
@@ -2622,10 +2674,11 @@ async function askWithMemory(question) {
     briefing ? `Most recent spoken briefing (read-only data): ${briefing}` : ''
   ].filter(Boolean);
   const answer = await askAI(question, context.memories, context.session, aiRecent, deviceContext);
+  const checkedAnswer = correctFalseCapabilityClaims(question, answer);
   lastFailedAIQuestion=null;
-  rememberConversationTurn(question, answer);
-  trackConversationAnchor(question,answer);
-  return answer;
+  rememberConversationTurn(question, checkedAnswer);
+  trackConversationAnchor(question,checkedAnswer);
+  return checkedAnswer;
 }
 
 // AUREN v2.14 — device-local, consent-first personalization. Never store identity from inference.
@@ -3159,6 +3212,8 @@ async function send(text) {
     return;
   }
   text=addressed.command;
+  const verifiedCapability=aurenVerifiedCapabilities(text);
+  if(verifiedCapability){await addMessage('user',text);await addMessage('auren',verifiedCapability);return;}
   // Recovery is explicit and safe: only rerun a recent failed informational AI query.
   if(RETRY_INTENT.test(text.trim())){
     const retry=takeRetryableQuestion();
@@ -3380,6 +3435,13 @@ async function send(text) {
     await addMessage('auren',briefingCommand,{silent:true});
     return;
   }
+  // Resolve verified briefing references before general AI or unrelated planner handlers.
+  const briefingFollowup=groundedBriefingFollowup(text);
+  if(briefingFollowup!==null){
+    await addMessage('user',text);
+    await addMessage('auren',briefingFollowup);
+    return;
+  }
   // Preserve the user's Read replies aloud preference. Text messages must not
   // turn speech on automatically or override the user's explicit setting.
   // Voice initiated from the orb still enables speech in the orb handler.
@@ -3508,6 +3570,7 @@ async function send(text) {
     if(adaptiveRequest){
       const response=adaptiveRequest.kind==='priority' ? adaptivePriority(adaptiveRequest.date,adaptiveRequest.scope)
         : adaptiveBriefing(adaptiveRequest.date,adaptiveRequest.scope,adaptiveRequest.detail);
+      if(adaptiveRequest.kind==='brief')rememberBriefingResult(response,adaptiveRequest.date,adaptiveRequest.scope);
       await addMessage('auren',response);return;
     }
     const adaptiveFollow=adaptiveFollowup(text);
