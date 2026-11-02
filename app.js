@@ -1,4 +1,4 @@
-// AUREN v2.96 — field-aware reminder clarification plus saved-profile-first name memory.
+// AUREN v2.97 — field-aware reminder clarification plus saved-profile-first name memory.
 // AUREN v2.93 — saved-profile-first name authority; no conversation-memory false positives.
 // AUREN v2.92 — persistent name recall, refreshed profile context, verified loader.
 // AUREN v2.91 — Defensive schedule intent engine, verified reminder-aware speech, cache update.
@@ -3719,6 +3719,45 @@ async function aurenHandleInterpretedIntent(raw){
  return false;
 }
 
+// v2.97: Places dialogue owns its own follow-ups. No reminder confirmation interception.
+let aurenLastPlaceSearch=null;
+function aurenPlaceCategory(raw){
+ const s=String(raw||'').toLowerCase();
+ if(/\b(?:remind me|set (?:me )?(?:a )?reminder|don't let me forget)\b/.test(s))return null;
+ if(!/\b(?:find|show|send|give|suggest|recommend|look for|search|where|places?|spots?|restaurants?|food|eat|dine|dinner|lunch|breakfast|brunch|coffee|cafe|nearby|around me|near me|go get something to eat)\b/.test(s))return null;
+ const discovery=/\b(?:find|show|send|give|suggest|recommend|look for|search|where|places?|spots?|restaurants?|nearby|near me|go get something to eat)\b/.test(s);
+ if(!discovery)return null;
+ if(/\b(?:eat|food|restaurants?|dining|dinner|lunch|breakfast|brunch|somewhere to grab|something to eat|hungry)\b/.test(s))return /\b(?:pizza|sushi|tacos?|burgers?|steak|italian|mexican|thai|chinese|indian|seafood|vegan)\b/.test(s)?(s.match(/\b(?:pizza|sushi|tacos?|burgers?|steak|italian|mexican|thai|chinese|indian|seafood|vegan)\b/)[0]+' restaurants'):'restaurants';
+ if(/\b(?:coffee|cafes?|espresso)\b/.test(s))return 'coffee shops';
+ return null;
+}
+function aurenPlaceSearchFollowup(raw){
+ if(!aurenLastPlaceSearch || Date.now()-aurenLastPlaceSearch.at>10*60*1000)return false;
+ const q=String(raw||'').trim().toLowerCase().replace(/[?.!]+$/,'');
+ return /^(?:do it|send (?:me )?(?:it|that|them|the places|the link)|show (?:me )?(?:it|them|the places|the results)|open (?:it|that|maps|google maps)|go ahead|yes(?: please)?|please do|can you send me it|can you open it|give me (?:the )?link|pull (?:it|them) up)$/.test(q);
+}
+function aurenAppendPlaceLink(query){
+ const url='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(query);
+ const wrap=document.createElement('div');wrap.className='msg auren';
+ const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';
+ link.textContent='View '+query+' in Google Maps';link.style.cssText='color:#e6c581;font-weight:700;text-decoration:underline;display:block;padding:8px 0';
+ wrap.append(link);$('log')?.append(wrap);if($('log'))$('log').scrollTop=$('log').scrollHeight;
+ return url;
+}
+async function aurenHandlePlaceDialogue(text){
+ const category=aurenPlaceCategory(text),followup=aurenPlaceSearchFollowup(text);
+ if(!category&&!followup)return false;
+ // A new place request is a topic change, never a reminder subject.
+ if(category){aurenReminderQuestion=null;pendingReminder=null;pendingYourDayChoice=null;}
+ const query=category?(category+' near me'):aurenLastPlaceSearch.query;
+ aurenLastPlaceSearch={query,at:Date.now()};
+ await addMessage('user',text);
+ await addMessage('auren',followup?'Here is the Google Maps search link again. Tap it to view the places.':
+   'I can help you find '+category+'. Tap the Google Maps link for restaurant names, ratings and directions. For a list of nearby places inside AUREN, choose Nearby suggestions and allow location access.');
+ aurenAppendPlaceLink(query);
+ return true;
+}
+
 async function send(text) {
   refreshPersonalProfile();
   const addressed = aurenAddressCommand(text);
@@ -3728,6 +3767,8 @@ async function send(text) {
     return;
   }
   text=addressed.command;
+  // v2.97: Place searches and their conversational follow-ups precede reminders.
+  if(await aurenHandlePlaceDialogue(text)){conversationAnchor=null;return;}
   // v2.92: Name recall always consults the persisted profile, never the generic AI.
   if(aurenNameQuestion(text)){
     await addMessage('user',text);
@@ -4637,6 +4678,7 @@ aurenPlaces = (() => {
     dest=dest.replace(/^(.{2,65}?)\s+(?:take|bring|drive|guide|lead)\s+me\s+to\s+(.+)$/i,(_all,first,second)=>second.trim());
     dest=dest.replace(/^(.{2,65}?)\s+(?:navigate|directions?)\s+to\s+(.+)$/i,(_all,first,second)=>second.trim());
     if(!dest||dest.length<2||dest.length>110||/^(?:me|there|somewhere|a place|places|the place|a restaurant|a store|it|that)$/i.test(dest))return '';
+    if(/^(?:go\s+)?(?:get|grab|have)\s+(?:something|some|a bite|food|lunch|dinner|breakfast)(?:\s+to\s+eat)?(?:\s+(?:nearby|near me))?$/i.test(dest)||/^(?:somewhere|anywhere|places?)\s+to\s+eat$/i.test(dest))return '';
     // Avoid routing application commands or abstract requests to Google Maps.
     if(/^(?:settings?|text chat|history|the home screen|my (?:schedule|calendar|memories)|sleep|bed|the next sentence|the previous page)$/i.test(dest))return '';
     if(/^(?:do|be|have|feel|know|say|tell|help|see|find out|remember|understand)\b/i.test(dest))return '';
@@ -4718,7 +4760,7 @@ aurenPlaces = (() => {
       // No misleading retry loop or repeated options when there are no usable results.
       // For general categories, Maps searches that category; for a named destination it opens directions.
       const destination=navigationTarget||pending||'places nearby';
-      popupButton('Get directions',()=>navigationTarget
+      popupButton(navigationTarget?'Get directions':'Search in Google Maps',()=>navigationTarget
         ? openDirections(destination)
         : openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(destination+' near me')));
       // One optional discovery action only BEFORE the first lookup, never after failure.
