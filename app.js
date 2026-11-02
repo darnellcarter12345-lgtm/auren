@@ -1,3 +1,4 @@
+// AUREN v2.71 — Safe Multi-Step Action Intelligence.
 // AUREN v2.70 — Grounded, on-demand personal recommendations from saved tasks, plans and approved preferences.
 // AUREN v2.69 — Verified topic-specific memory search, provenance clarity and privacy-first recall.
 // AUREN v2.68 — Confirmed actual task durations, privacy-limited history and adaptive comparisons.
@@ -3073,6 +3074,50 @@ function aurenConversationDecision(raw){
  }
  return null;
 }
+// v2.71 — Safe multi-step actions: read verified records first, then stage at
+// most one write with the existing confirmation handler. Never auto-commit.
+function aurenMultiStepIntent(raw){
+ const input=String(raw||'').trim().replace(/^(?:hey\s+)?auren[,! ]*/i,'').replace(/[.!?]+$/,'');
+ const parts=input.split(/(?:,\s*(?:and\s+)?|\s+and\s+)(?=(?:check|show|list|tell|add|create|remind|set)\b)/i).map(x=>x.trim()).filter(Boolean);
+ if(parts.length<2||parts.length>4)return null;
+ const steps=[];
+ for(const part of parts){
+  if(/^(?:check|show|list) (?:me )?(?:my |the )?(?:schedule|calendar|appointments|plans)(?: (?:for )?(?:today|tomorrow))?$/i.test(part))steps.push({type:'calendar',raw:part});
+  else if(/^(?:check|tell me (?:if|whether)|show) (?:me )?(?:if |whether )?(?:anything |there are |i have )?(?:schedule )?(?:conflicts|overlaps)(?: (?:for )?(?:today|tomorrow))?$/i.test(part))steps.push({type:'conflicts',raw:part});
+  else if(/^(?:check|show|list) (?:me )?(?:my |the )?(?:tasks|to.do list)(?: (?:for )?(?:today|tomorrow))?$/i.test(part))steps.push({type:'tasks',raw:part});
+  else if(/^(?:add|create)\s+(?:a\s+)?(?:task|to.do)\s+(?:to\s+|for\s+)?\S/i.test(part))steps.push({type:'task-add',raw:part});
+  else if(/^(?:remind me|set (?:a )?reminder)\b/i.test(part))steps.push({type:'reminder-add',raw:part});
+  else return null; // Entire request stays with normal conversation if unknown.
+ }
+ if(steps.filter(x=>/-add$/.test(x.type)).length>1)return {multipleWrites:true,steps};
+ return {steps};
+}
+function aurenMultiStepReply(intent){
+ if(intent.multipleWrites)return 'I can handle several steps, but to prevent accidental changes, please confirm one new task or reminder at a time. Which should I prepare first?';
+ // Process all read-only steps before staging any new action; keep spoken order.
+ const defaultDate=parseDateIntent(intent.steps.map(x=>x.raw).join(' '))||localDate();
+ const responses=[];
+ for(const step of intent.steps.filter(x=>!/-add$/.test(x.type))){
+  const day=parseDateIntent(step.raw)||defaultDate;
+  if(step.type==='calendar')responses.push('Schedule: '+planSummary(day));
+  if(step.type==='tasks')responses.push('Tasks: '+(taskBrief(day,'day',true)||'No unfinished tasks recorded for that date.'));
+  if(step.type==='conflicts'){
+   const events=plansFor(day),pairs=[];
+   for(let i=0;i<events.length;i++)for(let j=i+1;j<events.length;j++)if(overlaps(events[i],events[j]))pairs.push(events[i].title+' and '+events[j].title);
+   responses.push(pairs.length?'Conflicts in saved appointments: '+pairs.slice(0,3).join('; ')+'.':'No overlaps among appointments saved for '+readableDate(day)+'. This does not include external calendars or travel time.');
+  }
+ }
+ const write=intent.steps.find(x=>/-add$/.test(x.type));
+ if(write){
+  if(write.type==='task-add'){
+   const task=taskIntent(write.raw);
+   responses.push(task?.kind==='add'?taskResponse(task):'I need a clear task title before I can prepare that step.');
+  }else responses.push(reminderSpeech(write.raw));
+  responses.push('No new task or reminder has been saved yet. Please confirm the proposed change if you want it.');
+ }
+ return responses.join(' ');
+}
+
 async function send(text) {
   const addressed = aurenAddressCommand(text);
   if (addressed.wake) {
@@ -3179,6 +3224,15 @@ async function send(text) {
   // memory/task/calendar draft. The specialist still handles the destination.
   if(/^(?:(?:please|can you|could you)\s+)?(?:take me to|navigate to|directions to|drive to|go to)\b/i.test(text.trim())){
     aurenCancelPendingDrafts();
+  }
+  // v2.71: Route supported compound commands through a verified, local workflow.
+  // A pending write confirmation retains ownership of a bare Yes/No reply.
+  const multiStep=aurenMultiStepIntent(text);
+  if(multiStep){
+    aurenCancelPendingDrafts(); // a fresh compound command replaces old uncommitted drafts
+    await addMessage('user',text);
+    await addMessage('auren',aurenMultiStepReply(multiStep));
+    return;
   }
   // v2.68: A reported actual duration is saved only after an explicit confirmation.
   if(pendingTaskActual){
