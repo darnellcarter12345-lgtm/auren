@@ -1,3 +1,4 @@
+// AUREN v3.03 — Explicit feedback learning, respectful check-ins, and contextual butler improvements.
 // AUREN v3.02 — Butler personality controls, grounded dialogue and consent-first check-ins.
 // AUREN v3.01 — Safari geolocation recovery, accurate failures, and city/ZIP fallback.
 // AUREN v3.00 — Grounded context-and-care intelligence, consent-first personalization.
@@ -3059,6 +3060,7 @@ async function askWithMemory(question) {
     `CURRENT PERSONALITY DELIVERY (high priority, per-turn only): ${aurenPersonalityGuidance(question)}`,
     aurenCareAIGuidance(question),
     aurenButlerGuidance(),
+    aurenRelationshipAIGuidance(),
     `Current actual Dallas date/time: ${new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',dateStyle:'full',timeStyle:'long'}).format(new Date())}. Verify time gaps with numeric timestamps; do not imply 11:20 PM is close to 12:47 PM.`,
     `Time clarity: Always include a clear AM/PM or natural daypart (morning, afternoon, evening, night) for appointments and reminders; distinguish noon from midnight. Never infer a daypart without using the actual scheduled hour.`,
     'If the user says they need to leave in N minutes, that is an imminent departure, not spare time. Never say they have plenty of time unless the timing clearly supports it. Discuss conflicts against actual saved appointment times only. Do not invent travel duration or imply a calendar event was created merely because the user mentioned leaving.',
@@ -3129,6 +3131,63 @@ function aurenCarePreference(raw){
  }
  return null;
 }
+// v3.03: opt-in, explicit-feedback learning; not inferred emotions or silent monitoring.
+const AUREN_RELATION_KEY='auren_relationship_feedback_v303';
+let aurenRelationship={declined:{},helpful:{},lastPrompt:null,quietUntil:0,updated:0};
+try{const stored=JSON.parse(localStorage.getItem(AUREN_RELATION_KEY)||'null');if(stored&&typeof stored==='object')aurenRelationship={...aurenRelationship,...stored,declined:{...(stored.declined||{})},helpful:{...(stored.helpful||{})}};}catch{}
+function aurenRelationshipSave(){
+ try{localStorage.setItem(AUREN_RELATION_KEY,JSON.stringify(aurenRelationship));return JSON.parse(localStorage.getItem(AUREN_RELATION_KEY)||'null')?.updated===aurenRelationship.updated;}catch{return false;}
+}
+function aurenRelationshipTopic(t){
+ const q=String(t||'').toLowerCase();
+ if(/\b(?:meal|food|eat|hungry|dinner|lunch|breakfast|restaurant)\b/.test(q))return 'meals';
+ if(/\b(?:sleep|rest|bedtime|tired|wind down)\b/.test(q))return 'rest';
+ if(/\b(?:plan|schedule|calendar|appointment|reminder|task)\b/.test(q))return 'planning';
+ return null;
+}
+function aurenRelationshipFeedback(raw){
+ const q=String(raw||'').toLowerCase().trim();
+ // Explicit opt-outs are honored immediately, even without a recent prompt.
+ const stop=/\b(?:don't|do not|stop|quit|never)\s+(?:keep\s+)?(?:asking|suggesting|bringing up|mentioning|checking|reminding me about)\b/.test(q) || /\b(?:no more|leave me alone about)\b/.test(q);
+ const topic=aurenRelationshipTopic(q) || (aurenRelationship.lastPrompt&&Date.now()-aurenRelationship.lastPrompt.at<180000?aurenRelationship.lastPrompt.topic:null);
+ if(stop&&topic){
+   aurenRelationship.declined[topic]=true;aurenRelationship.lastPrompt=null;aurenRelationship.updated=Date.now();
+   if(!aurenRelationshipSave())return 'I could not save that preference. Please try again.';
+   return `Understood. I won't bring up ${topic==='rest'?'rest and sleep':topic==='meals'?'meals and food':'planning suggestions'} on my own. You can still ask about them whenever you like.`;
+ }
+ if(/\b(?:you can ask about|you may suggest|it's okay to suggest|okay to ask about|start suggesting)\b/.test(q)&&topic){
+   delete aurenRelationship.declined[topic];aurenRelationship.updated=Date.now();
+   return aurenRelationshipSave()?`Understood. ${topic[0].toUpperCase()+topic.slice(1)} suggestions are allowed again, only when useful.`:'I could not save that preference.';
+ }
+ // Short yes/no refers to a check-in only when AUREN actually asked it very recently.
+ const recent=aurenRelationship.lastPrompt&&Date.now()-aurenRelationship.lastPrompt.at<120000;
+ if(recent&&/^(?:no|no thanks|not now|maybe later|nah|no thank you)[.! ]*$/.test(q)){
+   aurenRelationship.quietUntil=Date.now()+86400000;aurenRelationship.lastPrompt=null;aurenRelationship.updated=Date.now();
+   return aurenRelationshipSave()?'Of course. I won’t bring that up again today.':'Of course. I’ll leave that for now.';
+ }
+ if(recent&&/^(?:yes|yes please|sure|okay|ok|sounds good)[.! ]*$/.test(q)){
+   const prompt=aurenRelationship.lastPrompt;aurenRelationship.lastPrompt=null;aurenRelationship.updated=Date.now();aurenRelationshipSave();
+   // Don't assert a save or launch a tool; invite a clear actionable request.
+   return prompt.topic==='planning'?'Certainly. What would you like to plan?':prompt.topic==='meals'?'Certainly. What kind of food would you like to find?':'Certainly. What would help you wind down?';
+ }
+ // Feedback about suggestions changes emphasis, not the user's records.
+ if(recent&&/^(?:that was helpful|helpful suggestion|good suggestion|thanks for checking|i like that suggestion)[.! ]*$/.test(q)){
+   const topic=aurenRelationship.lastPrompt.topic;aurenRelationship.helpful[topic]=Math.min(20,(aurenRelationship.helpful[topic]||0)+1);
+   aurenRelationship.lastPrompt=null;aurenRelationship.updated=Date.now();
+   return aurenRelationshipSave()?'Glad that was useful. I’ll keep your feedback in mind.':'Glad that was useful.';
+ }
+ return null;
+}
+function aurenRelationshipMaySuggest(topic){
+ return !!aurenCare.checkins && aurenButler.checkinFrequency!=='off' && !aurenRelationship.declined[topic] && Date.now()>=Number(aurenRelationship.quietUntil||0);
+}
+function aurenRelationshipMarkPrompt(topic){
+ aurenRelationship.lastPrompt={topic,at:Date.now()};aurenRelationship.updated=Date.now();aurenRelationshipSave();
+}
+function aurenRelationshipAIGuidance(){
+ return `ADAPTIVE FEEDBACK (explicit only): ${JSON.stringify({topicsNotToSuggest:Object.keys(aurenRelationship.declined).filter(k=>aurenRelationship.declined[k]),helpfulSuggestionTopics:aurenRelationship.helpful,checkinsPaused:Date.now()<Number(aurenRelationship.quietUntil||0)})}. Use as a LIGHT preference signal, never infer feelings or private traits, never repeat declined topics, never manufacture check-ins. User's question and confirmed records come first; no background activity or false action claims.`;
+}
+
 function aurenCareFacts(){
  const now=new Date(),hour=now.getHours(),day=localDate();
  const appointments=plansFor(day).map(e=>({kind:'appointment',title:String(e.title||'').slice(0,90),time:e.time}));
@@ -3150,15 +3209,15 @@ function aurenCareGreeting(raw){
  const greeting=firstOfDay?aurenButlerGreeting(baseGreeting):baseGreeting;
  let note=' What can I help with?';
  if(aurenCare.lastGreetingDay===f.day)return greeting+' What can I help with?';
- if(aurenCare.checkins&&f.nextAppointment)note=` You have ${f.nextAppointment.title} at ${formatClock(f.nextAppointment.time)}. Anything you want to prepare?`;
- else if(aurenCare.checkins&&f.reminders.some(r=>!r.fired&&new Date(r.at)>new Date()))note=' There is a reminder ahead in Your Day. Want a quick review?';
- else if(aurenCare.checkins&&aurenCare.lastCheckinDay!==f.day){
+ if(aurenRelationshipMaySuggest('planning')&&f.nextAppointment){aurenRelationshipMarkPrompt('planning');note=` You have ${f.nextAppointment.title} at ${formatClock(f.nextAppointment.time)}. Anything you want to prepare?`;}
+ else if(aurenRelationshipMaySuggest('planning')&&f.reminders.some(r=>!r.fired&&new Date(r.at)>new Date())){aurenRelationshipMarkPrompt('planning');note=' There is a reminder ahead in Your Day. Want a quick review?';}
+ else if(aurenCare.checkins&&aurenCare.lastCheckinDay!==f.day&&Date.now()>=Number(aurenRelationship.quietUntil||0)){
    const choices=[];
-   if(aurenCare.topics.planning)choices.push(['planning','Anything you would like to make time for today?']);
-   if(aurenCare.topics.rest&&f.hour>=22)choices.push(['rest','Would you prefer to wind down, or is there something I can help finish?']);
-   if(aurenCare.topics.meals&&f.hour>=11&&f.hour<=20)choices.push(['meals','Would you like help finding something to eat?']);
+   if(aurenCare.topics.planning&&aurenRelationshipMaySuggest('planning'))choices.push(['planning','Anything you would like to make time for today?']);
+   if(aurenCare.topics.rest&&aurenRelationshipMaySuggest('rest')&&f.hour>=22)choices.push(['rest','Would you prefer to wind down, or is there something I can help finish?']);
+   if(aurenCare.topics.meals&&aurenRelationshipMaySuggest('meals')&&f.hour>=11&&f.hour<=20)choices.push(['meals','Would you like help finding something to eat?']);
    const picked=choices.find(x=>x[0]!==aurenCare.lastCheckinTopic)||choices[0];
-   if(picked){note=' '+picked[1];aurenCare.lastCheckinDay=f.day;aurenCare.lastCheckinTopic=picked[0];aurenSaveCare();}
+   if(picked){aurenRelationshipMarkPrompt(picked[0]);note=' '+picked[1];aurenCare.lastCheckinDay=f.day;aurenCare.lastCheckinTopic=picked[0];aurenSaveCare();}
  }else if(f.hour>=22)note=' What can I help you with tonight?';
  aurenCare.lastGreetingDay=f.day;aurenSaveCare();
  return greeting+note;
@@ -3607,6 +3666,13 @@ const butlerAddress=aurenButlerControl('Form of address',[['adaptive','Naturally
 const butlerCheckins=aurenButlerControl('Optional check-ins',[['off','Off'],['occasional','Occasional, when relevant'],['frequent','More proactive, while we talk']],aurenButler.checkinFrequency);
 const butlerSave=document.createElement('button');butlerSave.type='button';butlerSave.textContent='Save personality';
 const butlerStatus=document.createElement('p');butlerStatus.className='hint';butlerStatus.setAttribute('aria-live','polite');
+const feedbackPanel=document.createElement('div');feedbackPanel.style.cssText='margin-top:12px';
+const feedbackExplain=document.createElement('p');feedbackExplain.className='hint';
+const feedbackClear=document.createElement('button');feedbackClear.type='button';feedbackClear.textContent='Reset suggestion feedback';
+function aurenPaintFeedback(){const declined=Object.keys(aurenRelationship.declined).filter(k=>aurenRelationship.declined[k]);feedbackExplain.textContent=declined.length?'AUREN will not initiate suggestions about: '+declined.join(', ')+'.':'No suggestion topics are blocked. You can say “stop asking about meals” or similar at any time.';}
+feedbackClear.addEventListener('click',()=>{const previous=aurenRelationship;aurenRelationship={declined:{},helpful:{},lastPrompt:null,quietUntil:0,updated:Date.now()};if(!aurenRelationshipSave()){aurenRelationship=previous;butlerStatus.textContent='Could not reset feedback.';}else butlerStatus.textContent='Suggestion feedback reset.';aurenPaintFeedback();});
+feedbackPanel.append(feedbackExplain,feedbackClear);butlerCard.append(feedbackPanel);aurenPaintFeedback();
+
 butlerSave.addEventListener('click',()=>{
  const before={...aurenButler,care:aurenCare.checkins};
  aurenButler.style=butlerStyle.value;aurenButler.addressMode=butlerAddress.value;aurenButler.checkinFrequency=butlerCheckins.value;
@@ -4058,6 +4124,9 @@ async function send(text) {
     return;
   }
   text=addressed.command;
+  // v3.03: Learn explicit corrections and honor opt-outs before other intents.
+  const adaptiveFeedback=aurenRelationshipFeedback(text);
+  if(adaptiveFeedback!==null){await addMessage('user',text);await addMessage('auren',adaptiveFeedback);return;}
   // v3.00: Explicit conversational preferences; local and verified.
   const carePreference=aurenCarePreference(text);
   if(carePreference!==null){await addMessage('user',text);await addMessage('auren',carePreference);return;}
