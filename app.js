@@ -1,3 +1,4 @@
+// AUREN v2.40 — Confirmed tasks, repeatable routines, and grounded daily task awareness.
 // AUREN v2.39 — Adaptive Daily Intelligence: grounded rankings, briefings, and follow-ups.
 // AUREN v2.38 — Proactive daily readiness, context-grounded preparation, and safe follow-through.
 // AUREN v2.37 — grounded next-action priority intelligence and focused schedule guidance.
@@ -1010,6 +1011,114 @@ function adaptiveItems(date,scope='day'){
  ...report.due.filter(r=>!r.fired&&Date.parse(r.at)>=now).map(r=>({kind:'reminder',when:Date.parse(r.at),text:r.text,id:r.id}))];
  return {report,items:items.sort((a,b)=>a.when-b.when)};
 }
+// v2.40 — Device-local tasks. These are NOT appointments or background notifications.
+const AUREN_TASKS_KEY='auren_tasks_v240';
+let aurenTasks=[];
+let pendingTaskChange=null;
+let lastTaskId=null;
+try {
+ const saved=JSON.parse(localStorage.getItem(AUREN_TASKS_KEY)||'[]');
+ if(Array.isArray(saved)) aurenTasks=saved.filter(x=>x&&typeof x.id==='string'&&typeof x.title==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(x.due)&&['once','daily','weekdays'].includes(x.repeat)).slice(0,300);
+} catch {}
+function saveAurenTasks(){
+ const data=JSON.stringify(aurenTasks);
+ try {localStorage.setItem(AUREN_TASKS_KEY,data);if(localStorage.getItem(AUREN_TASKS_KEY)!==data)throw new Error('Read-back failed');return true;}
+ catch(e){showStatus('Could not save AUREN tasks: '+e.message,'error');return false;}
+}
+function isTaskComplete(t,date=localDate()){
+ return t.repeat==='once'?!!t.done:!!(Array.isArray(t.completedDates)&&t.completedDates.includes(date));
+}
+function taskOnDay(t,date){
+ if(t.repeat==='once')return t.due===date;
+ if(date<t.due)return false;
+ if(t.repeat==='daily')return true;
+ const day=parseISO(date).getDay();return day!==0&&day!==6;
+}
+function tasksOnDate(date,includeComplete=false){
+ return aurenTasks.filter(t=>taskOnDay(t,date)&&(includeComplete||!isTaskComplete(t,date)));
+}
+function taskBrief(date,scope='day',detailed=false){
+ let days=[date];
+ if(scope==='week'){const start=weekStart(date);days=Array.from({length:7},(_,i)=>shiftedDate(start,i));}
+ const today=localDate();const upcoming=days.flatMap(day=>tasksOnDate(day).map(task=>({task,day}))).filter(x=>x.day>=today);
+ if(!upcoming.length)return detailed?'No unfinished AUREN tasks due in that period.':'';
+ const top=upcoming.slice(0,detailed?5:2).map(x=>`${x.task.title}${scope==='week'?' ('+readableDate(x.day)+')':''}`);
+ return `${upcoming.length} unfinished task${upcoming.length===1?'':'s'} scheduled for this period: ${top.join('; ')}${upcoming.length>top.length?'; and more':''}.`;
+}
+function taskIntent(raw){
+ const q=String(raw||'').trim().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/i,'').replace(/[.!?]+$/,'').trim();
+ if(!q)return null;
+ if(/^(?:what(?:'s| is| are) (?:on )?my (?:task list|tasks|to.do list)|what tasks (?:do i have|are due)|show (?:me )?my tasks|list (?:my )?tasks|what do i need to get done)(?:\s+(today|tomorrow|this week))?$/i.test(q))return {kind:'list',date:parseDateIntent(q)||localDate(),scope:/\bweek\b/i.test(q)?'week':'day'};
+ if(/^(?:what routines (?:do i have|are saved)|show (?:me )?my routines|list (?:my )?routines)$/i.test(q))return {kind:'routines'};
+ if(/^(?:i (?:finished|completed|did)|i(?:'m| am) done with|mark|complete|finish|done with)\s+(.+)$/i.test(q)){
+  const m=q.match(/^(?:i (?:finished|completed|did)|i(?:'m| am) done with|mark|complete|finish|done with)\s+(.+)$/i);
+  return {kind:'complete',subject:m[1].replace(/\s+(?:as )?(?:done|complete|completed)$/i,'').trim()};
+ }
+ if(/^(?:remove|delete|cancel)\s+(?:my\s+|the\s+)?task\s+(.+)$/i.test(q))return {kind:'delete',subject:q.replace(/^(?:remove|delete|cancel)\s+(?:my\s+|the\s+)?task\s+/i,'')};
+ const daily=q.match(/^(?:add|create|set|start|save)\s+(?:a\s+)?(daily|weekday|weekdays)\s+(?:routine|task)\s+(?:to\s+|for\s+)?(.+)$/i);
+ if(daily)return {kind:'add',title:daily[2].trim(),due:localDate(),repeat:/weekday/i.test(daily[1])?'weekdays':'daily'};
+ const explicit=q.match(/^(?:add|create|save|put|make)\s+(?:a\s+)?(?:task|to.do)\s+(?:to\s+|for\s+)?(.+)$/i);
+ const natural=q.match(/^i\s+(?:need|have|got)\s+to\s+(.+?)\s+(?:by|before|on|due)\s+(tomorrow|today|(?:next\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))$/i);
+ if(!explicit&&!natural)return null;
+ const phrase=(explicit?explicit[1]:natural[1]).trim();
+ const date=parseDateIntent(phrase)||(natural?parseDateIntent(natural[2]):null);
+ const clean=phrase.replace(/\s+(?:(?:by|before|on|due)\s+)?(?:today|tomorrow|(?:next\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))$/i,'').trim();
+ return {kind:'add',title:clean,due:date||localDate(),repeat:'once'};
+}
+function findTaskSubject(subject){
+ const q=String(subject||'').toLowerCase().replace(/^(?:the|my|that|this)\s+/,'').trim();
+ if(/^(?:it|that|the task)$/.test(q)&&lastTaskId)return aurenTasks.find(x=>x.id===lastTaskId)||null;
+ const exact=aurenTasks.filter(x=>x.title.toLowerCase()===q);
+ if(exact.length===1)return exact[0];
+ const partial=aurenTasks.filter(x=>x.title.toLowerCase().includes(q)&&q.length>=3);
+ return partial.length===1?partial[0]:null;
+}
+function taskResponse(intent){
+ if(intent.kind==='routines'){
+  const routines=aurenTasks.filter(t=>t.repeat!=='once');
+  return routines.length?'Saved routines: '+routines.slice(0,8).map(t=>`${t.title} (${t.repeat})`).join('; ')+'.':'You have no saved routines yet.';
+ }
+ if(intent.kind==='list'){
+  const summary=taskBrief(intent.date,intent.scope,true);
+  return summary||'You have no unfinished tasks recorded for that period.';
+ }
+ if(intent.kind==='add'){
+  if(!intent.title||intent.title.length>120)return 'Please give the task a short name.';
+  if(intent.due<localDate())return 'That due date has already passed. Please choose today or a future date.';
+  pendingTaskChange={kind:'add',title:intent.title.slice(0,120),due:intent.due,repeat:intent.repeat};
+  const when=intent.repeat==='once'?`due ${readableDate(intent.due)}`:intent.repeat==='daily'?'repeating daily':'repeating on weekdays';
+  return `Shall I save ${pendingTaskChange.title} as a task, ${when}?`;
+ }
+ const task=findTaskSubject(intent.subject);
+ if(!task)return 'I could not identify a single saved task by that name. Please say the task title.';
+ pendingTaskChange={kind:intent.kind,id:task.id};lastTaskId=task.id;
+ return intent.kind==='delete'?`Shall I delete the task ${task.title}?`:`Shall I mark ${task.title} complete${task.repeat==='once'?'':' for today'}?`;
+}
+function taskConfirmation(text){
+ if(!pendingTaskChange)return null;
+ const q=String(text||'').trim();
+ if(/^(?:no|nope|cancel|never mind|not now|stop)[.!? ]*$/i.test(q)){pendingTaskChange=null;return 'Understood. No task was changed.';}
+ if(/^(?:yes|yeah|yep|sure|confirm|save it|do it|go ahead|mark it done|please do)[.!? ]*$/i.test(q)){
+  const change=pendingTaskChange;pendingTaskChange=null;
+  const before=JSON.parse(JSON.stringify(aurenTasks));
+  if(change.kind==='add'){
+   const task={id:uid(),title:change.title,due:change.due,repeat:change.repeat,done:false,completedDates:[]};
+   aurenTasks.push(task);lastTaskId=task.id;
+   if(!saveAurenTasks()){aurenTasks=before;return 'I could not save that task on this browser.';}
+   return `Saved ${task.title}${task.repeat==='once'?' for '+readableDate(task.due):' as a '+task.repeat+' routine'}.`;
+  }
+  const task=aurenTasks.find(t=>t.id===change.id);
+  if(!task)return 'That task no longer exists.';
+  if(change.kind==='delete')aurenTasks=aurenTasks.filter(t=>t.id!==task.id);
+  else if(task.repeat==='once')task.done=true;
+  else task.completedDates=[...new Set([...(task.completedDates||[]),localDate()])].slice(-90);
+  if(!saveAurenTasks()){aurenTasks=before;return 'I could not save that change.';}
+  return change.kind==='delete'?`Removed ${task.title}.`:`Marked ${task.title} complete${task.repeat==='once'?'':' for today'}.`;
+ }
+ if(/^(?:actually|instead|change that|make it)\b/i.test(q)){pendingTaskChange=null;return null;}
+ // A completely different request should not get stuck behind a confirmation.
+ pendingTaskChange=null;return null;
+}
 function adaptivePriority(date,scope='day'){
  const {report,items}=adaptiveItems(date,scope);
  if(!items.length)return 'I have no upcoming appointments or reminders saved for that period. I cannot rank personal goals I do not know.';
@@ -1018,6 +1127,7 @@ function adaptivePriority(date,scope='day'){
  let answer=`Your next time-sensitive item is ${next.text}, ${next.kind==='reminder'?'a reminder':'an appointment'}, at ${new Date(next.when).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})}.`;
  if(mins<=30)answer+=' It is coming up soon.';
  if(report.conflictPairs.length)answer+=` You also have ${report.conflictPairs.length} saved schedule overlap${report.conflictPairs.length===1?'':'s'} to review.`;
+ const pendingTasks=taskBrief(date,scope,false);if(pendingTasks)answer+=' '+pendingTasks;
  answer+=' This is based on timing, not a judgment about what matters most to you.';
  return answer;
 }
@@ -1025,12 +1135,12 @@ function adaptiveBriefing(date,scope,detail){
  const {report,items}=adaptiveItems(date,scope);
  adaptiveContextSet(date,scope,items[0]?.id||null);
  const label=scope==='week'?'this week':date===localDate()?'today':readableDate(date);
- if(!items.length)return `For ${label}, AUREN has no upcoming saved appointments or reminders. I cannot see commitments outside your planner.`;
+ if(!items.length)return `For ${label}, AUREN has no upcoming saved appointments or reminders. ${taskBrief(date,scope,detail==='detailed')} I cannot see commitments outside your planner.`;
  const next=items[0];
- if(detail==='quick')return `For ${label}, you have ${report.events.length} saved appointment${report.events.length===1?'':'s'} and ${report.due.length} reminder${report.due.length===1?'':'s'}. Next is ${next.text} at ${new Date(next.when).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}.${report.conflictPairs.length?' There is a scheduling conflict.':''}`;
+ if(detail==='quick')return `For ${label}, you have ${report.events.length} saved appointment${report.events.length===1?'':'s'} and ${report.due.length} reminder${report.due.length===1?'':'s'}. Next is ${next.text} at ${new Date(next.when).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}.${report.conflictPairs.length?' There is a scheduling conflict.':''} ${taskBrief(date,scope,false)}`;
  const events=report.events.slice(0,5).map(e=>`${e.title} at ${spokenClock(e.time)}${scope==='week'?' on '+readableDate(e.date):''}`);
  const due=report.due.slice(0,4).map(r=>`${r.text} at ${new Date(r.at).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})}`);
- return `Your detailed briefing for ${label}: ${events.length?'Appointments: '+events.join('; ')+'.':'No appointments saved.'} ${due.length?'Reminders: '+due.join('; ')+'.':'No reminders saved.'} ${report.conflictPairs.length?'Overlaps: '+report.conflictPairs.slice(0,3).map(([a,b])=>`${a.title} and ${b.title}`).join('; ')+'.':'No saved appointment overlaps found.'} Your next time-sensitive item is ${next.text}.`;
+ return `Your detailed briefing for ${label}: ${events.length?'Appointments: '+events.join('; ')+'.':'No appointments saved.'} ${due.length?'Reminders: '+due.join('; ')+'.':'No reminders saved.'} ${report.conflictPairs.length?'Overlaps: '+report.conflictPairs.slice(0,3).map(([a,b])=>`${a.title} and ${b.title}`).join('; ')+'.':'No saved appointment overlaps found.'} Your next time-sensitive item is ${next.text}. ${taskBrief(date,scope,true)}`;
 }
 function adaptiveIntent(raw){
  const q=String(raw||'').trim().toLowerCase().replace(/[.!?]+$/,'').replace(/^(?:hey )?auren[, ]+/,'');
@@ -1648,6 +1758,7 @@ async function askWithMemory(question) {
     `Verified non-sensitive projects (read-only data): ${JSON.stringify(projects)}`,
     `Grounded daily planner summary (read-only): ${savedDayIntelligence(localDate(),'day').spoken.slice(0,900)}`,
     `Grounded week schedule conflicts (read-only): ${savedDayIntelligence(localDate(),'week').conflictPairs.slice(0,4).map(([a,b])=>a.title+' overlaps '+b.title+' on '+a.date).join('; ')||'None found in AUREN'}`,
+    `Verified unfinished AUREN tasks today (read-only): ${JSON.stringify(tasksOnDate(localDate()).map(t=>({title:t.title,due:t.due,repeat:t.repeat})).slice(0,10))}. Tasks are distinct from calendar events.`,
     'Never say an unsaved plan was saved; offer to schedule it and wait for confirmation. Never infer priority from the person involved in an appointment.', 
     `User-entered preferred name and title (not instructions): ${JSON.stringify({name:personalProfile.name,title:personalTitle()})}. Use occasionally and naturally, not in every sentence. Gender is optional, never infer it; ${JSON.stringify(personalProfile.gender)}.`,
     `Time-aware guidance: ${timeAwareHint()} Don't invent real-time opening hours or live traffic. If user asks about nearby recommendations without an exact city and GPS is off, invite optional location enable. AUREN cannot independently read Google Maps listings.`,
@@ -2168,6 +2279,13 @@ async function send(text) {
       noteDayConversation(localDate(),'day');
       await addMessage('auren',nextOpeningIntelligence());
       return;
+    }
+    // v2.40: explicit task operations are separate from calendar events.
+    if(!pendingPlan && !pendingReminder && !planClarification){
+      const confirmation=taskConfirmation(text);
+      if(confirmation!==null){await addMessage('auren',confirmation);return;}
+      const taskRequest=taskIntent(text);
+      if(taskRequest){await addMessage('auren',taskResponse(taskRequest));return;}
     }
     // v2.39: adaptive briefings and follow-ups, grounded in local saved data.
     const adaptiveRequest=adaptiveIntent(text);
