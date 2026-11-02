@@ -1,3 +1,4 @@
+// AUREN v2.77 — Stable integration release; unchanged v2.76 planning features.
 // AUREN v2.76 — Integrated planning intelligence; builds on v2.75.
 // AUREN v2.75 — Verified personal meeting context, preserves v2.74 continuity.
 // AUREN v2.74 — Unified briefing continuity and grounded follow-ups.
