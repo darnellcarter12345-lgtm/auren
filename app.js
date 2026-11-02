@@ -1,3 +1,4 @@
+// AUREN v2.76 — Integrated planning intelligence; builds on v2.75.
 // AUREN v2.75 — Verified personal meeting context, preserves v2.74 continuity.
 // AUREN v2.74 — Unified briefing continuity and grounded follow-ups.
 // AUREN v2.73 — Verified capabilities and grounded AI response correction.
@@ -1607,6 +1608,51 @@ function workloadWindowReply(intent){
  return output.join(' ');
 }
 // v2.65: Compare saved obligations without inventing importance, duration or availability.
+// v2.76 — Unified planning integration (read-only).
+// Uses existing saved events, tasks and reminders. No new storage or automatic writes.
+function integratedPlanningIntent(raw){
+ const q=String(raw||'').trim().toLowerCase().replace(/^(?:hey\s+)?auren[,! ]*/,'').replace(/[?.!]+$/,'').trim();
+ if(/^(?:give me|show me|make me|create|build|what(?:'s| is)) (?:a |my |the )?(?:combined|integrated|all.in.one) (?:daily |day |weekly |week )?(?:planning |priority |schedule )?(?:overview|check|plan|briefing|summary)(?: for (?:today|tomorrow|this week))?$/.test(q))return {kind:'overview',date:parseDateIntent(q)||localDate(),scope:/\bthis week\b|\bweekly\b/.test(q)?'week':'day'};
+ if(/^(?:what should i (?:do|finish|work on) before my next (?:meeting|appointment)|what (?:tasks|reminders) (?:do i have|should i check) before my next (?:meeting|appointment)|compare my (?:tasks|reminders) (?:with|against) my next (?:appointment|meeting)|help me plan around my next (?:meeting|appointment))$/.test(q))return {kind:'before',date:localDate(),scope:'week'};
+ return null;
+}
+function integratedPlanningReply(intent){
+ const now=Date.now(), today=localDate(), date=intent.date;
+ const start=intent.scope==='week'?weekStart(date):date;
+ const days=intent.scope==='week'?Array.from({length:7},(_,i)=>shiftedDate(start,i)):[date];
+ const relevant=days.filter(d=>d>=today);
+ const events=plans.filter(p=>relevant.includes(p.date)&&Number.isFinite(eventTimestamp(p))&&eventTimestamp(p)>=now).sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+ const remindersDue=reminders.filter(m=>!m.fired&&Number.isFinite(Date.parse(m.at))&&Date.parse(m.at)>=now&&relevant.includes(localDate(new Date(m.at)))).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
+ const dueTasks=aurenTasks.filter(t=>relevant.some(d=>taskOnDay(t,d)&&!isTaskComplete(t,d)))
+ .sort((a,b)=>a.due.localeCompare(b.due)||a.title.localeCompare(b.title));
+ const overdue=aurenTasks.filter(t=>t.repeat==='once'&&!isTaskComplete(t)&&t.due<today).sort((a,b)=>a.due.localeCompare(b.due));
+ const lines=[];
+ if(intent.kind==='before'){
+  const next=plans.filter(p=>Number.isFinite(eventTimestamp(p))&&eventTimestamp(p)>now).sort((a,b)=>eventTimestamp(a)-eventTimestamp(b))[0];
+  if(!next)return 'I cannot find an upcoming appointment saved in AUREN. I can review your tasks and reminders, but I cannot determine what is before a meeting that is not saved.';
+  const when=eventTimestamp(next),mins=Math.floor((when-now)/60000);
+  lines.push(`Your next saved appointment is ${next.title} on ${readableDate(next.date)} at ${spokenClock(next.time)} (about ${mins} minutes from now).`);
+  const beforeReminders=remindersDue.filter(m=>Date.parse(m.at)<when);
+  const possible=aurenTasks.filter(t=>!isTaskComplete(t,today)&&t.due<=next.date).sort((a,b)=>a.due.localeCompare(b.due));
+  if(beforeReminders.length)lines.push(`Before then, ${beforeReminders.length} reminder${beforeReminders.length===1?' is':'s are'} saved, next: ${beforeReminders[0].text}.`);
+  if(possible.length){const t=possible[0],estimate=Number(t.estimatedMinutes);lines.push(`An unfinished task to review is ${t.title}${Number.isFinite(estimate)&&estimate>0?' (your estimate: '+estimate+' minutes)':''}.`);}
+  if(!beforeReminders.length&&!possible.length)lines.push('I found no pending saved reminders or unfinished due tasks for that interval.');
+  lines.push('Calendar time does not guarantee free time; travel and preparation needs are unknown. Nothing has been changed.');
+  return lines.join(' ');
+ }
+ const label=intent.scope==='week'?'this week':date===today?'today':date===shiftedDate(today,1)?'tomorrow':readableDate(date);
+ lines.push(`Here is your combined AUREN planning check for ${label}.`);
+ if(events.length)lines.push(`${events.length} upcoming saved appointment${events.length===1?'':'s'}; next: ${events[0].title}, ${readableDate(events[0].date)} at ${spokenClock(events[0].time)}.`);
+ else lines.push('No upcoming appointments saved for that period.');
+ if(remindersDue.length)lines.push(`${remindersDue.length} upcoming saved reminder${remindersDue.length===1?'':'s'}; next: ${remindersDue[0].text}.`);
+ if(dueTasks.length)lines.push(`${dueTasks.length} unfinished scheduled task or routine${dueTasks.length===1?'':'s'}; consider ${dueTasks.slice(0,2).map(t=>t.title).join(' and ')}.`);
+ if(overdue.length)lines.push(`${overdue.length} overdue one-time task${overdue.length===1?'':'s'} to review; earliest: ${overdue[0].title}.`);
+ const clashes=[];for(let i=0;i<events.length;i++)for(let j=i+1;j<events.length;j++)if(overlaps(events[i],events[j]))clashes.push(events[i].title+' and '+events[j].title);
+ if(clashes.length)lines.push(`Saved appointment overlap: ${clashes.slice(0,2).join('; ')}.`);
+ if(!dueTasks.length&&!overdue.length&&!remindersDue.length&&!events.length)lines.push('There are no matching saved items; this does not confirm your time is free.');
+ lines.push('This is a read-only recommendation based on saved records. No task, reminder or appointment was changed.');
+ return lines.join(' ');
+}
 function planningDecisionIntent(raw){
  const q=String(raw||'').trim().toLowerCase().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/,'').replace(/[.!?]+$/,'').trim();
  if(/^(?:help me (?:decide|choose|prioritize)|what should i (?:do|tackle|handle) first|which (?:task|commitment) should i (?:do|prioritize) first|help me (?:choose|decide) what to do (?:first|next)|compare my (?:tasks|priorities)|i have too much to do|i have a lot to do|i have competing priorities)(?: (?:today|tomorrow))?$/.test(q))return {kind:'overview',date:parseDateIntent(q)||localDate()};
@@ -3536,6 +3582,14 @@ async function send(text) {
     if(/^(?:how much time (?:do i have|is left) (?:before|until) (?:my )?next (?:meeting|appointment|plan)|do i have time before my next (?:meeting|appointment|plan)|how long (?:until|before) my next (?:meeting|appointment|plan))[.!? ]*$/i.test(String(text).trim())){
       noteDayConversation(localDate(),'day');
       await addMessage('auren',nextOpeningIntelligence());
+      return;
+    }
+    // v2.76: Answer explicitly integrated planning questions from the same verified local records.
+    const integrationRequest=integratedPlanningIntent(text);
+    if(integrationRequest){
+      noteDayConversation(integrationRequest.date,integrationRequest.scope);
+      rememberScheduleFocus(integrationRequest.date);
+      await addMessage('auren',integratedPlanningReply(integrationRequest));
       return;
     }
     // v2.66: Grounded workload questions before generic planning and priority handlers.
