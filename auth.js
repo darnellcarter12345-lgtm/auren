@@ -1,4 +1,4 @@
-// AUREN v2.74 — diagnostics loading repaired app.js, error report and module checks.
+// AUREN v2.75 — diagnostics loading repaired app.js, error report and module checks.
 // Preserves v2.72.2 Firebase sign-in and cloud sync.
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut, setPersistence, browserLocalPersistence, browserSessionPersistence } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
@@ -84,7 +84,7 @@ async function runStartupDiagnosis(error) {
     'AUREN diagnostics v2.72.7',
     'Reported at: '+new Date().toISOString(),
     'Page: '+location.pathname,
-    'Application: app.js?v=2.74',
+    'Application: app.js?v=2.75',
     'Original failure: '+errorDetails(error),
     'Checking app dependencies independently...'
   ];
@@ -118,7 +118,7 @@ async function openApp(user){
   busy=true;setGateMode('loading');
   try{
     // A fresh versioned URL makes Safari request the CURRENT deployed app.js.
-    if(!appPromise)appPromise=import('./app.js?v=2.74').catch(error=>{appPromise=null;throw error;});
+    if(!appPromise)appPromise=import('./app.js?v=2.75').catch(error=>{appPromise=null;throw error;});
     await appPromise;loaded=true;
     if(accountEmail)accountEmail.textContent=user.email||'Signed in';
     if(accountCard)accountCard.hidden=false;
