@@ -1,3 +1,4 @@
+// AUREN v2.68 — Confirmed actual task durations, privacy-limited history and adaptive comparisons.
 // AUREN v2.67 — Confirmed task effort estimates and grounded workload fit checks.
 // AUREN v2.66 — Grounded workload and calendar-gap analysis.
 // AUREN v2.65 — Grounded competing-priority comparison and decision support.
@@ -1454,6 +1455,62 @@ function workloadEstimateConfirmation(text){
  if(!saveAurenTasks()){if(previous===undefined)delete t.estimatedMinutes;else t.estimatedMinutes=previous;return 'I could not save the estimate in this browser.';}
  return `Saved your ${draft.minutes}-minute estimate for ${t.title}. Your appointments were not changed.`;
 }
+// v2.68 — Personal workload learning uses only durations the user reports.
+// Durations are stored on the matching device-local task, never inferred from chat.
+let pendingTaskActual=null;
+function actualWorkloadIntent(raw){
+ const q=String(raw||'').trim().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/i,'').replace(/[.!?]+$/,'').trim();
+ const value='(\\d{1,3})\\s*(minutes?|mins?|hours?|hrs?)';
+ const m=q.match(/^(?:i\s+)?(?:just\s+)?(?:finished|completed|did)\s+(?:my\s+)?(.+?)\s*(?:and\s+)?(?:it\s+)?took\s+(\d{1,3})\s*(minutes?|mins?|hours?|hrs?)$/i)
+ ||q.match(/^(?:record|save|log)\s+(?:an?\s+)?(?:actual\s+)?(?:time|duration)\s+(?:for\s+)?(?:my\s+)?(?:task\s+)?(.+?)\s+(?:as|at|of|to)\s+(\d{1,3})\s*(minutes?|mins?|hours?|hrs?)$/i)
+ ||q.match(/^(?:my\s+)?(?:task\s+)?(.+?)\s+(?:actually\s+)?took\s+(?:me\s+)?(\d{1,3})\s*(minutes?|mins?|hours?|hrs?)$/i);
+ if(m)return {kind:'record',subject:m[1].trim(),minutes:Number(m[2])*(/^h/i.test(m[3])?60:1)};
+ const check=q.match(/^(?:how long (?:did|does) (?:my )?(?:task )?(.+?) (?:actually )?take|(?:show|check|compare|review) (?:my )?(?:actual )?(?:task )?(?:time|duration|estimate) (?:for )?(?:my )?(?:task )?(.+?)|what(?:'s| is) (?:my )?(?:actual|average) (?:time|duration) for (?:my )?(?:task )?(.+?))$/i);
+ if(check)return {kind:'check',subject:(check[1]||check[2]||check[3]).trim()};
+ return null;
+}
+function matchOneWorkTask(subject){
+ const term=subject.toLowerCase().replace(/^(?:the\s+|my\s+)+/,'').trim();
+ const exact=aurenTasks.filter(t=>t.title.toLowerCase()===term);
+ if(exact.length===1)return {task:exact[0]};
+ const partial=aurenTasks.filter(t=>term.length>=3&&t.title.toLowerCase().includes(term));
+ if(partial.length===1)return {task:partial[0]};
+ return {error:(exact.length||partial.length)?'Several saved tasks match that description. Please use the exact task title.':'I cannot find a saved task with that title. Please save it first.'};
+}
+function actualWorkloadReply(intent){
+ const match=matchOneWorkTask(intent.subject);
+ if(match.error)return match.error;
+ const t=match.task;
+ const history=Array.isArray(t.actualMinutesHistory)?t.actualMinutesHistory.filter(n=>Number.isInteger(n)&&n>0&&n<=720).slice(-12):[];
+ if(intent.kind==='check'){
+  if(!history.length)return `There is no actual work time recorded for ${t.title}. ${Number.isFinite(t.estimatedMinutes)?'Your current estimate is '+t.estimatedMinutes+' minutes.':'No estimated duration is saved either.'}`;
+  const avg=Math.round(history.reduce((a,b)=>a+b,0)/history.length);
+  const estimate=Number.isFinite(t.estimatedMinutes)&&t.estimatedMinutes>0?` Your saved estimate is ${t.estimatedMinutes} minutes; the recorded average is ${avg-t.estimatedMinutes>0?avg-t.estimatedMinutes+' minutes longer':avg===t.estimatedMinutes?'the same':t.estimatedMinutes-avg+' minutes shorter'} than that estimate.`:'';
+  return `${t.title}: ${history.length} actual time ${history.length===1?'entry':'entries'}, most recently ${history[history.length-1]} minutes, averaging ${avg} minutes.${estimate} This reflects only the durations you reported; the saved estimate has not been changed.`;
+ }
+ if(!Number.isInteger(intent.minutes)||intent.minutes<1||intent.minutes>720)return 'Please provide an actual duration between 1 minute and 12 hours.';
+ pendingTaskActual={id:t.id,minutes:intent.minutes,at:Date.now()};
+ return `You reported ${intent.minutes} minutes for ${t.title}. Shall I record that actual duration for future planning? This will not mark the task complete or change its estimate.`;
+}
+function confirmActualWorkload(raw){
+ if(!pendingTaskActual)return null;
+ const q=String(raw||'').trim();
+ if(Date.now()-pendingTaskActual.at>120000){pendingTaskActual=null;return null;}
+ if(/^(?:no|nope|cancel|never mind|not now)[.!? ]*$/i.test(q)){pendingTaskActual=null;return 'Understood. I did not save the duration.';}
+ if(!/^(?:yes|yeah|yep|sure|confirm|save it|please do|go ahead)[.!? ]*$/i.test(q))return null;
+ const draft=pendingTaskActual;pendingTaskActual=null;
+ const task=aurenTasks.find(t=>t.id===draft.id);
+ if(!task)return 'That task is no longer saved.';
+ const before=task.actualMinutesHistory;
+ const history=Array.isArray(before)?before.filter(n=>Number.isInteger(n)&&n>=1&&n<=720).slice(-11):[];
+ task.actualMinutesHistory=[...history,draft.minutes];
+ if(!saveAurenTasks()){
+  if(before===undefined)delete task.actualMinutesHistory;else task.actualMinutesHistory=before;
+  return 'I could not save that duration in this browser.';
+ }
+ const average=Math.round(task.actualMinutesHistory.reduce((sum,n)=>sum+n,0)/task.actualMinutesHistory.length);
+ return `Recorded ${draft.minutes} minutes for ${task.title}. Your ${task.actualMinutesHistory.length} reported ${task.actualMinutesHistory.length===1?'session averages':'sessions average'} ${average} minutes. I have not changed its estimate or completion status.`;
+}
 // v2.66: Read-only time and workload estimates based strictly on recorded appointments.
 function workloadWindowIntent(raw){
  const q=String(raw||'').trim().toLowerCase().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/,'').replace(/[.!?]+$/,'').trim();
@@ -1485,6 +1542,8 @@ function workloadWindowReply(intent){
  if(openTasks.length)output.push(`For possible work, you have ${openTasks.slice(0,2).map(t=>t.title).join(' and ')}${openTasks.length>2?' and other tasks':''} recorded.`);
  const known=openTasks.filter(t=>Number.isFinite(t.estimatedMinutes)&&t.estimatedMinutes>0);
  if(known.length)output.push(`Your own saved work estimates include ${known.slice(0,3).map(t=>t.title+' ('+t.estimatedMinutes+' minutes)').join('; ')}. These are estimates, not promised finishing times.`);
+ const learned=openTasks.filter(t=>Array.isArray(t.actualMinutesHistory)&&t.actualMinutesHistory.some(n=>Number.isInteger(n)&&n>0&&n<=720));
+ if(learned.length)output.push(`From durations you explicitly reported: ${learned.slice(0,3).map(t=>{const h=t.actualMinutesHistory.filter(n=>Number.isInteger(n)&&n>0&&n<=720).slice(-12);return t.title+' averaged '+Math.round(h.reduce((a,b)=>a+b,0)/h.length)+' minutes across '+h.length+' entries';}).join('; ')}. These averages are observations, not promises, and do not overwrite your estimates.`);
  const unknown=openTasks.filter(t=>!Number.isFinite(t.estimatedMinutes)||t.estimatedMinutes<=0);
  if(unknown.length)output.push(`${unknown.length} unfinished task${unknown.length===1?' has':'s have'} no saved duration estimate.`);
  if(known.length&&remaining.length){
@@ -2894,6 +2953,7 @@ function aurenCancelPendingDrafts(){
   planningOffer=null;
   pendingTaskChange=null;
   pendingTaskEstimate=null;
+  pendingTaskActual=null;
   contextualMeetingDraft=null;
   personalPendingInterest=null;
   pendingWeatherOffer=null;
@@ -3042,6 +3102,14 @@ async function send(text) {
   if(/^(?:(?:please|can you|could you)\s+)?(?:take me to|navigate to|directions to|drive to|go to)\b/i.test(text.trim())){
     aurenCancelPendingDrafts();
   }
+  // v2.68: A reported actual duration is saved only after an explicit confirmation.
+  if(pendingTaskActual){
+    const confirmed=confirmActualWorkload(text);
+    if(confirmed!==null){await addMessage('user',text);await addMessage('auren',confirmed);return;}
+    pendingTaskActual=null;
+  }
+  const actualIntent=actualWorkloadIntent(text);
+  if(actualIntent){await addMessage('user',text);await addMessage('auren',actualWorkloadReply(actualIntent));return;}
   // v2.67: A task duration estimate has its own confirmation, separate from task creation.
   if(pendingTaskEstimate){
     const result=workloadEstimateConfirmation(text);
