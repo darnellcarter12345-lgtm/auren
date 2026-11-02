@@ -1,3 +1,4 @@
+// AUREN v2.72.4 — Fix Safari Unexpected identifier s in memory reply.
 // AUREN v2.72.3 — Corrected invalid regex in workload estimate lookup; full startup syntax repair.
 // AUREN v2.72.1 — Safari-safe regex compatibility / clean full-source startup repair.
 // AUREN v2.72 — Adaptive JARVIS Personality; grounded conversational modes.
@@ -2373,7 +2374,7 @@ async function verifiedPersonalMemoryLookup(raw){
  }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score||a.index-b.index).slice(0,4);
  if(!matches.length)return `I have no verified, non-sensitive saved memories matching “${subject.slice(0,75)}” on this device. Discussing something doesn't automatically save it.`;
  const summary=matches.map(x=>`“${x.m.text.slice(0,190)}”`).join('; ');
- const lead=intent.type==='check'?'Yes, I found saved memory information related to that: ':intent.type==='source'?'My only verified basis is what is currently saved in Memory: ':'Here's what I found in your saved Memory: ';
+ const lead=intent.type==='check'?'Yes, I found saved memory information related to that: ':intent.type==='source'?'My only verified basis is what is currently saved in Memory: ':"Here's what I found in your saved Memory: ";
  return lead+summary+'. Saved records are not independent proof that a statement is still accurate. You can review or correct them in Memory.';
 }
 
