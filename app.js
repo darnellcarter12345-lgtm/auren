@@ -1,3 +1,4 @@
+// AUREN v3.05 — contextual conversation, selective initiative, persistent feedback.
 // AUREN v3.04 — Conversational sensitivity and grounded situation awareness.
 // AUREN v3.03 — Explicit feedback learning, respectful check-ins, and contextual butler improvements.
 // AUREN v3.02 — Butler personality controls, grounded dialogue and consent-first check-ins.
@@ -3063,6 +3064,7 @@ async function askWithMemory(question) {
     aurenButlerGuidance(),
     aurenRelationshipAIGuidance(),
     aurenSituationAndEmotionGuidance(question),
+    aurenAdaptiveGuidance(question),
     `Current actual Dallas date/time: ${new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',dateStyle:'full',timeStyle:'long'}).format(new Date())}. Verify time gaps with numeric timestamps; do not imply 11:20 PM is close to 12:47 PM.`,
     `Time clarity: Always include a clear AM/PM or natural daypart (morning, afternoon, evening, night) for appointments and reminders; distinguish noon from midnight. Never infer a daypart without using the actual scheduled hour.`,
     'If the user says they need to leave in N minutes, that is an imminent departure, not spare time. Never say they have plenty of time unless the timing clearly supports it. Discuss conflicts against actual saved appointment times only. Do not invent travel duration or imply a calendar event was created merely because the user mentioned leaving.',
@@ -3190,6 +3192,51 @@ function aurenRelationshipAIGuidance(){
  return `ADAPTIVE FEEDBACK (explicit only): ${JSON.stringify({topicsNotToSuggest:Object.keys(aurenRelationship.declined).filter(k=>aurenRelationship.declined[k]),helpfulSuggestionTopics:aurenRelationship.helpful,checkinsPaused:Date.now()<Number(aurenRelationship.quietUntil||0)})}. Use as a LIGHT preference signal, never infer feelings or private traits, never repeat declined topics, never manufacture check-ins. User's question and confirmed records come first; no background activity or false action claims.`;
 }
 
+// v3.05 — user-directed conversational adaptation, never hidden mood profiling.
+const AUREN_ADAPTIVE_KEY='auren_adaptive_preferences_v305';
+let aurenAdaptive={replyLength:'balanced',proactiveWindow:'any',addressRate:'normal',lastOfferDay:'',lastOfferTopic:''};
+try{const v=JSON.parse(localStorage.getItem(AUREN_ADAPTIVE_KEY)||'null');if(v&&typeof v==='object')aurenAdaptive={...aurenAdaptive,...v};}catch{}
+function aurenAdaptiveSave(){
+ try{localStorage.setItem(AUREN_ADAPTIVE_KEY,JSON.stringify(aurenAdaptive));const v=JSON.parse(localStorage.getItem(AUREN_ADAPTIVE_KEY)||'null');return !!v&&v.replyLength===aurenAdaptive.replyLength&&v.proactiveWindow===aurenAdaptive.proactiveWindow&&v.addressRate===aurenAdaptive.addressRate;}catch{return false;}
+}
+function aurenAdaptiveCommand(raw){
+ const q=String(raw||'').trim().toLowerCase().replace(/[’]/g,"'");
+ let message='';
+ if(/\b(?:don't|do not|stop|quit|never)\s+(?:call|calling|address|addressing)\s+me\s+(?:sir|ma'am|maam)|\b(?:don't|do not)\s+use\s+(?:sir|ma'am|maam)|\b(?:no more|less|fewer)\s+(?:sirs?|titles?)\b/.test(q)){
+  aurenAdaptive.addressRate='rare';aurenButler.addressMode='none';message="Understood. I'll rarely use a title or name unless you ask.";
+ }else if(/\b(?:call me sir|address me as sir|use my title more|please call me sir)\b/.test(q)){
+  aurenAdaptive.addressRate='normal';aurenButler.addressMode='title';message="Certainly. I'll use your preferred title naturally, without repeating it in every reply.";
+ }else if(/\b(?:i prefer|give me|keep|make|use|be)\s+(?:your\s+)?(?:answers?|replies?|responses?)?\s*(?:to be\s+)?(?:shorter|brief|concise)|\b(?:less detail|stop (?:being|giving) so (?:long|wordy))\b/.test(q)){
+  aurenAdaptive.replyLength='short';message="Understood. I'll keep replies shorter.";
+ }else if(/\b(?:i prefer|give me|make|use)\s+(?:your\s+)?(?:answers?|replies?|responses?)?\s*(?:to be\s+)?(?:longer|more detailed)|\b(?:explain (?:things|it) more|more detail please)\b/.test(q)){
+  aurenAdaptive.replyLength='detailed';message="Understood. I'll include more detail when it's useful.";
+ }else if(/\b(?:ask|check in|suggest|bring up)\b.{0,45}\b(?:my plans|my schedule|planning)\b.{0,25}\b(?:in the morning|mornings|each morning)\b|\b(?:morning check.ins|check in with me in the morning)\b/.test(q)){
+  aurenAdaptive.proactiveWindow='morning';aurenCare.checkins=true;aurenButler.checkinFrequency='occasional';message="Understood. When you open AUREN in the morning, I'll favor a brief planning check-in. I can't initiate one while the site is closed.";
+ }else if(/\b(?:ask|check in|suggest)\b.{0,45}\b(?:evening|at night|in the afternoon)\b/.test(q)){
+  aurenAdaptive.proactiveWindow=/afternoon/.test(q)?'afternoon':'evening';aurenCare.checkins=true;aurenButler.checkinFrequency='occasional';message=`Understood. I'll favor a brief ${aurenAdaptive.proactiveWindow} check-in while we're talking.`;
+ }else if(/\b(?:check in whenever|any time is fine for check.ins|no check.in time preference)\b/.test(q)){
+  aurenAdaptive.proactiveWindow='any';message="Understood. I won't limit optional check-ins to a particular time of day.";
+ }else if(/\b(?:what (?:communication|conversation|reply) preferences (?:do you have|have i saved)|how (?:do|will) you (?:speak|address|check in) with me)\b/.test(q)){
+  return `I have your reply length as ${aurenAdaptive.replyLength}, address frequency as ${aurenAdaptive.addressRate}, and check-in window as ${aurenAdaptive.proactiveWindow}. These are saved in this browser.`;
+ }else return null;
+ const saved=aurenAdaptiveSave() && aurenSaveButler() && aurenSaveCare();
+ return saved?message:'I understood that preference, but could not verify that it was saved. Please check browser storage.';
+}
+function aurenAdaptiveGuidance(question){
+ const q=String(question||'').trim();
+ const trail=activeConversationTrail().slice(-4).map(x=>({question:String(x.question||'').slice(0,220),reply:String(x.reply||'').slice(0,220)}));
+ const looksFollowup=/^(?:and\b|what about\b|how about\b|why\b|what did you mean\b|tell me more\b|that one\b|the other one\b|actually\b|instead\b|are you sure\b|can you explain\b)/i.test(q);
+ return `ADAPTIVE CONVERSATION v3.05 (explicit preferences, verified context only): ${JSON.stringify({replyLength:aurenAdaptive.replyLength,addressFrequency:aurenAdaptive.addressRate,proactiveWindow:aurenAdaptive.proactiveWindow,possibleFollowup:looksFollowup,recentConversation:looksFollowup?trail:[]})}. Answer the current request first. Resolve indirect followups using the preceding topic only when unique; otherwise ask one short, specific clarification. A new topic overrides stale pending suggestions. Do not repeat a question when a partial answer supplied a detail; ask only for what remains missing. Do not treat a polite statement, personal anecdote, or search request as a command to save a reminder. Keep replies concise when requested. Only suggest something based on actually stored plans or user-stated needs, when check-ins are enabled and not declined; never imply a notification was sent or an action completed without tool verification. Do not claim knowledge of feelings, meals, sleep or weather without evidence.`;
+}
+function aurenAdaptiveMayOffer(topic,hour){
+ if(!aurenRelationshipMaySuggest(topic)||aurenAdaptive.lastOfferDay===localDate())return false;
+ if(aurenAdaptive.proactiveWindow==='morning'&&(hour<5||hour>=12))return false;
+ if(aurenAdaptive.proactiveWindow==='afternoon'&&(hour<12||hour>=18))return false;
+ if(aurenAdaptive.proactiveWindow==='evening'&&(hour<18||hour>=24))return false;
+ return true;
+}
+function aurenAdaptiveMarkOffer(topic){aurenAdaptive.lastOfferDay=localDate();aurenAdaptive.lastOfferTopic=topic;aurenAdaptiveSave();aurenRelationshipMarkPrompt(topic);}
+
 // v3.04 — source-grounded situational awareness and conversational sensitivity.
 // Never persist mood guesses or use activity/time to diagnose feelings.
 function aurenExplicitConversationSignal(raw){
@@ -3228,15 +3275,15 @@ function aurenCareGreeting(raw){
  const greeting=firstOfDay?aurenButlerGreeting(baseGreeting):baseGreeting;
  let note=' What can I help with?';
  if(aurenCare.lastGreetingDay===f.day)return greeting+' What can I help with?';
- if(aurenRelationshipMaySuggest('planning')&&f.nextAppointment){aurenRelationshipMarkPrompt('planning');note=` You have ${f.nextAppointment.title} at ${formatClock(f.nextAppointment.time)}. Anything you want to prepare?`;}
- else if(aurenRelationshipMaySuggest('planning')&&f.reminders.some(r=>!r.fired&&new Date(r.at)>new Date())){aurenRelationshipMarkPrompt('planning');note=' There is a reminder ahead in Your Day. Want a quick review?';}
+ if(aurenAdaptiveMayOffer('planning',f.hour)&&f.nextAppointment){aurenAdaptiveMarkOffer('planning');note=` You have ${f.nextAppointment.title} at ${formatClock(f.nextAppointment.time)}. Anything you want to prepare?`;}
+ else if(aurenAdaptiveMayOffer('planning',f.hour)&&f.reminders.some(r=>!r.fired&&new Date(r.at)>new Date())){aurenAdaptiveMarkOffer('planning');note=' There is a reminder ahead in Your Day. Want a quick review?';}
  else if(aurenCare.checkins&&aurenCare.lastCheckinDay!==f.day&&Date.now()>=Number(aurenRelationship.quietUntil||0)){
    const choices=[];
-   if(aurenCare.topics.planning&&aurenRelationshipMaySuggest('planning'))choices.push(['planning','Anything you would like to make time for today?']);
-   if(aurenCare.topics.rest&&aurenRelationshipMaySuggest('rest')&&f.hour>=22)choices.push(['rest','Would you prefer to wind down, or is there something I can help finish?']);
-   if(aurenCare.topics.meals&&aurenRelationshipMaySuggest('meals')&&f.hour>=11&&f.hour<=20)choices.push(['meals','Would you like help finding something to eat?']);
+   if(aurenCare.topics.planning&&aurenAdaptiveMayOffer('planning',f.hour))choices.push(['planning','Anything you would like to make time for today?']);
+   if(aurenCare.topics.rest&&aurenAdaptiveMayOffer('rest',f.hour)&&f.hour>=22)choices.push(['rest','Would you prefer to wind down, or is there something I can help finish?']);
+   if(aurenCare.topics.meals&&aurenAdaptiveMayOffer('meals',f.hour)&&f.hour>=11&&f.hour<=20)choices.push(['meals','Would you like help finding something to eat?']);
    const picked=choices.find(x=>x[0]!==aurenCare.lastCheckinTopic)||choices[0];
-   if(picked){aurenRelationshipMarkPrompt(picked[0]);note=' '+picked[1];aurenCare.lastCheckinDay=f.day;aurenCare.lastCheckinTopic=picked[0];aurenSaveCare();}
+   if(picked){aurenAdaptiveMarkOffer(picked[0]);note=' '+picked[1];aurenCare.lastCheckinDay=f.day;aurenCare.lastCheckinTopic=picked[0];aurenSaveCare();}
  }else if(f.hour>=22)note=' What can I help you with tonight?';
  aurenCare.lastGreetingDay=f.day;aurenSaveCare();
  return greeting+note;
@@ -4143,6 +4190,9 @@ async function send(text) {
     return;
   }
   text=addressed.command;
+  // v3.05: Persistent conversation preferences take precedence over generic AI.
+  const adaptiveCommand=aurenAdaptiveCommand(text);
+  if(adaptiveCommand!==null){await addMessage('user',text);await addMessage('auren',adaptiveCommand);return;}
   // v3.03: Learn explicit corrections and honor opt-outs before other intents.
   const adaptiveFeedback=aurenRelationshipFeedback(text);
   if(adaptiveFeedback!==null){await addMessage('user',text);await addMessage('auren',adaptiveFeedback);return;}
