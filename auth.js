@@ -1,4 +1,4 @@
-// AUREN v2.16.1 — quiet session restore and clean Google sign-in gate.
+// AUREN v2.72.2 — fresh app module loading after sign-in.
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut, setPersistence, browserLocalPersistence, browserSessionPersistence } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
 import { mountCloudTransfer } from './cloud-sync.js?v=2.9.0';
@@ -21,7 +21,6 @@ let currentUser=null, appPromise=null, loaded=false, mountedUserId=null, busy=fa
 const message=v=>{if(status)status.textContent=v;};
 const gateVisible=visible=>{if(gate)gate.hidden=!visible;document.body.classList.toggle('auren-auth-locked',visible);};
 function setGateMode(mode, explanation=''){
-  // Returning visitors see only a minimal loading orb, not the sign-in prompt.
   gateVisible(mode!=='ready');
   if(button){button.hidden=mode!=='signin'&&mode!=='error';button.disabled=false;button.textContent=mode==='error'?'Retry opening AUREN':'Continue with Google';}
   if(intro)intro.textContent=mode==='checking'?'':mode==='signin'?'Sign in to continue.':mode==='loading'?'':'Unable to load AUREN.';
@@ -40,7 +39,8 @@ async function openApp(user){
   if(loaded){setGateMode('ready');return;}
   busy=true;setGateMode('loading');
   try{
-    if(!appPromise)appPromise=import('./app.js?v=2.16.1').catch(error=>{appPromise=null;throw error;});
+    // A fresh versioned URL makes Safari request the CURRENT deployed app.js.
+    if(!appPromise)appPromise=import('./app.js?v=2.72.2').catch(error=>{appPromise=null;throw error;});
     await appPromise;loaded=true;
     if(accountEmail)accountEmail.textContent=user.email||'Signed in';
     if(accountCard)accountCard.hidden=false;
