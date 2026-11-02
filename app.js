@@ -1,3 +1,4 @@
+// AUREN v3.02 — Butler personality controls, grounded dialogue and consent-first check-ins.
 // AUREN v3.01 — Safari geolocation recovery, accurate failures, and city/ZIP fallback.
 // AUREN v3.00 — Grounded context-and-care intelligence, consent-first personalization.
 // AUREN v2.99 — Verified reminder/appointment conversion, editing and distinct Your Day labels.
@@ -3057,6 +3058,7 @@ async function askWithMemory(question) {
     `CURRENT RESPONSE STYLE (high priority, per-turn only): ${aurenStyleGuidance(question)}`,
     `CURRENT PERSONALITY DELIVERY (high priority, per-turn only): ${aurenPersonalityGuidance(question)}`,
     aurenCareAIGuidance(question),
+    aurenButlerGuidance(),
     `Current actual Dallas date/time: ${new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',dateStyle:'full',timeStyle:'long'}).format(new Date())}. Verify time gaps with numeric timestamps; do not imply 11:20 PM is close to 12:47 PM.`,
     `Time clarity: Always include a clear AM/PM or natural daypart (morning, afternoon, evening, night) for appointments and reminders; distinguish noon from midnight. Never infer a daypart without using the actual scheduled hour.`,
     'If the user says they need to leave in N minutes, that is an imminent departure, not spare time. Never say they have plenty of time unless the timing clearly supports it. Discuss conflicts against actual saved appointment times only. Do not invent travel duration or imply a calendar event was created merely because the user mentioned leaving.',
@@ -3108,10 +3110,10 @@ function aurenSaveCare(){try{localStorage.setItem(AUREN_CARE_KEY,JSON.stringify(
 function aurenCarePreference(raw){
  const q=String(raw||'').trim().toLowerCase();
  if(/\b(?:stop (?:checking in|check.ins)|no (?:more )?check.ins|don't (?:check in|ask me about (?:my )?(?:meals|sleep|rest))|turn (?:off|disable) (?:personal )?check.ins)\b/.test(q)){
-  aurenCare.checkins=false;return aurenSaveCare()?'Understood. I will stop personal check-ins. You can still ask for help whenever you want.':'I could not save that preference on this browser.';
+  aurenCare.checkins=false;aurenButler.checkinFrequency='off';aurenSaveButler();return aurenSaveCare()?'Understood. I will stop personal check-ins. You can still ask for help whenever you want.':'I could not save that preference on this browser.';
  }
  if(/\b(?:enable (?:personal )?check.ins|turn on (?:personal )?check.ins|check in with me (?:sometimes|occasionally|from time to time)|ask how i am doing sometimes)\b/.test(q)){
-  aurenCare.checkins=true;return aurenSaveCare()?'I can check in occasionally when you speak to me, without interrupting you. You can turn that off anytime.':'I could not save that preference on this browser.';
+  aurenCare.checkins=true;aurenButler.checkinFrequency='occasional';aurenSaveButler();return aurenSaveCare()?'I can check in occasionally when you speak to me, without interrupting you. You can turn that off anytime.':'I could not save that preference on this browser.';
  }
  if(/\b(?:be less formal|sound (?:more )?natural|be more casual|be warmer|talk (?:to me )?more naturally)\b/.test(q)){
   aurenCare.tone='warm';return aurenSaveCare()?'I’ll use a more natural, thoughtful tone without overdoing it.':'I could not save that preference.';
@@ -3143,11 +3145,13 @@ function aurenCareGreeting(raw){
  const q=String(raw||'').trim().toLowerCase().replace(/[.!?]+$/,'');
  if(!/^(?:hey|hi|hello|good (?:morning|afternoon|evening|night)|how are you|what's up|whats up)(?:[, ]+(?:auren|sir))?$/.test(q))return null;
  const f=aurenCareFacts();
- const greeting=f.hour<5?'Good evening.':f.hour<12?'Good morning.':f.hour<17?'Good afternoon.':'Good evening.';
+ const firstOfDay=aurenCare.lastGreetingDay!==f.day;
+ const baseGreeting=f.hour<5?'Good evening.':f.hour<12?'Good morning.':f.hour<17?'Good afternoon.':'Good evening.';
+ const greeting=firstOfDay?aurenButlerGreeting(baseGreeting):baseGreeting;
  let note=' What can I help with?';
  if(aurenCare.lastGreetingDay===f.day)return greeting+' What can I help with?';
- if(f.nextAppointment)note=` You have ${f.nextAppointment.title} at ${formatClock(f.nextAppointment.time)}. Anything you want to prepare?`;
- else if(f.reminders.some(r=>!r.fired&&new Date(r.at)>new Date()))note=' There is a reminder ahead in Your Day. Want a quick review?';
+ if(aurenCare.checkins&&f.nextAppointment)note=` You have ${f.nextAppointment.title} at ${formatClock(f.nextAppointment.time)}. Anything you want to prepare?`;
+ else if(aurenCare.checkins&&f.reminders.some(r=>!r.fired&&new Date(r.at)>new Date()))note=' There is a reminder ahead in Your Day. Want a quick review?';
  else if(aurenCare.checkins&&aurenCare.lastCheckinDay!==f.day){
    const choices=[];
    if(aurenCare.topics.planning)choices.push(['planning','Anything you would like to make time for today?']);
@@ -3158,6 +3162,37 @@ function aurenCareGreeting(raw){
  }else if(f.hour>=22)note=' What can I help you with tonight?';
  aurenCare.lastGreetingDay=f.day;aurenSaveCare();
  return greeting+note;
+}
+
+// v3.02: persisted butler preferences. Existing care consent remains authoritative.
+const AUREN_BUTLER_KEY='auren_butler_personality_v302';
+let aurenButler={style:'balanced',addressMode:'adaptive',checkinFrequency:'off',lastProactiveDay:'',lastProactiveAt:0};
+try {const s=JSON.parse(localStorage.getItem(AUREN_BUTLER_KEY)||'null');if(s&&typeof s==='object')aurenButler={...aurenButler,...s};else if(aurenCare.checkins)aurenButler.checkinFrequency='occasional';}catch{}
+function aurenSaveButler(){
+ try{localStorage.setItem(AUREN_BUTLER_KEY,JSON.stringify(aurenButler));const s=JSON.parse(localStorage.getItem(AUREN_BUTLER_KEY)||'null');return !!s&&s.style===aurenButler.style&&s.addressMode===aurenButler.addressMode&&s.checkinFrequency===aurenButler.checkinFrequency;}catch{return false;}
+}
+function aurenButlerAddress(){
+ const profile=aurenReadStoredProfile();if(!profile)return '';
+ const name=typeof profile.name==='string'?profile.name.trim().slice(0,45):'';
+ const title=profile.address==='sir'?'sir':profile.address==='maam'?"ma’am":profile.address==='custom'?String(profile.customAddress||'').trim().slice(0,32):'';
+ if(aurenButler.addressMode==='none')return '';
+ if(aurenButler.addressMode==='name')return name;
+ if(aurenButler.addressMode==='title')return title||name;
+ return title||name; // adaptive choice is made by context, not every turn
+}
+function aurenButlerGreeting(base){
+ const address=aurenButlerAddress();
+ if(!address||aurenButler.addressMode==='none')return base;
+ const greet=String(base||'');
+ if(!/^(Good morning|Good afternoon|Good evening)\./.test(greet))return greet;
+ // Only use a form of address on the first greeting of the day. No suffix on every answer.
+ return greet.replace(/^(Good morning|Good afternoon|Good evening)\./,(_m,g)=>g+', '+address+'.');
+}
+function aurenButlerGuidance(){
+ const profile=aurenReadStoredProfile()||{};
+ const name=typeof profile.name==='string'?profile.name.trim().slice(0,45):'';
+ const title=aurenButlerAddress();
+ return `BUTLER PERSONALITY (user-selected, browser-stored): ${JSON.stringify({style:aurenButler.style,addressMode:aurenButler.addressMode,preferredAddress:title,profileName:name,checkinFrequency:aurenButler.checkinFrequency})}. Follow these preferences without overdoing it. Classic: restrained, professional and gracious. Balanced: natural, composed and considerate. Casual: friendly and straightforward. Mention a name or title only when genuinely useful, preferably a greeting; never at the end of every sentence. A name question must consult saved profile, not conversation. If check-ins are off, do not initiate personal well-being questions. If enabled, at most one optional, contextually relevant question in a conversation, and accept a refusal without revisiting. Don't infer hunger, mood, fatigue or loneliness from time alone. Never claim to observe the user's real world or contact them while this tab is closed. Respect actual verified records and never invent events, weather, or actions.`;
 }
 
 // AUREN v2.14 — device-local, consent-first personalization. Never store identity from inference.
@@ -3555,6 +3590,37 @@ voiceCard.replaceWith(voiceDetails);voiceDetails.append(voiceSummary,voiceCard);
 locationPanel.insertAdjacentElement('afterend',voiceDetails);
 // Keep primary settings in a predictable order without removing any existing controls.
 $('settings').prepend(personalCard,themeCard,locationPanel,voiceDetails);
+// v3.02 — editable, persisted Butler Personality controls.
+const butlerCard=document.createElement('section');butlerCard.className='card';butlerCard.id='aurenButlerPersonality';
+const butlerHeading=document.createElement('h3');butlerHeading.textContent='Butler personality';
+const butlerHint=document.createElement('p');butlerHint.className='hint';butlerHint.textContent='Choose how AUREN speaks and when it offers a personal check-in. Stored in this browser. No background monitoring.';
+function aurenButlerControl(label,values,current){
+ const row=document.createElement('label');row.style.cssText='display:block;margin:12px 0';
+ const heading=document.createElement('span');heading.textContent=label;heading.style.cssText='display:block;margin-bottom:6px';
+ const select=document.createElement('select');select.style.maxWidth='100%';
+ values.forEach(([value,text])=>select.add(new Option(text,value)));
+ select.value=current;row.append(heading,select);butlerCard.append(row);return select;
+}
+butlerCard.append(butlerHeading,butlerHint);
+const butlerStyle=aurenButlerControl('Conversation style',[['classic','Classic butler'],['balanced','Balanced butler'],['casual','Casual assistant']],aurenButler.style);
+const butlerAddress=aurenButlerControl('Form of address',[['adaptive','Naturally use my preferred title or name'],['title','Prefer title'],['name','Prefer saved name'],['none','Rarely use either']],aurenButler.addressMode);
+const butlerCheckins=aurenButlerControl('Optional check-ins',[['off','Off'],['occasional','Occasional, when relevant'],['frequent','More proactive, while we talk']],aurenButler.checkinFrequency);
+const butlerSave=document.createElement('button');butlerSave.type='button';butlerSave.textContent='Save personality';
+const butlerStatus=document.createElement('p');butlerStatus.className='hint';butlerStatus.setAttribute('aria-live','polite');
+butlerSave.addEventListener('click',()=>{
+ const before={...aurenButler,care:aurenCare.checkins};
+ aurenButler.style=butlerStyle.value;aurenButler.addressMode=butlerAddress.value;aurenButler.checkinFrequency=butlerCheckins.value;
+ const ok=aurenSaveButler();
+ if(!ok){aurenButler={style:before.style,addressMode:before.addressMode,checkinFrequency:before.checkinFrequency,lastProactiveDay:before.lastProactiveDay,lastProactiveAt:before.lastProactiveAt};butlerStatus.textContent='Unable to save personality on this browser.';return;}
+ aurenCare.checkins=aurenButler.checkinFrequency!=='off';
+ aurenCare.tone=aurenButler.style==='casual'?'warm':aurenButler.style==='classic'?'concise':'balanced';
+ if(!aurenSaveCare()){aurenCare.checkins=before.care;butlerStatus.textContent='Personality saved, but check-in preference could not be verified.';return;}
+ const voiceCheck=document.getElementById('aurenOptionalCheckin');if(voiceCheck)voiceCheck.checked=aurenCare.checkins;
+ butlerStatus.textContent='Saved and verified. AUREN will use these preferences in future conversations.';
+});
+butlerCard.append(butlerSave,butlerStatus);
+personalCard.insertAdjacentElement('afterend',butlerCard);
+
 
 // Location toggle belongs exclusively in Settings. No permanent Home status card.
 const locationPermissionBar=document.createElement('div');
