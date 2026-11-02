@@ -1,3 +1,4 @@
+// AUREN voice v3.17 — verified speech startup and recovery.
 // AUREN voice v3.16 — Safari iOS playback reliability.
 // AUREN voice v2.9.9 — patient sentence endings and intentional interruptions.
 // AUREN v2.9.4: truthful iPhone microphone state and no silent early-exit loops.
@@ -407,13 +408,30 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     };
     u.onend = () => { if (currentUtterance !== u) return; spokenText = ''; onSpoken?.(text, text); if (currentUtterance === u) currentUtterance = null; speaking = false; try { options.onFinished?.(); } catch(e) { console.warn('Briefing continuation failed',e); } report(wakeMode ? 'Listening — ask a follow-up, or say “Hey Auren”' : (conversation ? 'Listening for your next question…' : 'Tap the orb to speak')); if (!speaking) { scheduleIdle(); if (!responding) listenSoon(160); } };
     u.onerror = e => { if (currentUtterance !== u) return; spokenText = ''; currentUtterance = null; speaking = false; report('Spoken reply unavailable (' + (e.error || 'audio error') + '). On iPhone, tap the orb, check volume, and try again.'); if (!responding) listenSoon(420); };
-    if (mobileWebKit) setTimeout(() => {
-      if (currentUtterance === u && speaking && !synth.speaking) {
-        report('iPhone has not started spoken audio. Check silent mode / volume, then tap the orb to retry.');
+    // iOS sometimes silently refuses async TTS after the recording request. Check
+    // for an actual onstart event, not merely successful enqueueing.
+    let didStart = false;
+    let retryAttempt = 0;
+    const actualStart=u.onstart;
+    u.onstart=(e)=>{didStart=true;actualStart?.(e);};
+    const watchdog=()=>{
+      if(currentUtterance!==u || didStart || !speaking)return;
+      if(retryAttempt++===0 && !options.manual){
+        // One bounded recovery for a stale iOS synthesis queue.
+        try{synth.cancel();synth.resume();synth.speak(u);}catch{}
+        setTimeout(watchdog,1800);
+      }else{
+        currentUtterance=null;speaking=false;spokenText='';
+        try{synth.cancel();}catch{}
+        report('Speech did not start on iPhone. Tap “Tap to hear AUREN” to play the reply.');
       }
-    }, 3000);
-    try { synth.speak(u); report('AUREN speaking…'); if (interruptionsEnabled && conversation && !active && !responding) listenSoon(150); }
-    catch { currentUtterance = null; speaking = false; report('Speech output unavailable.'); if (!responding) listenSoon(); }
+    };
+    try {
+      synth.speak(u);
+      if(mobileWebKit)setTimeout(watchdog,2300);
+      report('Speech queued…');
+      if(interruptionsEnabled && conversation && !active && !responding)listenSoon(150);
+    }catch(e){currentUtterance=null;speaking=false;report('Speech output unavailable. Tap to hear AUREN.');if(!responding)listenSoon();}
   }
   function startListening() {
     if (!Recognition) { report('Speech recognition is unavailable here. Use the iPhone keyboard microphone in Text chat.'); return false; }
