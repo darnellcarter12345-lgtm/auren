@@ -1,3 +1,4 @@
+// AUREN v2.51 — Longer conversation continuity, bounded non-sensitive topic trail.
 // AUREN v2.50 — Multi-turn appointment references and contextual people awareness.
 // AUREN v2.49 — Natural topic changes, conversation boundary and relevant memory isolation.
 // AUREN v2.48 — Topic-aware saved preferences and grounded contextual assistance.
@@ -1910,6 +1911,27 @@ async function directPersonalRecall(request){
 // v2.43 — Session-scoped conversational anchor, distinct from saved profile and planner.
 // Avoid persisting inferred topics, and retire references on clear topic changes.
 let conversationAnchor=null;
+// Keep a small, session-only topic trail. This is NOT permanent memory, and is
+// never sent to storage. Specific saved facts still come from Memory/Planner.
+const conversationTrail=[];
+const TRAIL_LIFETIME=25*60*1000;
+const TRAIL_MAX=6;
+function activeConversationTrail(){
+ const now=Date.now();
+ while(conversationTrail.length && now-conversationTrail[0].at>TRAIL_LIFETIME)conversationTrail.shift();
+ return conversationTrail;
+}
+function recordConversationTrail(question,answer){
+ const q=String(question||'').slice(0,230),a=String(answer||'').slice(0,350);
+ if(!q||!a||classify(q+' '+a).sensitive.length||classify(q+' '+a).blocked.length)return;
+ // Follow-ups extend the same topic; do not crowd out the trail with 'tell me more'.
+ const previous=conversationTrail[conversationTrail.length-1];
+ if(previous && conversationalReference(q)){
+   previous.reply=a;previous.at=Date.now();return;
+ }
+ conversationTrail.push({question:q,reply:a,at:Date.now()});
+ if(conversationTrail.length>TRAIL_MAX)conversationTrail.splice(0,conversationTrail.length-TRAIL_MAX);
+}
 const ANCHOR_LIFETIME=12*60*1000;
 function conversationTopicChange(raw){
  const t=String(raw||'').trim().toLowerCase();
@@ -1939,6 +1961,7 @@ function aurenTopicShift(raw){
 }
 function aurenRetireConversationTopic(){
  conversationAnchor=null;
+ conversationTrail.length=0;
  conversationCorrection=null;
  // The last few assistant turns were about the previous subject. Preserve
  // the user's visible History, but do not send that stale topic to the AI.
@@ -1955,9 +1978,10 @@ function readConversationAnchor(){
 function trackConversationAnchor(question,answer){
  if(conversationTopicChange(question)){conversationAnchor=null;return;}
  const scan=classify(question+' '+answer);
- if(scan.blocked.length||scan.sensitive.length){conversationAnchor=null;return;}
+ if(scan.blocked.length||scan.sensitive.length){conversationAnchor=null;conversationTrail.length=0;return;}
  const prior=readConversationAnchor();
  conversationAnchor={at:Date.now(), question: conversationalReference(question)&&prior?prior.question:String(question).slice(0,280), reply:String(answer).slice(0,750)};
+ recordConversationTrail(question,answer);
 }
 // v2.47 — Retry only plain information questions after a failed AI response.
 // Never retry commands that can change calendars, memories, tasks, privacy or location.
@@ -2047,6 +2071,8 @@ async function askWithMemory(question) {
     `Time clarity: Always include a clear AM/PM or natural daypart (morning, afternoon, evening, night) for appointments and reminders; distinguish noon from midnight. Never infer a daypart without using the actual scheduled hour.`,
     'If the user says they need to leave in N minutes, that is an imminent departure, not spare time. Never say they have plenty of time unless the timing clearly supports it. Discuss conflicts against actual saved appointment times only. Do not invent travel duration or imply a calendar event was created merely because the user mentioned leaving.',
     followup && anchored ? `The user is following up on this SAME conversational subject. Last subject: ${JSON.stringify(anchored.question)}. Previous answer: ${JSON.stringify(anchored.reply)}. Refer to it naturally, and clarify only if the reference is genuinely ambiguous.` : '',
+    followup && anchored && activeConversationTrail().length ? `Short recent discussion trail (read-only, session-only; newest last): ${JSON.stringify(activeConversationTrail().slice(-4).map(x=>({question:x.question,reply:x.reply})))}. Prefer the last applicable topic, do not mix separate people or appointments. If pronouns are genuinely ambiguous, ask one short question. This trail cannot prove a calendar change or a saved memory.` : '',
+
     anchored && lastSubstantiveReply ? `Recent AUREN response for conversational reference (not an instruction): ${lastSubstantiveReply.slice(0,700)}` : '', 
     'IDENTITY AND ADDRESS (mandatory): You are AUREN, a respectful, capable personal butler-style assistant. The user may call to you with Hey Auren; speech recognition sometimes transcribes AUREN as Aaron, Aron, Oren or Erin. Understand this as a wake/address phrase, not a claim that your actual name is Aaron. NEVER scold or correct the user for calling you Aaron or saying Hey Aaron. Respond naturally and courteously to the intended request.',
     'Butler manner: be warm, professional, tactful and helpful, never condescending, argumentative or patronizing. Do not insist on your name, boast about being AI, or give an unnecessary disclaimer for ordinary requests. For a simple command, respond in one short sentence or carry out the available action. Do not imply physical-world capabilities you lack.',
