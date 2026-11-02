@@ -1,3 +1,4 @@
+// AUREN v3.10 — Advanced Alfred-Style Attentiveness, grounded voluntary context.
 // AUREN v3.09 — Adaptive Learning Over Time; transparent suggestion scores and user controls.
 // AUREN v3.08 — Trust & Attentiveness Engine; grounded tone, selective support, respectful correction.
 // AUREN v3.07 — Natural Conversation Flow; grounded follow-ups and low-friction declines.
@@ -3041,6 +3042,45 @@ function correctFalseCapabilityClaims(question, answer) {
   }
   return claim;
 }
+// AUREN v3.10 — grounded Alfred-style attentiveness.
+// Recent self-reports are TEMPORARY per tab. Never infer meals/sleep from clocks,
+// never write private wellness facts to persistent storage, and never monitor users.
+const aurenAttentiveness = { reports:[], recentOffer:null };
+function aurenAttentiveSignal(raw){
+ const q=String(raw||'').trim();
+ // Classify only statements the user makes about themself, not a quoted command,
+ // speculative question, or a request for a new reminder.
+ if(!q||/^(?:what|why|how|could|can|would|will|remind|schedule|set |create|find|search|tell me about)\b/i.test(q))return null;
+ const rules=[
+  ['fatigue',/\b(?:i(?:'m| am| feel) (?:really |so |pretty |very )?(?:exhausted|tired|worn out|drained)|i(?:'ve| have) been up (?:all night|for hours)|i barely slept|i didn't sleep well)\b/i],
+  ['difficult_day',/\b(?:i(?:(?:'ve| have) had| had) (?:a |such a )?(?:rough|hard|stressful|difficult|long) day|today(?:'s| has been| was) (?:rough|hard|stressful|difficult)|i(?:'m| am) (?:stressed|overwhelmed))\b/i],
+  ['positive',/\b(?:i(?:'m| am) (?:so |really )?(?:happy|excited)|i finally (?:finished|passed|did it)|i got (?:good news|the job)|i(?:'m| am) proud)\b/i],
+  ['meal_explicit',/\b(?:i (?:haven't|have not|didn't|did not) (?:eat|have (?:breakfast|lunch|dinner|a meal))|i forgot to eat)\b/i],
+  ['rest_explicit',/\b(?:i (?:haven't|have not) slept|i got (?:no|very little) sleep|i didn't sleep last night)\b/i]
+ ];
+ for(const [type,re] of rules)if(re.test(q))return {type,words:q.slice(0,155),at:Date.now()};
+ return null;
+}
+function aurenAttentiveNote(raw){
+ const signal=aurenAttentiveSignal(raw);
+ if(!signal)return;
+ aurenAttentiveness.reports=aurenAttentiveness.reports.filter(x=>Date.now()-x.at<6*3600000);
+ if(!aurenAttentiveness.reports.some(x=>x.type===signal.type&&x.words===signal.words))aurenAttentiveness.reports.push(signal);
+ if(aurenAttentiveness.reports.length>4)aurenAttentiveness.reports.shift();
+}
+function aurenAttentivenessGuidance(question){
+ const t=String(question||'').trim();
+ const newSignal=aurenAttentiveSignal(t);
+ const relevantFollowup=/\b(?:earlier|before|still|again|that|it|about that|what should i do|do you remember)\b/i.test(t);
+ const active=aurenAttentiveness.reports.filter(x=>Date.now()-x.at<6*3600000);
+ const disclosed=(newSignal?[newSignal]:relevantFollowup?active.slice(-2):[]).map(x=>({topic:x.type,verbatimUserReport:x.words}));
+ const declined=aurenRelationship?.declined||{};
+ const enabled=!!aurenCare.checkins && aurenButler.checkinFrequency!=='off';
+ const noOffers=/\b(?:no thanks|not now|leave me alone|stop asking|never mind|nevermind|don't ask|just answer)\b/i.test(t);
+ const taskRequest=/\b(?:remind|schedule|calendar|appointment|set |save |find|search|where is|how to|explain|what time|directions)\b/i.test(t);
+ return 'AUREN v3.10 ALFRED-STYLE ATTENTIVENESS (not human emotions or monitoring): '+JSON.stringify({explicitDisclosures:disclosed,timeOfDay:aurenCareFacts().daypart,optionalCheckins:enabled,declinedTopics:Object.keys(declined).filter(k=>declined[k]),checkinTopicsAllowed:aurenCare.topics,hasConcreteTask:taskRequest,declinesOrRequestsNoQuestions:noOffers,addressStyle:aurenButler.addressMode})+'. Reply to the user’s actual words FIRST. Sound perceptive, composed, respectfully warm, and naturally butler-like without slavishly copying a fictional character. If the user explicitly reports being tired, overwhelmed or having a rough day, acknowledge it briefly; if appropriate offer ONE practical choice or simple open invitation. When they are excited, respond to the good news without probing. If a scheduled item is genuinely coming up, mention it only if relevant and actually saved. Never infer when they last slept or ate; no sleep/meal tracking exists. Never say you observed them, checked on them outside this session, remember an unrecorded meal, know their mood, or are worried about them personally. Do not use the clock as evidence of missed sleep or meals. Never pressure them to disclose health or private details. Wellness check-ins only when enabled and allowed, and never when they have declined or have a concrete task. A past explicit wellness disclosure is short-lived conversation context, NOT persistent health memory. Avoid repeating personal questions. Speak with care through actions and accuracy, not claims of independent feelings.';
+}
+
 // AUREN v3.06 — unified, read-only personal brain. Produces one grounded per-turn
 // decision snapshot. This layer NEVER writes appointments, reminders or memories.
 function aurenUnifiedBrain(question){
@@ -3125,6 +3165,7 @@ async function askWithMemory(question) {
     ? latestBriefingContext.text : '';
   const deviceContext = [
     aurenUnifiedBrainGuidance(question),
+    aurenAttentivenessGuidance(question),
     aurenTrustGuidance(question),
     correctionContext(question),
     `CURRENT RESPONSE STYLE (high priority, per-turn only): ${aurenStyleGuidance(question)}`,
@@ -3164,6 +3205,7 @@ async function askWithMemory(question) {
     `Time-aware guidance: ${timeAwareHint()} Don't invent real-time opening hours or live traffic. If user asks about nearby recommendations without an exact city and GPS is off, invite optional location enable. AUREN cannot independently read Google Maps listings.`,
     briefing ? `Most recent spoken briefing (read-only data): ${briefing}` : ''
   ].filter(Boolean);
+  aurenAttentiveNote(question);
   const answer = await askAI(question, context.memories, context.session, aiRecent, deviceContext);
   const checkedAnswer = aurenTrustPolishAnswer(correctFalseCapabilityClaims(question, answer));
   lastFailedAIQuestion=null;
@@ -4384,6 +4426,10 @@ async function send(text) {
   const carePreference=aurenCarePreference(text);
   if(carePreference!==null){await addMessage('user',text);await addMessage('auren',carePreference);return;}
   // Greetings may add ONE verified, optional contextual observation, never an invented one.
+  if(/^(?:clear|forget|reset) (?:the |my )?(?:recent )?(?:wellness|personal check-in|wellbeing) (?:context|conversation|notes)$/i.test(String(text).trim())){
+    aurenAttentiveness.reports=[];
+    await addMessage('user',text);await addMessage('auren','Understood. I cleared the recent wellness conversation context for this tab.');return;
+  }
   const careGreeting=aurenCareGreeting(text);
   if(careGreeting!==null){await addMessage('user',text);await addMessage('auren',careGreeting);return;}
   // v2.99: Verified conversions and edits take priority over vague AI responses.
