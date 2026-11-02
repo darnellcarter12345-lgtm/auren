@@ -1,3 +1,4 @@
+// AUREN v2.65 — Grounded competing-priority comparison and decision support.
 // AUREN v2.64 — Grounded schedule follow-ups and routine-fit guidance.
 // AUREN v2.63 — Unified grounded tasks, routines, appointments and reminder recommendations.
 // AUREN v2.62 — Grounded personal routine intelligence and realistic daily routine checks.
@@ -1415,6 +1416,50 @@ function unifiedDayReply(intent){
  if(dueReminders.length)parts.push(`Your next saved reminder: ${dueReminders[0].text}, ${new Date(dueReminders[0].at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}.`);
  if(appointments.length>1){const conflicts=savedDayIntelligence(date,'day').conflictPairs;if(conflicts.length)parts.push(`There ${conflicts.length===1?'is':'are'} ${conflicts.length} overlapping saved appointment pair${conflicts.length===1?'':'s'} to review.`);}
  parts.push('This is a suggested order based on saved dates, not a judgment of your personal priorities. No tasks or appointments were changed.');
+ return parts.join(' ');
+}
+// v2.65: Compare saved obligations without inventing importance, duration or availability.
+function planningDecisionIntent(raw){
+ const q=String(raw||'').trim().toLowerCase().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/,'').replace(/[.!?]+$/,'').trim();
+ if(/^(?:help me (?:decide|choose|prioritize)|what should i (?:do|tackle|handle) first|which (?:task|commitment) should i (?:do|prioritize) first|help me (?:choose|decide) what to do (?:first|next)|compare my (?:tasks|priorities)|i have too much to do|i have a lot to do|i have competing priorities)(?: (?:today|tomorrow))?$/.test(q))return {kind:'overview',date:parseDateIntent(q)||localDate()};
+ const choice=q.match(/^(?:(?:should i|do i) (?:do|work on|prioritize) |which (?:should i|one should i) (?:do|work on|prioritize)(?: first)?[, ]+)(.{2,90}?)\s+or\s+(.{2,90}?)(?:\s+first)?$/);
+ if(choice)return {kind:'compare',left:choice[1].trim(),right:choice[2].trim()};
+ return null;
+}
+function planningDecisionReply(intent){
+ const now=Date.now(),today=localDate(),date=intent.date||today;
+ const matches=(phrase)=>{
+  const cleaned=phrase.toLowerCase().replace(/^(?:my|the|a|an)\s+/,'').trim();
+  const items=[...aurenTasks.map(t=>({kind:'task',id:t.id,title:t.title,due:t.due,repeat:t.repeat,task:t})),...plans.map(p=>({kind:'appointment',id:p.id,title:p.title,due:p.date,at:eventTimestamp(p)}))];
+  const exact=items.filter(x=>x.title.toLowerCase()===cleaned);
+  if(exact.length===1)return exact[0];
+  const partial=items.filter(x=>cleaned.length>=4&&x.title.toLowerCase().includes(cleaned));
+  return partial.length===1?partial[0]:null;
+ };
+ if(intent.kind==='compare'){
+  const a=matches(intent.left),b=matches(intent.right);
+  if(!a||!b)return 'I can compare saved tasks or appointments, but I cannot confidently match both options. Please use their names from your AUREN planner.';
+  if(a.kind==='task'&&isTaskComplete(a.task,date))return `${a.title} is already marked complete for ${readableDate(date)}. Check whether ${b.title} still needs attention.`;
+  if(b.kind==='task'&&isTaskComplete(b.task,date))return `${b.title} is already marked complete for ${readableDate(date)}. Check whether ${a.title} still needs attention.`;
+  const fmt=x=>x.kind==='appointment'?`${x.title} is a saved appointment on ${readableDate(x.due)} at ${new Date(x.at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}`:`${x.title} is a saved ${x.repeat==='once'?'task due '+readableDate(x.due):x.repeat+' routine'}`;
+  let pick='';
+  if(a.kind==='task'&&b.kind==='task'&&a.repeat==='once'&&b.repeat==='once'&&a.due!==b.due)pick=`${a.due<b.due?a.title:b.title} has the earlier recorded deadline.`;
+  else if(a.kind==='appointment'&&b.kind==='appointment'&&a.at!==b.at)pick=`${a.at<b.at?a.title:b.title} is scheduled earlier.`;
+  else pick='Their saved dates alone do not establish which matters more.';
+  return `${fmt(a)}. ${fmt(b)}. ${pick} Consider urgency and consequences before choosing; I cannot see task duration or your personal priorities. No records were changed.`;
+ }
+ const upcoming=plans.filter(p=>p.date===date&&eventTimestamp(p)>=now).sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+ const open=tasksOnDate(date).filter(t=>t.repeat==='once');
+ const overdue=aurenTasks.filter(t=>t.repeat==='once'&&!isTaskComplete(t,date)&&t.due<date).sort((a,b)=>a.due.localeCompare(b.due));
+ const routines=tasksOnDate(date).filter(t=>t.repeat!=='once');
+ const first=upcoming[0];
+ const parts=[`Based on your saved AUREN records for ${date===today?'today':readableDate(date)}:`];
+ if(first)parts.push(`Your next appointment is ${first.title} at ${spokenClock(first.time)}.${date===today&&eventTimestamp(first)-now<=60*60000?' It starts within an hour; allow for preparation and travel if needed.':''}`);
+ if(overdue.length)parts.push(`First review the overdue task ${overdue[0].title}, ${deadlineLabel(overdue[0])}.`);
+ else if(open.length){const earliest=[...open].sort((a,b)=>a.due.localeCompare(b.due))[0];parts.push(`The earliest saved one-off deadline is ${earliest.title}, ${deadlineLabel(earliest)}.`);}
+ else if(routines.length)parts.push(`An unfinished saved routine is ${routines[0].title}; its start time and duration are not recorded.`);
+ if(!first&&!overdue.length&&!open.length&&!routines.length)parts.push('There is nothing to rank from the saved appointments and open tasks for this date.');
+ parts.push('This is a timing-based suggestion, not a claim about personal importance. If two items matter equally, tell me their names and I can compare their saved deadlines. No changes were made.');
  return parts.join(' ');
 }
 // v2.64: Read-only, short-lived schedule follow-up focus. No inferred event durations.
@@ -3071,6 +3116,12 @@ async function send(text) {
     if(/^(?:how much time (?:do i have|is left) (?:before|until) (?:my )?next (?:meeting|appointment|plan)|do i have time before my next (?:meeting|appointment|plan)|how long (?:until|before) my next (?:meeting|appointment|plan))[.!? ]*$/i.test(String(text).trim())){
       noteDayConversation(localDate(),'day');
       await addMessage('auren',nextOpeningIntelligence());
+      return;
+    }
+    // v2.65: Compare competing saved tasks and events before generic AI planning.
+    const decisionRequest=planningDecisionIntent(text);
+    if(decisionRequest){
+      await addMessage('auren',planningDecisionReply(decisionRequest));
       return;
     }
     // v2.63: Unified read-only daily recommendation before individual planning routes.
