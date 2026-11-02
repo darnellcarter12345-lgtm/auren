@@ -1,3 +1,4 @@
+// AUREN v3.18 — iPhone one-tap, silence-finish microphone experience.
 // AUREN v3.17 — iPhone speech output recovery and audible reply fallback.
 // AUREN v3.16 — contextual replies and iPhone Safari speech playback.
 // AUREN v3.15 — Fix unbound record-edit pending state during voice and text requests.
@@ -109,8 +110,8 @@ import { NeedsConfirmationError, historySafe, classify } from './sensitive.js';
 import { Butler, isSessionNote } from './butler.js';
 import { buildBackup, encryptBackup, decryptBackup, validateBackup, applyPlan, describeReport, LIMITS } from './backup.js';
 import { loadSettings, saveSettings } from './settings.js';
-import { createVoice } from './voice.js?v=3.17';
-import { createIPhoneRecorder } from './iphone-voice.js?v=2.9.5';
+import { createVoice } from './voice.js?v=3.18';
+import { createIPhoneRecorder } from './iphone-voice.js?v=3.18';
 import { getAIEndpoint, setAIEndpoint, askAI } from './ai.js';
 import { getWeatherBriefing } from './weather.js';
 
@@ -280,6 +281,7 @@ const iphoneRecorder = aurenIOS ? createIPhoneRecorder({
     $('heroState').textContent = message;
     $('heroState').hidden = state === 'idle';
     document.body.dataset.voiceState = state;
+    if(aurenIOS)requestAnimationFrame(()=>{const b=$('micBtn');if(b){b.textContent=state==='listening'?'■ Finish speaking':'🎙 Speak to AUREN';b.setAttribute('aria-pressed',String(state==='listening'));}});
     if (state === 'listening') $('aurenHeadline').textContent = 'I’m listening.';
     else if (state === 'processing') $('aurenHeadline').textContent = 'One moment.';
     else if (state === 'error') $('aurenHeadline').textContent = 'Voice connection needs attention.';
@@ -293,13 +295,18 @@ const iphoneRecorder = aurenIOS ? createIPhoneRecorder({
     await send(transcript);
   }
 }) : null;
+let aurenLastIPhoneTap=0;
 async function toggleIPhoneRecorder() {
-  if (!iphoneRecorder) return;
-  // Prime speech output within the actual tap, before asynchronous recording/transcription.
-  // Microphone permission is separate from playback; no background recording is enabled.
+  if (!iphoneRecorder || iphoneRecorder.busy) return;
+  // Suppress accidental repeat taps/double-fired iOS synthetic clicks.
+  const now=Date.now();
+  if(now-aurenLastIPhoneTap<650)return;
+  aurenLastIPhoneTap=now;
+  // Prepare speech while the tap's user activation is valid. Never greet on activation.
   if(capabilities.speak && $('speakReplies').checked){voice.setEnabled(true);voice.primeAudio();}
-  if (iphoneRecorder.recording) await iphoneRecorder.stop();
-  else iphoneRecorder.start();
+  if(voice.speaking)voice.stopSpeaking();
+  if(iphoneRecorder.recording)await iphoneRecorder.stop();
+  else await iphoneRecorder.start();
 }
 function syncVoiceUI() {
   const listening = aurenIOS ? iphoneRecorder.recording : voice.listening;
@@ -425,9 +432,9 @@ orbButton.addEventListener('click', activateOrb);
 if (aurenIOS) {
   const micHint = document.createElement('p');
   micHint.className = 'hint';
-  micHint.textContent = 'iPhone: tap the orb to record, then tap again to send your voice message.';
+  micHint.textContent = 'iPhone: tap once, speak naturally, then pause to send automatically. Tap again only if you want to finish early.';
   orbButton.insertAdjacentElement('afterend', micHint);
-  $('voiceStatus').textContent = 'Ready. Tap the orb to allow microphone access and start recording.';
+  $('voiceStatus').textContent = 'Ready. Tap once to speak; AUREN sends after you finish.';
 }
 
 // Voice preview is intentionally removed: one voice, one simple main control.
