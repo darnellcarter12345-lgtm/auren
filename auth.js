@@ -1,4 +1,4 @@
-// AUREN v2.76 — diagnostics loading repaired app.js, error report and module checks.
+// AUREN v2.77 — version-aware startup diagnostics and deployment checks.
 // Preserves v2.72.2 Firebase sign-in and cloud sync.
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-app.js';
 import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signOut, setPersistence, browserLocalPersistence, browserSessionPersistence } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-auth.js';
@@ -84,10 +84,25 @@ async function runStartupDiagnosis(error) {
     'AUREN diagnostics v2.72.7',
     'Reported at: '+new Date().toISOString(),
     'Page: '+location.pathname,
-    'Application: app.js?v=2.76',
+    'Application: app.js?v=2.77',
     'Original failure: '+errorDetails(error),
-    'Checking app dependencies independently...'
+    'Checking deployed application source and dependencies...'
   ];
+  displayDiagnosis(entries.join('\n'));
+  try {
+    // Explicit cache bypass lets us distinguish an outdated deployed app.js from a broken module.
+    const sourceURL=new URL('./app.js?v=2.77',import.meta.url);
+    sourceURL.searchParams.set('diagnostics',String(Date.now()));
+    const sourceResponse=await fetch(sourceURL.href,{cache:'no-store'});
+    if(!sourceResponse.ok)throw new Error('HTTP '+sourceResponse.status+' loading deployed app.js');
+    const source=await sourceResponse.text();
+    const head=source.split('\n').slice(0,4).join(' | ').slice(0,300);
+    entries.push('Deployed app.js header: '+head);
+    entries.push('Deployed app.js size: '+new TextEncoder().encode(source).length+' bytes');
+    if(!/^\/\/ AUREN v2\.77\b/m.test(source.slice(0,400))) {
+      entries.push('VERSION MISMATCH: deployed app.js does not begin with AUREN v2.77. Check GitHub commit, Pages deployment, and refresh.');
+    } else entries.push('Application version matches v2.77.');
+  } catch(sourceError){entries.push('Could not verify deployed app.js: '+errorDetails(sourceError));}
   displayDiagnosis(entries.join('\n'));
   const failed=[];
   // Importing one module at a time gives its own error instead of just app.js's error.
@@ -118,7 +133,7 @@ async function openApp(user){
   busy=true;setGateMode('loading');
   try{
     // A fresh versioned URL makes Safari request the CURRENT deployed app.js.
-    if(!appPromise)appPromise=import('./app.js?v=2.76').catch(error=>{appPromise=null;throw error;});
+    if(!appPromise)appPromise=import('./app.js?v=2.77').catch(error=>{appPromise=null;throw error;});
     await appPromise;loaded=true;
     if(accountEmail)accountEmail.textContent=user.email||'Signed in';
     if(accountCard)accountCard.hidden=false;
