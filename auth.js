@@ -1,5 +1,5 @@
-// AUREN v3.17 — matching cache-busted application loader.
-// AUREN v3.17 — matching cache-busted app loader.
+// AUREN v3.18 — matching cache-busted application loader.
+// AUREN v3.18 — matching cache-busted app loader.
 // AUREN v3.14 — Voice-output check-ins independent of microphone.
 // AUREN v3.13 — Load independent check-in patch with original voice behavior.
 // AUREN v3.11 — matched application loader.
@@ -65,7 +65,7 @@ function friendlyError(error){
 const APP_DEPENDENCIES = [
   './db.js', './memory.js', './projects.js', './sensitive.js',
   './butler.js', './backup.js', './settings.js',
-  './voice.js?v=2.9.9', './iphone-voice.js?v=2.9.5',
+  './voice.js?v=3.18', './iphone-voice.js?v=3.18',
   './ai.js', './weather.js'
 ];
 function errorDetails(error) {
@@ -108,14 +108,14 @@ async function runStartupDiagnosis(error) {
     'AUREN diagnostics v2.93',
     'Reported at: '+new Date().toISOString(),
     'Page: '+location.pathname,
-    'Application: app.js?v=3.17',
+    'Application: app.js?v=3.18',
     'Original failure: '+errorDetails(error),
     'Checking deployed application source and dependencies...'
   ];
   displayDiagnosis(entries.join('\n'));
   try {
     // Explicit cache bypass lets us distinguish an outdated deployed app.js from a broken module.
-    const sourceURL=new URL('./app.js?v=3.17',import.meta.url);
+    const sourceURL=new URL('./app.js?v=3.18',import.meta.url);
     sourceURL.searchParams.set('diagnostics',String(Date.now()));
     const sourceResponse=await fetch(sourceURL.href,{cache:'no-store'});
     if(!sourceResponse.ok)throw new Error('HTTP '+sourceResponse.status+' loading deployed app.js');
@@ -157,7 +157,7 @@ async function openApp(user){
   busy=true;setGateMode('loading');
   try{
     // A fresh versioned URL makes Safari request the CURRENT deployed app.js.
-    if(!appPromise)appPromise=import('./app.js?v=3.17').catch(error=>{appPromise=null;throw error;});
+    if(!appPromise)appPromise=import('./app.js?v=3.18').catch(error=>{appPromise=null;throw error;});
     await appPromise;loaded=true;
     if(accountEmail)accountEmail.textContent=user.email||'Signed in';
     if(accountCard)accountCard.hidden=false;
