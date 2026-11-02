@@ -1,3 +1,4 @@
+// AUREN v2.49 — Natural topic changes, conversation boundary and relevant memory isolation.
 // AUREN v2.48 — Topic-aware saved preferences and grounded contextual assistance.
 // AUREN v2.47 — Conversation recovery, bounded follow-ups, safe AI retries.
 // AUREN v2.46 — Natural corrections, scoped context and one-question clarifications.
@@ -1913,6 +1914,36 @@ function conversationTopicChange(raw){
  const t=String(raw||'').trim().toLowerCase();
  return /^(?:let(?:'s| us) (?:change|switch) (?:the )?(?:topic|subject)|(?:change|switch) (?:the )?(?:topic|subject)|new topic|something (?:else|different)|forget (?:that|the previous topic)|never mind(?: about that)?|start (?:a )?new conversation)[.!? ]*$/.test(t);
 }
+// v2.49: A fresh subject should not inherit the previous discussion merely
+// because the user did not say the exact phrase "change the subject".
+// This is a local routing hint, never a long-term memory write.
+function aurenTopicShift(raw){
+ const t=String(raw||'').trim();
+ const explicit=t.match(/^(?:(?:let(?:'s| us)|can we|could we|i(?:'d| would) (?:like|prefer) to|i want to)\s+)?(?:talk|chat|speak|discuss)\s+(?:about\s+)?(.{2,110}?)\s+(?:instead|now)[.!?]*$/i)
+   || t.match(/^(?:let(?:'s| us)\s+)?(?:switch|move|change)\s+(?:over\s+)?to\s+(.{2,110}?)[.!?]*$/i)
+   || t.match(/^(?:actually[,]?\s+)?(?:let(?:'s| us)\s+)?talk\s+about\s+(.{2,110}?)[.!?]*$/i);
+ if(explicit){
+   const topic=explicit[1].trim().replace(/[.!?]+$/,'');
+   if(!/^(?:that|it|this|the same|the previous|something|anything|more)$/i.test(topic))
+     return {changed:true,question:`Tell me about ${topic}.`};
+ }
+ // When two questions have clearly different concrete domains, retire the
+ // old anchor. A broad pronoun follow-up or task command must not cause a switch.
+ const old=readConversationAnchor();
+ if(!old||conversationalReference(t)||t.length<12)return {changed:false,question:t};
+ if(/^(?:yes|no|okay|thanks|thank you|and |but |what about that|why|how does that|tell me more)/i.test(t))return {changed:false,question:t};
+ const earlier=memoryTopicSet(old.question), incoming=memoryTopicSet(t);
+ if(earlier.size && incoming.size && ![...incoming].some(x=>earlier.has(x)))return {changed:true,question:t};
+ return {changed:false,question:t};
+}
+function aurenRetireConversationTopic(){
+ conversationAnchor=null;
+ conversationCorrection=null;
+ // The last few assistant turns were about the previous subject. Preserve
+ // the user's visible History, but do not send that stale topic to the AI.
+ aiRecent.length=0;
+ try{localStorage.removeItem(CONVERSATION_KEY);}catch{}
+}
 function conversationalReference(raw){
  const t=String(raw||'').trim();
  return /^(?:what about (?:that|it|the same thing)|tell me more(?: about (?:that|it))?|could you go (?:a bit )?deeper|can you say more|can you (?:explain|expand on|clarify) (?:that|it)|why (?:is that|did you say that)|what did you mean(?: by that)?|how (?:does|would) that work|and (?:then|after that)|what happens next|could you explain further|give me (?:more )?details(?: about (?:that|it))?)[.!? ]*$/i.test(t);
@@ -2461,10 +2492,17 @@ async function send(text) {
   }
   // A deliberate topic switch discards stale AI conversational references.
   if(conversationTopicChange(text)){
-    conversationAnchor=null;conversationCorrection=null;
+    aurenRetireConversationTopic();
     await addMessage('user',text);
     await addMessage('auren','Certainly. What would you like to discuss?');
     return;
+  }
+  // Natural pivots like 'let's talk about cars instead' begin a new AI topic.
+  // Do not carry old music preferences or previous AI turns into that answer.
+  const topicShift=aurenTopicShift(text);
+  if(topicShift.changed){
+    aurenRetireConversationTopic();
+    text=topicShift.question;
   }
   if (await aurenPlaces.handle(text)) {conversationAnchor=null;return;}
   if(conversationalReference(text)&&!readConversationAnchor()){
