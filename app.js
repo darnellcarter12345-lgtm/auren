@@ -1,3 +1,4 @@
+// AUREN v2.46 — Natural corrections, scoped context and one-question clarifications.
 // AUREN v2.45 — Contextual butler personality, concise intent routing, restrained suggestions.
 // AUREN v2.44 — Verified long-term memory, transparent recall and preference-aware replies.
 // AUREN v2.43 — Advanced Conversation Intelligence: grounded follow-ups and topic reset.
@@ -1868,7 +1869,7 @@ function conversationTopicChange(raw){
 }
 function conversationalReference(raw){
  const t=String(raw||'').trim();
- return /^(?:what about (?:that|it|the same thing)|tell me more(?: about (?:that|it))?|can you (?:explain|expand on|clarify) (?:that|it)|why (?:is that|did you say that)|what did you mean(?: by that)?|how (?:does|would) that work|and (?:then|after that)|what happens next|could you explain further|give me (?:more )?details(?: about (?:that|it))?)[.!? ]*$/i.test(t);
+ return /^(?:what about (?:that|it|the same thing)|tell me more(?: about (?:that|it))?|could you go (?:a bit )?deeper|can you say more|can you (?:explain|expand on|clarify) (?:that|it)|why (?:is that|did you say that)|what did you mean(?: by that)?|how (?:does|would) that work|and (?:then|after that)|what happens next|could you explain further|give me (?:more )?details(?: about (?:that|it))?)[.!? ]*$/i.test(t);
 }
 function readConversationAnchor(){
  return conversationAnchor && Date.now()-conversationAnchor.at<ANCHOR_LIFETIME ? conversationAnchor : null;
@@ -1879,6 +1880,28 @@ function trackConversationAnchor(question,answer){
  if(scan.blocked.length||scan.sensitive.length){conversationAnchor=null;return;}
  const prior=readConversationAnchor();
  conversationAnchor={at:Date.now(), question: conversationalReference(question)&&prior?prior.question:String(question).slice(0,280), reply:String(answer).slice(0,750)};
+}
+// v2.46 — Distinguish conversational correction from a saved-memory dispute.
+// Never change a saved fact or calendar item through this conversational path.
+let conversationCorrection=null;
+function parseConversationCorrection(raw){
+ const t=String(raw||'').trim();
+ const m=t.match(/^(?:(?:no[,! ]+)?(?:i (?:actually )?meant|what i meant (?:was|is)|i was (?:talking|asking) about|rather|instead|sorry[, ]+i meant)|(?:no[,! ]+)?(?:not that|that's not what i meant)[,.:; ]+(?:i meant|i mean|i was asking about)?)\s+(.{2,240})[.!?]*$/i);
+ if(m)return m[1].trim();
+ if(/^(?:no[,! ]+)?(?:that's not what i meant|you misunderstood(?: me)?|not what i asked|that's not what i was asking)(?:[.!? ]*)$/i.test(t))return '';
+ return null;
+}
+function freshConversationReference(){
+ const a=readConversationAnchor();
+ if(a)return a;
+ if(lastSubstantiveReply)return {question:'the last question',reply:lastSubstantiveReply.slice(0,650),at:Date.now()};
+ return null;
+}
+function correctionContext(question){
+ if(!conversationCorrection || Date.now()-conversationCorrection.at>3*60*1000)return '';
+ const c=conversationCorrection;
+ conversationCorrection=null;
+ return `The user is CORRECTING your last answer, not asking you to edit stored memories. Their intended request is ${JSON.stringify(question)}. The previous context was ${JSON.stringify(c.question)} and previous response ${JSON.stringify(c.reply)}. Address the corrected subject directly; do not repeat the same answer, ask for the topic again, or claim to have changed records.`;
 }
 // v2.45 — Response style belongs to the current request, not a permanent profile fact.
 // Recognize direct verbosity requests without hard-coding answers or changing saved data.
@@ -1919,6 +1942,7 @@ async function askWithMemory(question) {
   const briefing = (isFollowup || /\b(?:briefing|earlier|mentioned|that story|that part|those plans)\b/i.test(question)) && latestBriefingContext && Date.now()-latestBriefingContext.at < 45*60*1000
     ? latestBriefingContext.text : '';
   const deviceContext = [
+    correctionContext(question),
     `CURRENT RESPONSE STYLE (high priority, per-turn only): ${aurenStyleGuidance(question)}`,
     `Current actual Dallas date/time: ${new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',dateStyle:'full',timeStyle:'long'}).format(new Date())}. Verify time gaps with numeric timestamps; do not imply 11:20 PM is close to 12:47 PM.`,
     `Time clarity: Always include a clear AM/PM or natural daypart (morning, afternoon, evening, night) for appointments and reminders; distinguish noon from midnight. Never infer a daypart without using the actual scheduled hour.`,
@@ -2331,9 +2355,28 @@ async function send(text) {
     return;
   }
   text=addressed.command;
+  // Natural corrections take priority over saved-memory disputes and incomplete prior prompts.
+  const corrected=parseConversationCorrection(text);
+  if(corrected!==null){
+    const old=freshConversationReference();
+    if(corrected){
+      conversationCorrection={at:Date.now(),question:old?.question||'',reply:old?.reply||''};
+      await addMessage('user',text);
+      if(!getAIEndpoint()){
+        await addMessage('auren','Understood. Please reconnect my AI service in Settings so I can answer the corrected question.');
+      }else{
+        try{const answer=await askWithMemory(corrected);await addMessage('auren',answer);}
+        catch(error){console.error('Correction response failed',error);await addMessage('auren','I understood the correction, but could not reach my AI service just now.');}
+      }
+      return;
+    }
+    await addMessage('user',text);
+    await addMessage('auren',old?'Understood. Which part did I misunderstand?':'Which part would you like me to correct?');
+    return;
+  }
   // A deliberate topic switch discards stale AI conversational references.
   if(conversationTopicChange(text)){
-    conversationAnchor=null;
+    conversationAnchor=null;conversationCorrection=null;
     await addMessage('user',text);
     await addMessage('auren','Certainly. What would you like to discuss?');
     return;
