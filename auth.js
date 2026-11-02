@@ -1,4 +1,4 @@
-// AUREN v2.90 — Load the fixed schedule engine instead of any cached previous version.
+// AUREN v2.91 — Load the fixed schedule engine instead of any cached previous version.
 // AUREN v2.89 — Matching loader for robust speech/schedule reading.
 // AUREN v2.88 — Matching app loader for unified schedule reading.
 // AUREN v2.87 — flexible natural requests, version-matched loader.
