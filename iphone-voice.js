@@ -1,11 +1,11 @@
-// AUREN iPhone voice v3.18 — one-tap recording with local speech-end detection.
+// AUREN iPhone voice v3.19 — one-tap recording with local speech-end detection.
 // Microphone opens only on tap and is closed before transcription or AI response.
 export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
   let stream=null, recorder=null, recording=false, busy=false;
   let chunks=[], timeout=null, audioContext=null, analyser=null, sourceNode=null, detectionTimer=null;
-  let startedAt=0, hasSpeech=false, speechSince=0, lastSpeechAt=0, baseline=0.006;
+  let startedAt=0, hasSpeech=false, speechSince=0, lastSpeechAt=0, baseline=0.006, peak=0;
   let finishing=false, generation=0;
-  const MAX_MS=45000, MAX_BYTES=2*1024*1024, NO_SPEECH_MS=15000;
+  const MAX_MS=45000, MAX_BYTES=2*1024*1024, NO_SPEECH_MS=15000, MIN_SPEECH_MS=650, SILENCE_MS=2300;
   const report=(message,state='idle')=>onStatus?.(message,state);
   function releaseAudio(){
     clearInterval(detectionTimer);detectionTimer=null;
@@ -37,7 +37,8 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
       if(!text){report('No speech detected. Tap once and try again.','error');return;}
       report('Heard: '+text.slice(0,100),'processing');
       await onText(text);
-      report('Ready. Tap once whenever you want to speak.','idle');
+      // Do not override speaking/processing UI: the response pipeline owns it.
+      report('Ready for your next question.','idle');
     }catch(error){report('Voice service: '+(error.name==='AbortError'?'Timed out.':error.message),'error');}
     finally{clearTimeout(wait);}
   }
@@ -49,7 +50,7 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
       audioContext=new AC();sourceNode=audioContext.createMediaStreamSource(source);
       analyser=audioContext.createAnalyser();analyser.fftSize=1024;
       sourceNode.connect(analyser);
-      const buffer=new Float32Array(analyser.fftSize);let consecutive=0;
+      const buffer=new Float32Array(analyser.fftSize);let consecutive=0, lastLoudAt=0;
       detectionTimer=setInterval(()=>{
         if(!recording||document.hidden)return;
         analyser.getFloatTimeDomainData(buffer);
@@ -60,15 +61,18 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
         if(!hasSpeech && elapsed<950)baseline=baseline*.9+Math.min(rms,.04)*.1;
         const threshold=Math.max(.013,Math.min(.052,baseline*3.0));
         const loud=rms>threshold;
+        peak=Math.max(peak,rms);
         if(loud){
           consecutive++;
-          if(consecutive>=3){hasSpeech=true;lastSpeechAt=now;if(!speechSince)speechSince=now;}
+          if(consecutive>=5){hasSpeech=true;lastSpeechAt=now;lastLoudAt=now;if(!speechSince)speechSince=now;}
         }else consecutive=0;
         // Avoid cutting off natural pauses; require sustained speech and silence.
-        if(hasSpeech && elapsed>1300 && now-lastSpeechAt>1850){autoFinish();return;}
+        if(hasSpeech && elapsed>2000 && now-speechSince>=MIN_SPEECH_MS && now-lastSpeechAt>SILENCE_MS){autoFinish();return;}
         if(!hasSpeech && elapsed>NO_SPEECH_MS){
-          report('I didn’t hear anything. Tap once to try again.','idle');
-          ++generation;chunks=[];const r=recorder;cleanup();try{if(r?.state==='recording')r.stop();}catch{}
+          // iPhone microphones vary substantially in gain. If the detector never
+          // crosses its threshold, send the capture for transcription instead
+          // of silently discarding the user's speech.
+          autoFinish();
         }
       },110);
     }catch(e){releaseAudio();report('Listening… Tap again to finish speaking.','listening');}
@@ -82,7 +86,7 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
       // Request permission immediately inside user tap, without awaiting anything first.
       const obtained=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}});
       if(token!==generation){obtained.getTracks().forEach(t=>t.stop());return;}
-      stream=obtained;chunks=[];hasSpeech=false;speechSince=0;lastSpeechAt=0;baseline=.006;
+      stream=obtained;chunks=[];hasSpeech=false;speechSince=0;lastSpeechAt=0;baseline=.006;peak=0;
       const kind=mime();const r=new MediaRecorder(obtained,kind?{mimeType:kind}:undefined);recorder=r;
       r.ondataavailable=e=>{if(e.data?.size)chunks.push(e.data);};
       r.onerror=()=>{cleanup();busy=false;report('Recording failed. Tap once to retry.','error');};
@@ -103,7 +107,7 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
     if(!recording||!recorder||busy||finishing)return;
     finishing=true;busy=true;recording=false;releaseAudio();clearTimeout(timeout);timeout=null;
     report('Processing your message…','processing');
-    try{if(recorder.state==='recording')recorder.stop();else{cleanup();busy=false;finishing=false;}}
+    try{if(recorder.state==='recording'){try{recorder.requestData();}catch{} recorder.stop();}else{cleanup();busy=false;finishing=false;}}
     catch(error){cleanup();busy=false;finishing=false;report('Could not finish recording: '+error.message,'error');}
   }
   document.addEventListener('visibilitychange',()=>{
