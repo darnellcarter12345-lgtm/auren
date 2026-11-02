@@ -1,3 +1,4 @@
+// AUREN v2.99 — Verified reminder/appointment conversion, editing and distinct Your Day labels.
 // AUREN v2.98 — field-aware reminder clarification plus saved-profile-first name memory.
 // AUREN v2.93 — saved-profile-first name authority; no conversation-memory false positives.
 // AUREN v2.92 — persistent name recall, refreshed profile context, verified loader.
@@ -686,10 +687,101 @@ function aurenReminderPlacementReply(raw){
 }
 
 function eventTimestamp(p){const [y,m,d]=p.date.split('-').map(Number);const [h,min]=p.time.split(':').map(Number);return new Date(y,m-1,d,h,min).getTime();}
+// v2.99: Reminders and appointments are different storage records. Conversions
+// and edits must use a verified existing record and explicit confirmation.
+let aurenPendingRecordEdit=null;
+let aurenRecentRecordFocus=null;
+function aurenRecordFocus(kind,id){aurenRecentRecordFocus={kind,id,at:Date.now()};}
+function aurenGetRecord(kind,id){return kind==='reminder'?reminders.find(x=>x.id===id):plans.find(x=>x.id===id);}
+function aurenPickRecord(raw,desiredKind){
+ const source=desiredKind==='reminder'?reminders:plans;
+ const q=String(raw||'').toLowerCase();
+ const explicitly=source.filter(x=>{
+   const title=(x.title||x.text||'').toLowerCase().replace(/^(?:reminder|appointment):\s*/,'').trim();
+   return title.length>=5 && q.includes(title);
+ });
+ if(explicitly.length===1)return explicitly[0];
+ if(explicitly.length>1)return null;
+ const focused=desiredKind==='reminder'&&aurenLastReminderFocus&&Date.now()-aurenLastReminderFocus.at<30*60000
+   ?source.find(x=>x.id===aurenLastReminderFocus.id):null;
+ if(focused&&/\b(?:it|that|this|my|the)\b/i.test(q))return focused;
+ if(aurenRecentRecordFocus?.kind===desiredKind&&Date.now()-aurenRecentRecordFocus.at<30*60000){
+   const recent=source.find(x=>x.id===aurenRecentRecordFocus.id);
+   if(recent&&/\b(?:it|that|this)\b/i.test(q))return recent;
+ }
+ // The singular reference is only safe when a single record exists.
+ return source.length===1?source[0]:null;
+}
+function aurenRecordEditDialogue(input){
+ const t=String(input||'').trim();
+ const answer=t.toLowerCase().replace(/[.?!]+$/,'').trim();
+ if(aurenPendingRecordEdit){
+  if(/^(?:cancel|no|nope|never mind|nevermind|stop|not now)$/.test(answer)){aurenPendingRecordEdit=null;return 'Okay. I did not change anything.';}
+  if(/^(?:yes|yep|yeah|sure|confirm|do it|go ahead|please do|that's right|correct|okay|ok)$/.test(answer)){
+   const edit=aurenPendingRecordEdit;aurenPendingRecordEdit=null;
+   const existing=aurenGetRecord(edit.from,edit.id);
+   if(!existing)return 'That saved item no longer exists, so I did not change anything.';
+   const previousPlans=plans.map(x=>({...x})),previousReminders=reminders.map(x=>({...x}));
+   const originalTitle=existing.title||aurenReminderTitle(existing.text);
+   try{
+    if(edit.action==='rename'){
+      if(edit.from==='reminder')existing.text=edit.title;else existing.title=edit.title;
+      if(edit.from==='reminder'){saveReminders();if(aurenSavedReminder(existing.id)?.text!==edit.title)throw Error('Reminder did not persist');}
+      else {savePlans();if(!JSON.parse(localStorage.getItem(PLAN_KEY)||'[]').some(x=>x.id===existing.id&&x.title===edit.title))throw Error('Appointment did not persist');}
+      aurenRecordFocus(edit.from,existing.id);
+      return `Updated your ${edit.from} from ${originalTitle} to ${edit.title}. I checked the saved record.`;
+    }
+    if(edit.from==='reminder'){
+      const date=new Date(existing.at);
+      const converted={id:uid(),title:aurenReminderTitle(existing.text),date:localDate(date),time:String(date.getHours()).padStart(2,'0')+':'+String(date.getMinutes()).padStart(2,'0'),duration:60};
+      plans.push(converted);if(!edit.keepOriginal)reminders=reminders.filter(x=>x.id!==existing.id);
+      savePlans();saveReminders();
+      if(!JSON.parse(localStorage.getItem(PLAN_KEY)||'[]').some(x=>x.id===converted.id))throw Error('Converted appointment was not saved');
+      lastDiscussedPlanId=converted.id;aurenRecordFocus('appointment',converted.id);
+      return `${edit.keepOriginal?'Added a matching appointment for':'Converted'} ${converted.title} in Your Day on ${readableDate(converted.date)} at ${formatClock(converted.time)}. ${edit.keepOriginal?'The reminder is still saved separately.':'The original standalone reminder was removed.'}`;
+    }
+    const dateTime=new Date(eventTimestamp(existing));
+    const converted={id:uid(),text:String(existing.title||'Untitled appointment').replace(/^appointment:\s*/i,''),at:dateTime.toISOString(),fired:dateTime.getTime()<=Date.now()};
+    if(!edit.keepOriginal)plans=plans.filter(x=>x.id!==existing.id);reminders.push(converted);
+    savePlans();saveReminders();
+    if(!aurenSavedReminder(converted.id))throw Error('Converted reminder was not saved');
+    aurenFocusReminder(converted);aurenRecordFocus('reminder',converted.id);
+    return `${edit.keepOriginal?'Added a reminder for':'Converted'} ${converted.text} at ${dateTime.toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}. It can alert while AUREN is open. ${edit.keepOriginal?'The appointment remains saved.':'The old appointment was removed.'}`;
+   }catch(err){plans=previousPlans;reminders=previousReminders;try{savePlans();saveReminders();}catch{}return 'I could not verify that change in storage, so please check Your Day before trying again.';}
+  }
+  // Unrelated requests must not be hijacked by a pending edit.
+  if(/^(?:what|where|when|find|search|show|remind|schedule|set|can you)/i.test(t))aurenPendingRecordEdit=null;
+ }
+ const conversion=/\b(?:convert|switch|change|turn|make|move)\b[\s\S]*\b(?:reminder|appointment|calendar|event)\b/i.test(t)
+  && /\b(?:into|to|instead|rather than|as|become|make|calendar|appointment|reminder)\b/i.test(t);
+ const rename=/\b(?:rename|retitle|change the (?:name|title)|call (?:it|that) instead)\b/i.test(t);
+ if(!conversion&&!rename)return null;
+ const hasReminder=/\bremind(?:er|ers)?\b/i.test(t),hasAppointment=/\b(?:appointment|calendar|event|meeting)\b/i.test(t);
+ let from;
+ if(conversion){
+   if(/\b(?:reminder)\b[\s\S]*\b(?:to|into|as)\s+(?:an?\s+)?(?:appointment|event|calendar)\b/i.test(t))from='reminder';
+   else if(/\b(?:appointment|calendar|event)\b[\s\S]*\b(?:to|into|as)\s+(?:an?\s+)?reminder\b/i.test(t))from='appointment';
+   else if(/\b(?:make|change|convert|turn|move|switch)\b[\s\S]*\b(?:reminder)\b[\s\S]*\b(?:calendar|appointment)\b/i.test(t))from='reminder';
+   else if(hasReminder&&hasAppointment)from='reminder';
+   else return 'Do you want to turn an appointment into a reminder, or a reminder into an appointment?';
+ }else from=hasReminder&&!hasAppointment?'reminder':hasAppointment&&!hasReminder?'appointment':aurenRecentRecordFocus?.kind||'reminder';
+ const record=aurenPickRecord(t,from);
+ if(!record)return `Which saved ${from} would you like to ${rename?'rename':'convert'}? I won't guess or claim something was changed.`;
+ if(rename){
+   const match=t.match(/(?:to|as|instead)\s+["“']?(.+?)["”']?[?.!]*$/i);
+   const title=match?.[1]?.trim().replace(/["”']+$/,'').slice(0,120);
+   if(!title)return `What new title would you like for ${record.title||record.text}?`;
+   aurenPendingRecordEdit={action:'rename',from,id:record.id,title};
+   return `Should I rename your ${from} to ${title}? Nothing has changed yet.`;
+ }
+ const keepOriginal=/\b(?:also|as well|both|keep (?:the|my|it))\b/i.test(t);
+ aurenPendingRecordEdit={action:'convert',from,id:record.id,keepOriginal};
+ return keepOriginal?`Should I add ${record.title||aurenReminderTitle(record.text)} as ${from==='reminder'?'an appointment':'a reminder'} too, keeping the existing ${from}?`:`Should I convert ${record.title||aurenReminderTitle(record.text)} from a ${from} into ${from==='reminder'?'an appointment':'a reminder'}? This replaces the original item instead of creating a duplicate.`;
+}
 function aurenReminderTitle(text){
  // Older spoken requests sometimes saved an extra 'at' before 'to'. Repair
  // presentation only; never silently rewrite the user's stored reminder.
- return String(text||'').trim().replace(/^(?:at\s+)+(to\b)/i,'$1').replace(/\s+/g,' ');
+ return String(text||'').trim().replace(/^(?:at\s+)+(to\b)/i,'$1').replace(/^(?:(?:reminder|appointment)\s*:\s*)+/i,'').replace(/\s+/g,' ');
 }
 function upcomingItems(){
  const now=Date.now(),today=localDate(),all=[],recent=[];
@@ -2037,7 +2129,7 @@ function renderDay(){
   const card=el('div','day-event');
   const label=el('div','day-event-clock',(plannerScope==='week'?weekdayNames[parseISO(p.date).getDay()].slice(0,3)+' · ':'')+formatClock(p.time));
   const content=el('div','day-event-content');
-  content.append(el('div','day-event-title',p.title));
+  content.append(el('div','day-event-title','Appointment: '+String(p.title||'').replace(/^(?:(?:appointment|event)\s*:\s*)+/i,'')));
   const remove=el('button','remove-plan','×');
   remove.type='button';
   remove.setAttribute('aria-label',`Remove ${p.title}`);
@@ -3788,6 +3880,9 @@ async function send(text) {
     return;
   }
   text=addressed.command;
+  // v2.99: Verified conversions and edits take priority over vague AI responses.
+  const recordEdit=aurenRecordEditDialogue(text);
+  if(recordEdit!==null){await addMessage('user',text);await addMessage('auren',recordEdit);return;}
   // v2.97: Place searches and their conversational follow-ups precede reminders.
   if(await aurenHandlePlaceDialogue(text)){conversationAnchor=null;return;}
   // v2.92: Name recall always consults the persisted profile, never the generic AI.
