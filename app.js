@@ -1,3 +1,4 @@
+// AUREN v2.72 — Adaptive JARVIS Personality; grounded conversational modes.
 // AUREN v2.71 — Safe Multi-Step Action Intelligence.
 // AUREN v2.70 — Grounded, on-demand personal recommendations from saved tasks, plans and approved preferences.
 // AUREN v2.69 — Verified topic-specific memory search, provenance clarity and privacy-first recall.
@@ -2528,6 +2529,33 @@ function aurenResponseStyle(question){
  if(/^(?:can you|could you|would you|please )?(?:explain|teach|compare|analy[sz]e|help me understand|how does|why does|why is)\b/i.test(t))return 'balanced';
  return 'natural';
 }
+// v2.72 — Adaptive JARVIS-style conversational delivery.
+// Tone applies only to the AI's wording; it must never override verified records,
+// local action handlers, pending confirmations, or the user's preferred title.
+function aurenConversationMode(question){
+ const t=String(question||'').trim();
+ if(/^(?:are you sure|really\??|is that (?:actually )?(?:right|correct|true)|double.check|verify (?:that|it)|check (?:that|again))\b/i.test(t))return 'verification';
+ if(/^(?:no[, ]+i meant|that's not (?:what i meant|right|correct)|you misunderstood|i meant|actually[, ]+)/i.test(t))return 'correction';
+ if(/\b(?:i'm overwhelmed|i am overwhelmed|stressed about|i'm worried|i am worried|i don't know what to do|too much to do)\b/i.test(t))return 'supportive';
+ if(/\b(?:what should i do (?:next|first)|what needs my attention|plan my day|prioriti[sz]e|recommend|organize my (?:day|schedule))\b/i.test(t))return 'executive';
+ if(/\b(?:explain|how does|why does|how do i|walk me through|teach me|help me understand)\b/i.test(t))return 'explainer';
+ if(/^(?:hi|hello|hey|good morning|good afternoon|good evening|thanks|thank you|cheers|nice)\b/i.test(t))return 'social';
+ return 'direct';
+}
+function aurenPersonalityGuidance(question){
+ const mode=aurenConversationMode(question);
+ const common='AUREN persona: composed, perceptive, understated British-butler character. Sound like a thoughtful assistant, NOT a theatrical impersonation. Never claim feelings or physical presence. Respect the configured title, but do not use a title every turn. Prefer natural references such as "your meeting with your dad" over parroting "my dad." Never say something was remembered, scheduled, opened or completed unless local records or the action handler verify it. Do not use canned phrases repeatedly, including "Certainly, sir" or "How may I assist?".';
+ const modes={
+  verification:'The user challenges the last specific claim. Recheck that claim against reliable available facts or saved records. State what is confirmed and what remains uncertain without defensiveness or a generic apology. Do not switch subjects.',
+  correction:'Acknowledge the precise correction in a short natural sentence and answer the corrected request. Do not repeat the previous misunderstanding or invent changes to saved data.',
+  supportive:'Be calm, practical and respectful, without dramatic reassurance. Prioritize one manageable next step; offer a concise plan only if useful. Do not assume private circumstances.',
+  executive:'Lead with the single highest-value next action and a brief reason based on VERIFIED saved tasks, appointments or reminders. Separate known facts from recommendations. Mention missing durations or travel times when those affect feasibility.',
+  explainer:'Give the answer before context; adjust detail to the user request. Use concrete examples where helpful. Avoid unnecessary personality flourishes.',
+  social:'Reply naturally and briefly, without repeating your identity, status or capabilities unless asked.',
+  direct:'Answer the request naturally and directly. Be polished rather than stiff; ask at most one question only when necessary.'
+ };
+ return common+' Current conversational mode: '+mode+'. '+modes[mode];
+}
 function aurenStyleGuidance(question){
  const style=aurenResponseStyle(question);
  const core='Speak like a calm capable British-style butler, not a customer-service chatbot. Answer the request first, with natural wording. Never pad a reply with repeated greetings, formal titles, generic offers, or apologies. Never end every answer with a question. Avoid repeated lists of capabilities and unnecessary disclaimers. If the request requires a UI action, use the available local action rather than describing imagined actions.';
@@ -2559,6 +2587,7 @@ async function askWithMemory(question) {
   const deviceContext = [
     correctionContext(question),
     `CURRENT RESPONSE STYLE (high priority, per-turn only): ${aurenStyleGuidance(question)}`,
+    `CURRENT PERSONALITY DELIVERY (high priority, per-turn only): ${aurenPersonalityGuidance(question)}`,
     `Current actual Dallas date/time: ${new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',dateStyle:'full',timeStyle:'long'}).format(new Date())}. Verify time gaps with numeric timestamps; do not imply 11:20 PM is close to 12:47 PM.`,
     `Time clarity: Always include a clear AM/PM or natural daypart (morning, afternoon, evening, night) for appointments and reminders; distinguish noon from midnight. Never infer a daypart without using the actual scheduled hour.`,
     'If the user says they need to leave in N minutes, that is an imminent departure, not spare time. Never say they have plenty of time unless the timing clearly supports it. Discuss conflicts against actual saved appointment times only. Do not invent travel duration or imply a calendar event was created merely because the user mentioned leaving.',
