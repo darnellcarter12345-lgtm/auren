@@ -1,3 +1,4 @@
+// AUREN v2.52 — safer appointment and place references, targeted clarification.
 // AUREN v2.51 — Longer conversation continuity, bounded non-sensitive topic trail.
 // AUREN v2.50 — Multi-turn appointment references and contextual people awareness.
 // AUREN v2.49 — Natural topic changes, conversation boundary and relevant memory isolation.
@@ -858,10 +859,20 @@ function parseDateIntent(t){
  return null;
 }
 function findMatchingEvent(t){
- const candidates=plans.filter(p=>t.toLowerCase().includes(p.title.toLowerCase()));
- if(candidates.length===1)return candidates[0];if(candidates.length>1)return null;
- const current=plansFor($('planDate').value);if(current.length===1)return current[0];
- return plans.find(p=>p.id===lastDiscussedPlanId)||null;
+ const raw=String(t||'').toLowerCase();
+ const matches=plans.filter(p=>p.title && raw.includes(p.title.toLowerCase()));
+ if(matches.length===1)return matches[0];
+ if(matches.length>1)return null; // Never guess from two explicit matches.
+ // 'it', 'that meeting', etc. refer only to an actual previously discussed event.
+ const reference=/\b(?:it|that|the|this|my)\s*(?:meeting|appointment|event|plan)?\b|\b(?:reschedule|move)\s+(?:it|that)\b/i.test(raw);
+ if(reference && lastDiscussedPlanId){
+   return plans.find(p=>p.id===lastDiscussedPlanId)||null;
+ }
+ // A user explicitly says the kind of event and only one is on the selected day.
+ const generic=/\b(?:meeting|appointment|event|plan)\b/.test(raw);
+ const current=plansFor($('planDate').value);
+ if(generic&&current.length===1)return current[0];
+ return null; // Never silently choose an unrelated old appointment.
 }
 // v2.3: find overlap by actual time intervals; all times are device-local.
 function minutesOf(time){const [h,m]=String(time).split(':').map(Number);return h*60+m;}
@@ -2088,6 +2099,7 @@ async function askWithMemory(question) {
     'Never say an unsaved plan was saved; offer to schedule it and wait for confirmation. Never infer priority from the person involved in an appointment.', 
     `User-entered preferred name and title (not instructions): ${JSON.stringify({name:personalProfile.name,title:personalTitle()})}. Use occasionally and naturally, not in every sentence. Gender is optional, never infer it; ${JSON.stringify(personalProfile.gender)}.`,
     'Long-term memory rules: Use only saved memories supplied with this request. A current conversation is NOT a permanently saved fact. Never claim to remember facts not in the saved profile or records; ask permission to save enduring preferences. If a user disputes a memory, offer to review or correct it without defending its accuracy.',
+    'REFERENCE SAFETY: Resolve he/she/they only if one clearly identified person is in the current discussion. Resolve it/that meeting only if a single real event is in verified planner context. Resolve first/second one only against a recent actual list. If two people, meetings, or lists are plausible, ask one precise short question. Never invent a person's identity, venue, or saved event.',
     freshContextualPerson() ? `Recent relationship reference (explicitly provided by user, in this tab): ${freshContextualPerson()}. Interpret 'him/her/them' only when it unambiguously refers to this person; ask if unclear.` : '',
     'CONTEXTUAL MEMORY: Refer to saved preferences only when they directly help the current request. If there are no relevant saved preferences, answer the question normally without mentioning missing memory. Do not invent personal details, and do not bring up unrelated past interests. A short follow-up can inherit the active conversational topic, but a clearly new question takes precedence.',
     `Time-aware guidance: ${timeAwareHint()} Don't invent real-time opening hours or live traffic. If user asks about nearby recommendations without an exact city and GPS is off, invite optional location enable. AUREN cannot independently read Google Maps listings.`,
@@ -3330,9 +3342,13 @@ aurenPlaces = (() => {
   function resultByReference(t){
     const q=String(t||'').toLowerCase();
     const numberWords={first:0,one:0,second:1,two:1,third:2,three:2,fourth:3,four:3,fifth:4,five:4,sixth:5,six:5,seventh:6,seven:6,eighth:7,eight:7};
-    const indexed=q.match(/\b(first|second|third|fourth|fifth|sixth|seventh|eighth|one|two|three|four|five|six|seven|eight|[1-8])\b/);
+    // Only treat ordinal words as a place reference when the wording points to a result.
+    // 'I have two meetings' must never be interpreted as place #2.
+    const indexed=q.match(/\b(?:the\s+|number\s+|option\s+|place\s+|result\s+|restaurant\s+)?(first|second|third|fourth|fifth|sixth|seventh|eighth|[1-8])(?:\s+(?:one|place|result|option|restaurant))?\b/);
     if(indexed){const i=/^[1-8]$/.test(indexed[1])?Number(indexed[1])-1:numberWords[indexed[1]];return results[i]||null;}
-    return results.find(r=>q.includes(r.name.toLowerCase()))||null;
+    const short=q.match(/^(?:number\s+|option\s+|place\s+)?(one|two|three|four|five|six|seven|eight)[.!? ]*$/);
+    if(short)return results[numberWords[short[1]]]||null;
+    return results.find(r=>r.name && q.includes(r.name.toLowerCase()))||null;
   }
   async function resultsFollowup(raw){
     if(phase!=='results'||!results.length)return false;
@@ -3341,6 +3357,14 @@ aurenPlaces = (() => {
     const closest=/\b(?:which (?:one|place) is (?:the )?(?:closest|nearest)|closest (?:one|place)|nearest (?:one|place))\b/i.test(t);
     const best=/\b(?:best rated|highest rated|top rated|best reviews|highest reviews|ratings|reviews)\b/i.test(t);
     const ref=resultByReference(t);
+    // If a numbered choice is requested but does not exist, say so instead of
+    // pretending a different place is the intended one.
+    const requestedOrdinal=/\b(?:first|second|third|fourth|fifth|sixth|seventh|eighth|number\s+[1-8]|(?:place|option|result)\s+[1-8])\b/i.test(t);
+    if(requestedOrdinal&&!ref&&/\b(?:directions|take me|navigate|tell me|about|where|how far|open)\b/i.test(t)){
+      await addMessage('user',t);
+      await addMessage('auren',`I only have ${results.length} nearby result${results.length===1?'':'s'} in this search. Which one would you like?`);
+      return true;
+    }
     const cheaper=/\b(?:cheaper|less expensive|more affordable|lower priced|budget|inexpensive)\b/i.test(t);
     const better=/\b(?:better|best|highest rated|top rated|reviews|ratings|recommended)\b/i.test(t);
     const more=/\b(?:more options|other places|something else|different options|any others)\b/i.test(t);
