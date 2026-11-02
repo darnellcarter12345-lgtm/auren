@@ -110,8 +110,8 @@ import { NeedsConfirmationError, historySafe, classify } from './sensitive.js';
 import { Butler, isSessionNote } from './butler.js';
 import { buildBackup, encryptBackup, decryptBackup, validateBackup, applyPlan, describeReport, LIMITS } from './backup.js';
 import { loadSettings, saveSettings } from './settings.js';
-import { createVoice } from './voice.js?v=3.19';
-import { createIPhoneRecorder } from './iphone-voice.js?v=3.19';
+import { createVoice } from './voice.js?v=3.20';
+import { createIPhoneRecorder } from './iphone-voice.js?v=3.20';
 import { getAIEndpoint, setAIEndpoint, askAI } from './ai.js';
 import { getWeatherBriefing } from './weather.js';
 
@@ -279,13 +279,13 @@ const iphoneRecorder = aurenIOS ? createIPhoneRecorder({
   onStatus: (message, state) => {
     $('voiceStatus').textContent = message;
     $('heroState').textContent = message;
-    $('heroState').hidden = state === 'idle';
+    $('heroState').hidden = state === 'idle' && !voice.speaking;
     document.body.dataset.voiceState = state;
     if(aurenIOS)requestAnimationFrame(()=>{const b=$('micBtn');if(b){b.textContent=state==='listening'?'■ Finish speaking':'🎙 Speak to AUREN';b.setAttribute('aria-pressed',String(state==='listening'));}});
     if (state === 'listening') $('aurenHeadline').textContent = 'I’m listening.';
     else if (state === 'processing') $('aurenHeadline').textContent = 'One moment.';
     else if (state === 'error') $('aurenHeadline').textContent = 'Voice connection needs attention.';
-    else $('aurenHeadline').textContent = 'At your service.';
+    else if(!voice.speaking) $('aurenHeadline').textContent = 'At your service.';
   },
   onText: async transcript => {
     $('chatInput').value = transcript;
@@ -297,10 +297,14 @@ const iphoneRecorder = aurenIOS ? createIPhoneRecorder({
 }) : null;
 let aurenLastIPhoneTap=0;
 async function toggleIPhoneRecorder() {
-  if (!iphoneRecorder || iphoneRecorder.busy) return;
+  if (!iphoneRecorder) return;
+  if (iphoneRecorder.busy) {
+    $('voiceStatus').textContent = 'Finishing your reply. Try the orb again once AUREN is ready.';
+    return;
+  }
   // Suppress accidental repeat taps/double-fired iOS synthetic clicks.
   const now=Date.now();
-  if(now-aurenLastIPhoneTap<650)return;
+  if(now-aurenLastIPhoneTap<400)return;
   aurenLastIPhoneTap=now;
   // Recording and voice playback are separate. Do not prime speech during
   // getUserMedia: on iOS that can steal the audio session and cancel capture.
@@ -400,7 +404,7 @@ function activateOrb(event) {
   if (aurenIOS) {
     // The orb invokes the identical native button path as “Speak to AUREN”.
     // Keep the button's click handling as the only iPhone recorder entry point.
-    $('micBtn').click();
+    void toggleIPhoneRecorder();
     return;
   }
   const now = Date.now();
