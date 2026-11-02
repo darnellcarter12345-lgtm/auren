@@ -1,3 +1,4 @@
+// AUREN v2.67 — Confirmed task effort estimates and grounded workload fit checks.
 // AUREN v2.66 — Grounded workload and calendar-gap analysis.
 // AUREN v2.65 — Grounded competing-priority comparison and decision support.
 // AUREN v2.64 — Grounded schedule follow-ups and routine-fit guidance.
@@ -1419,6 +1420,40 @@ function unifiedDayReply(intent){
  parts.push('This is a suggested order based on saved dates, not a judgment of your personal priorities. No tasks or appointments were changed.');
  return parts.join(' ');
 }
+// v2.67: Optional task effort estimates remain separate from calendar events.
+// Save estimates only after a direct confirmation and never infer them from task titles.
+let pendingTaskEstimate=null;
+function workloadEstimateIntent(raw){
+ const q=String(raw||'').trim().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/i,'').replace(/[.!?]+$/,'').trim();
+ const save=q.match(/^(?:set|save|update|change|record)\s+(?:an?\s+)?(?:time\s+)?estimate\s+(?:for\s+)?(?:my\s+)?(?:task\s+)?(.+?)\s+(?:to|as|at)\s+(\d{1,3})\s*(minutes?|mins?|hours?|hrs?)$/i)
+   ||q.match(/^(?:my\s+)?(?:task\s+)?(.+?)\s+(?:will\s+take|takes|needs)\s+(\d{1,3})\s*(minutes?|mins?|hours?|hrs?)$/i);
+ if(save){const n=Number(save[2])*(/^h/i.test(save[3])?60:1);return {kind:'save',subject:save[1].trim(),minutes:n};}
+ const show=q.match(/^(?:how long (?:will|should|does)\s+(?:my\s+)?(?:task\s+)?(.+?)\s+take|(?:what(?:'s| is) (?:the\s+)?(?:time\s+)?estimate\s+for\s+(?:my\s+)?(?:task\s+)?(.+))$/i);
+ if(show)return {kind:'show',subject:(show[1]||show[2]).trim()};
+ return null;
+}
+function workloadEstimateReply(intent){
+ const matches=aurenTasks.filter(t=>t.title.toLowerCase()===intent.subject.toLowerCase());
+ const partial=matches.length?matches:aurenTasks.filter(t=>intent.subject.length>=3&&t.title.toLowerCase().includes(intent.subject.toLowerCase()));
+ if(partial.length!==1)return partial.length?'I found multiple tasks matching that name. Please use the exact saved task title.':'I could not find a saved task by that name. Save the task first, then set its estimate.';
+ const task=partial[0];
+ if(intent.kind==='show')return Number.isFinite(task.estimatedMinutes)&&task.estimatedMinutes>0?`Your saved estimate for ${task.title} is ${task.estimatedMinutes} minutes. This is an estimate, not guaranteed completion time.`:`There is no duration estimate saved for ${task.title}. You can say: Set estimate for ${task.title} to 45 minutes.`;
+ if(!Number.isInteger(intent.minutes)||intent.minutes<1||intent.minutes>720)return 'Please provide a duration from 1 minute to 12 hours.';
+ pendingTaskEstimate={id:task.id,minutes:intent.minutes,at:Date.now()};
+ return `Shall I save ${intent.minutes} minutes as your estimated work time for ${task.title}? This will not add or change a calendar event.`;
+}
+function workloadEstimateConfirmation(text){
+ if(!pendingTaskEstimate)return null;
+ const q=String(text||'').trim();
+ if(Date.now()-pendingTaskEstimate.at>120000){pendingTaskEstimate=null;return null;}
+ if(/^(?:no|nope|cancel|never mind|not now)[.!? ]*$/i.test(q)){pendingTaskEstimate=null;return 'Understood. The task estimate was not changed.';}
+ if(!/^(?:yes|yeah|yep|sure|confirm|save it|please do|go ahead)[.!? ]*$/i.test(q))return null;
+ const draft=pendingTaskEstimate;pendingTaskEstimate=null;
+ const t=aurenTasks.find(x=>x.id===draft.id);if(!t)return 'That saved task no longer exists.';
+ const previous=t.estimatedMinutes;t.estimatedMinutes=draft.minutes;
+ if(!saveAurenTasks()){if(previous===undefined)delete t.estimatedMinutes;else t.estimatedMinutes=previous;return 'I could not save the estimate in this browser.';}
+ return `Saved your ${draft.minutes}-minute estimate for ${t.title}. Your appointments were not changed.`;
+}
 // v2.66: Read-only time and workload estimates based strictly on recorded appointments.
 function workloadWindowIntent(raw){
  const q=String(raw||'').trim().toLowerCase().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/,'').replace(/[.!?]+$/,'').trim();
@@ -1448,7 +1483,15 @@ function workloadWindowReply(intent){
   else if(remaining.length>1)output.push('I do not see a positive gap between the upcoming saved appointments.');
  }else output.push('I do not have any upcoming saved appointments for that date; that does not mean your day is entirely free.');
  if(openTasks.length)output.push(`For possible work, you have ${openTasks.slice(0,2).map(t=>t.title).join(' and ')}${openTasks.length>2?' and other tasks':''} recorded.`);
- output.push('Your tasks do not have verified work durations. I cannot promise what will fit; include preparation, breaks and travel as needed. No appointments or tasks were changed.');
+ const known=openTasks.filter(t=>Number.isFinite(t.estimatedMinutes)&&t.estimatedMinutes>0);
+ if(known.length)output.push(`Your own saved work estimates include ${known.slice(0,3).map(t=>t.title+' ('+t.estimatedMinutes+' minutes)').join('; ')}. These are estimates, not promised finishing times.`);
+ const unknown=openTasks.filter(t=>!Number.isFinite(t.estimatedMinutes)||t.estimatedMinutes<=0);
+ if(unknown.length)output.push(`${unknown.length} unfinished task${unknown.length===1?' has':'s have'} no saved duration estimate.`);
+ if(known.length&&remaining.length){
+  const nextStart=eventTimestamp(remaining[0]);const available=Math.floor((nextStart-windowStart)/60000);
+  if(available>0){const fit=known.filter(t=>t.estimatedMinutes<=available);if(fit.length)output.push(`Based only on your estimates, ${fit.slice(0,2).map(t=>t.title).join(' or ')} might fit into the ${available}-minute opening before the next appointment, before allowing for breaks, preparation and travel.`);}
+ }
+ output.push('A calendar opening is not guaranteed free time. Allow for breaks, preparation and travel; no appointments or tasks were changed.');
  return output.join(' ');
 }
 // v2.65: Compare saved obligations without inventing importance, duration or availability.
@@ -2850,6 +2893,7 @@ function aurenCancelPendingDrafts(){
   planClarification=null;
   planningOffer=null;
   pendingTaskChange=null;
+  pendingTaskEstimate=null;
   contextualMeetingDraft=null;
   personalPendingInterest=null;
   pendingWeatherOffer=null;
@@ -2930,7 +2974,7 @@ async function send(text) {
   // saved appointments, tasks, or memories, or initiates a fresh AI request.
   if(/^(?:never mind|nevermind|forget that request|cancel that request|drop that request)[.!? ]*$/i.test(text.trim())){
     await addMessage('user',text);
-    const hadDraft=!!(pendingTaskChange||pendingPlan||pendingReminder||planClarification||contextualMeetingDraft||butler.pending);
+    const hadDraft=!!(pendingTaskChange||pendingTaskEstimate||pendingPlan||pendingReminder||planClarification||contextualMeetingDraft||butler.pending);
     if(hadDraft){aurenCancelPendingDrafts();await addMessage('auren','Certainly. I have cancelled the unfinished request. I have not saved or changed anything from that request.');}
     else await addMessage('auren','Certainly. There is no unfinished request to cancel.');
     return;
@@ -2998,6 +3042,15 @@ async function send(text) {
   if(/^(?:(?:please|can you|could you)\s+)?(?:take me to|navigate to|directions to|drive to|go to)\b/i.test(text.trim())){
     aurenCancelPendingDrafts();
   }
+  // v2.67: A task duration estimate has its own confirmation, separate from task creation.
+  if(pendingTaskEstimate){
+    const result=workloadEstimateConfirmation(text);
+    if(result!==null){await addMessage('user',text);await addMessage('auren',result);return;}
+    // An unrelated new request cannot accidentally confirm the estimate later.
+    if(!/^(?:yes|yeah|yep|sure|confirm|save it|please do|go ahead)[.!? ]*$/i.test(text.trim()))pendingTaskEstimate=null;
+  }
+  const estimateRequest=workloadEstimateIntent(text);
+  if(estimateRequest){await addMessage('user',text);await addMessage('auren',workloadEstimateReply(estimateRequest));return;}
   // A bare confirmation with an unresolved memory prompt belongs to the memory
   // specialist, not the task handler or a generic AI conversation.
   if(butler.pending && !pendingTaskChange && !pendingPlan && !pendingReminder &&
