@@ -1,3 +1,4 @@
+// AUREN v2.85 — Context-aware schedule clarification and corrected Safari loader.
 // AUREN v2.84 — Natural Your Day language and context-aware suggestions.
 // AUREN v2.83 — Verified reminder storage and real Your Day reminder entries.
 // AUREN v2.82 — Persistent local profile identity and priority name recall.
@@ -3425,6 +3426,40 @@ function aurenExternalActionBoundary(raw) {
   return null;
 }
 
+// v2.85: A question about placing an unspecified item in Your Day is a
+// clarification, not a completed action. Keep this context only briefly.
+let pendingYourDayChoice = null;
+function aurenYourDayFollowup(raw) {
+  if (!pendingYourDayChoice) return null;
+  if (Date.now() - pendingYourDayChoice.at > 120000) { pendingYourDayChoice=null; return null; }
+  const q=String(raw||'').trim().toLowerCase().replace(/[.!?]+$/,'').trim();
+  if (/^(?:no|no thanks|never mind|nevermind|cancel|not now|forget it)$/.test(q)) {
+    pendingYourDayChoice=null;
+    return 'Of course. Nothing has been added or changed.';
+  }
+  if (/^(?:a |an |the |my )?(?:reminder|reminders)$/.test(q)) {
+    pendingYourDayChoice=null;
+    return varyButler('yourDayReminderNext', [
+      'A reminder, certainly. What should I remind you about, and when?',
+      'Of course. Tell me what you want to remember and the day and time.',
+      'Very well. What is the reminder for, and when would you like it?'
+    ]);
+  }
+  if (/^(?:a |an |the |my )?(?:meeting|appointment|event|plan)$/.test(q)) {
+    pendingYourDayChoice=null;
+    return varyButler('yourDayAppointmentNext', [
+      'An appointment. What should I call it, and what day and time?',
+      'Certainly. What is the event, and when should it appear in Your Day?',
+      'Understood. Tell me the appointment title, day, and time.'
+    ]);
+  }
+  // 'yes' alone is not permission to invent or save a record.
+  if (/^(?:yes|yeah|yep|okay|ok|sure|do it|go ahead|please)$/.test(q))
+    return 'I can do that. Is it a reminder or an appointment? Nothing has been saved yet.';
+  // A new substantive request is independent; don't hijack it.
+  pendingYourDayChoice=null;
+  return null;
+}
 async function send(text) {
   const addressed = aurenAddressCommand(text);
   if (addressed.wake) {
@@ -3441,6 +3476,13 @@ async function send(text) {
     await addMessage('auren',answer || 'I could not read your saved name. Please check Your profile in Settings.');
     return;
   }
+  // Handle the direct response to a recent Your Day clarification first.
+  const yourDayFollowup=aurenYourDayFollowup(text);
+  if (yourDayFollowup!==null) {
+    await addMessage('user',text);
+    await addMessage('auren',yourDayFollowup);
+    return;
+  }
   // v2.84: A conversational alias for the built-in schedule. Clarify only when
   // the person has not supplied an actionable reminder or appointment description.
   // Never claim to have saved something when the item is not in storage.
@@ -3448,6 +3490,7 @@ async function send(text) {
   if(shortScheduleRequest && !pendingPlan && !pendingReminder){
     const reminder = aurenLastReminderFocus && Date.now()-aurenLastReminderFocus.at<30*60000 ? aurenSavedReminder(aurenLastReminderFocus.id) : null;
     if(!reminder){
+      pendingYourDayChoice={at:Date.now()};
       await addMessage('user',text);
       await addMessage('auren',varyButler('scheduleClarification',[
         'Of course. Is this an appointment or a reminder? Both show in Your Day.',
