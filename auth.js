@@ -1,5 +1,6 @@
-// AUREN v3.20 — matching cache-busted application loader.
-// AUREN v3.20 — matching cache-busted app loader.
+// AUREN v3.21 — per-account local data gate.
+// AUREN v3.21 — matching cache-busted application loader.
+// AUREN v3.21 — matching cache-busted app loader.
 // AUREN v3.14 — Voice-output check-ins independent of microphone.
 // AUREN v3.13 — Load independent check-in patch with original voice behavior.
 // AUREN v3.11 — matched application loader.
@@ -35,6 +36,52 @@ const firebaseConfig = {
   messagingSenderId: '258218773081',
   appId: '1:258218773081:web:6afae5596fc3b33a7bf48'
 };
+
+// v3.21 Account-scoped browser storage. This executes before app.js starts.
+// Never assign unowned legacy data to an arbitrary newly signed-in user.
+const ACCOUNT_PREFIX='auren_account_v321_';
+const ACTIVE_ACCOUNT='auren_account_active_uid_v321';
+const RESERVED_AUREN_KEYS=new Set([ACTIVE_ACCOUNT,'auren_cloud_device_owner_v1','auren_account_legacy_notice_v321']);
+function accountDataKey(uid,key){return ACCOUNT_PREFIX+uid+'::'+key;}
+function appDataKeys(){return Object.keys(localStorage).filter(k=>k.startsWith('auren_')&&!k.startsWith(ACCOUNT_PREFIX)&&!k.startsWith('auren_legacy_unassigned_v321::')&&!RESERVED_AUREN_KEYS.has(k)&&!/^auren_(?:sync_enabled_v29_|sync_baseline_v29_|pre_sync_backup_)/.test(k));}
+function storeCurrentAccount(uid){
+  if(!uid)return;
+  const keys=appDataKeys();
+  // All writes complete before any shared key is removed.
+  for(const k of keys)localStorage.setItem(accountDataKey(uid,k),localStorage.getItem(k));
+  for(const k of keys)localStorage.removeItem(k);
+}
+function restoreAccount(uid){
+  for(const k of Object.keys(localStorage)){
+    if(!k.startsWith(ACCOUNT_PREFIX+uid+'::'))continue;
+    localStorage.setItem(k.slice((ACCOUNT_PREFIX+uid+'::').length),localStorage.getItem(k));
+  }
+}
+function activateAccountStorage(uid){
+  if(!uid)throw Error('Missing signed-in account ID');
+  const prior=localStorage.getItem(ACTIVE_ACCOUNT);
+  const oldOwner=localStorage.getItem('auren_cloud_device_owner_v1');
+  if(prior===uid){sessionStorage.setItem('auren_account_uid_v321',uid);return;}
+  if(prior)storeCurrentAccount(prior);
+  else{
+    const existing=appDataKeys();
+    if(existing.length){
+      if(oldOwner===uid){storeCurrentAccount(uid);} // certified legacy owner
+      else{
+        // Protect legacy data, but don't expose it to a different account.
+        for(const k of existing)localStorage.setItem('auren_legacy_unassigned_v321::'+k,localStorage.getItem(k));
+        for(const k of existing)localStorage.removeItem(k);
+        localStorage.setItem('auren_account_legacy_notice_v321','yes');
+      }
+    }
+  }
+  restoreAccount(uid);
+  localStorage.setItem(ACTIVE_ACCOUNT,uid);
+  // Cloud sync's previous global owner flag is now scoped to the active account.
+  localStorage.setItem('auren_cloud_device_owner_v1',uid);
+  sessionStorage.setItem('auren_account_uid_v321',uid);
+}
+
 const gate=document.getElementById('aurenAuthGate');
 const button=document.getElementById('aurenGoogleSignIn');
 const status=document.getElementById('aurenAuthStatus');
@@ -65,7 +112,7 @@ function friendlyError(error){
 const APP_DEPENDENCIES = [
   './db.js', './memory.js', './projects.js', './sensitive.js',
   './butler.js', './backup.js', './settings.js',
-  './voice.js?v=3.20', './iphone-voice.js?v=3.20',
+  './voice.js?v=3.21', './iphone-voice.js?v=3.21',
   './ai.js', './weather.js'
 ];
 function errorDetails(error) {
@@ -108,14 +155,14 @@ async function runStartupDiagnosis(error) {
     'AUREN diagnostics v2.93',
     'Reported at: '+new Date().toISOString(),
     'Page: '+location.pathname,
-    'Application: app.js?v=3.20',
+    'Application: app.js?v=3.21',
     'Original failure: '+errorDetails(error),
     'Checking deployed application source and dependencies...'
   ];
   displayDiagnosis(entries.join('\n'));
   try {
     // Explicit cache bypass lets us distinguish an outdated deployed app.js from a broken module.
-    const sourceURL=new URL('./app.js?v=3.20',import.meta.url);
+    const sourceURL=new URL('./app.js?v=3.21',import.meta.url);
     sourceURL.searchParams.set('diagnostics',String(Date.now()));
     const sourceResponse=await fetch(sourceURL.href,{cache:'no-store'});
     if(!sourceResponse.ok)throw new Error('HTTP '+sourceResponse.status+' loading deployed app.js');
@@ -156,8 +203,9 @@ async function openApp(user){
   if(loaded){setGateMode('ready');return;}
   busy=true;setGateMode('loading');
   try{
+    activateAccountStorage(user.uid);
     // A fresh versioned URL makes Safari request the CURRENT deployed app.js.
-    if(!appPromise)appPromise=import('./app.js?v=3.20').catch(error=>{appPromise=null;throw error;});
+    if(!appPromise)appPromise=import('./app.js?v=3.21').catch(error=>{appPromise=null;throw error;});
     await appPromise;loaded=true;
     if(accountEmail)accountEmail.textContent=user.email||'Signed in';
     if(accountCard)accountCard.hidden=false;
