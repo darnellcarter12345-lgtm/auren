@@ -1,3 +1,5 @@
+// AUREN v2.37 — grounded next-action priority intelligence and focused schedule guidance.
+// AUREN v2.36 — reliable appointment corrections, confirmed saves and focused follow-through.
 // AUREN v2.35 — grounded day follow-ups and concise, context-safe daily guidance.
 // AUREN v2.34 — grounded daily intelligence, conflicts, priorities and context.
 // AUREN v2.33 — focused nearby popup: results or directions and close.
@@ -902,6 +904,53 @@ function savedDayIntelligence(date=localDate(), scope='day') {
   if(conflictPairs.length)parts.push(`Attention: ${conflictPairs.length} scheduling ${conflictPairs.length===1?'conflict':'conflicts'}. ${conflictPairs.slice(0,2).map(([a,b])=>`${a.title} overlaps ${b.title}`).join('; ')}.`);
   return {events,due,conflictPairs,next,spoken:parts.join(' ')};
 }
+// v2.37: Priority intelligence is derived solely from existing local appointments
+// and reminders. It never declares a personal goal or an unsaved task urgent.
+function nextActionIntelligence(date=localDate(),scope='day'){
+  const report=savedDayIntelligence(date,scope);
+  const now=Date.now();
+  const appointments=report.events.filter(e=>eventTimestamp(e)>=now);
+  const upcomingReminders=report.due.filter(r=>Date.parse(r.at)>=now);
+  const candidates=[
+    ...appointments.map(e=>({kind:'appointment',when:eventTimestamp(e),name:e.title,date:e.date,time:e.time})),
+    ...upcomingReminders.map(r=>({kind:'reminder',when:Date.parse(r.at),name:r.text}))
+  ].sort((a,b)=>a.when-b.when);
+  if(!candidates.length){
+    return 'I cannot see an upcoming appointment or reminder in AUREN for that period. I cannot know your personal priorities without your input.';
+  }
+  const next=candidates[0];
+  const timeLabel=next.kind==='appointment'
+    ? `${readableDate(next.date)} at ${spokenClock(next.time)}`
+    :new Date(next.when).toLocaleString([],{weekday:'long',hour:'numeric',minute:'2-digit'});
+  const minutes=Math.max(0,Math.floor((next.when-now)/60000));
+  const lead=next.kind==='reminder'?'Your next saved reminder':'Your next saved appointment';
+  let reply=`${lead} is ${next.name}, ${timeLabel}.`;
+  if(minutes<=15)reply+=' It is coming up soon.';
+  else if(minutes<=60)reply+=` It is in about ${minutes} minutes.`;
+  if(report.conflictPairs.length){
+    const pair=report.conflictPairs.find(([a,b])=>eventTimestamp(a)>=now||eventTimestamp(b)>=now);
+    if(pair)reply+=` Also, ${pair[0].title} and ${pair[1].title} overlap. I can help you review the conflict.`;
+  }
+  // Avoid claiming that an empty calendar implies genuinely free time.
+  reply+=' This is the next time-sensitive item in your saved AUREN schedule, not necessarily your most important personal goal.';
+  return reply;
+}
+function nextOpeningIntelligence(){
+  const now=Date.now();
+  const upcoming=plans.filter(p=>eventTimestamp(p)>now).sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+  if(!upcoming.length)return 'There are no upcoming appointments saved in AUREN. That does not confirm your whole day is free.';
+  const next=upcoming[0];
+  const minutes=Math.floor((eventTimestamp(next)-now)/60000);
+  if(minutes<=0)return `${next.title} is due now according to your saved schedule.`;
+  if(minutes<15)return `${next.title} begins in about ${minutes} minutes. I cannot estimate preparation or travel time without more information.`;
+  return `You have about ${minutes} minutes until your saved appointment, ${next.title}, at ${spokenClock(next.time)}. That is calendar time, not a guarantee you have enough time to travel or complete another task.`;
+}
+function priorityIntelligenceIntent(raw){
+  const q=String(raw||'').trim().toLowerCase().replace(/[.!?]+$/,'');
+  if(!/^(?:what should i (?:do|work on|focus on|prioritize) next|what do i need to do next|what needs my attention(?: next| today| tomorrow| this week)?|what(?:'s| is) (?:my )?next priority|what(?:'s| is) coming up next|what should i do first|what(?:'s| is) most urgent(?: today| tomorrow| this week)?|what should i tackle (?:first|next)|what is my next commitment)(?: please)?$/.test(q))return null;
+  const date=parseDateIntent(q)||localDate();
+  return {date,scope:/\b(?:week|weekly)\b/.test(q)?'week':'day'};
+}
 function dailyIntelligenceIntent(t){
   const q=String(t||'').trim().toLowerCase().replace(/[.!?]+$/,'');
   if(/^(?:how(?:'s| is) my (?:day|schedule|week)(?: looking)?|how(?:'s| is) (?:today|tomorrow|this week) looking|what(?:'s| is) (?:the )?(?:plan|priority|schedule) for (?:today|tomorrow|this week)|give me (?:a|my) (?:quick )?(?:day|daily|weekly|morning) (?:overview|briefing|summary)|what should i (?:focus on|prioritize) (?:today|tomorrow|this week)|any (?:schedule )?conflicts (?:today|tomorrow|this week)?|am i (?:busy|free) (?:today|tomorrow|this week))$/.test(q))return {date:parseDateIntent(q)||localDate(),scope:/\b(?:week|weekly)\b/.test(q)?'week':'day'};
@@ -945,9 +994,7 @@ function dayFollowupReply(raw){
   if(/else|after that/.test(q))return future.length>1
     ? `After ${future[0].title}, you have ${future[1].title} on ${readableDate(future[1].date)} at ${spokenClock(future[1].time)}.`
     : future.length===1?'No other future appointments are saved in AUREN for that period.':'No further appointments are saved for that period.';
-  if(/priority|focus|first/.test(q))return future.length
-    ? `Your next saved commitment is ${future[0].title} on ${readableDate(future[0].date)} at ${spokenClock(future[0].time)}. Is that what you want to prioritize?`
-    : 'I cannot identify your personal priority from the saved planner alone. What would you like to accomplish?';
+  if(/priority|focus|first/.test(q))return nextActionIntelligence(date,scope);
   return future.length
     ? `Next is ${future[0].title} on ${readableDate(future[0].date)} at ${spokenClock(future[0].time)}.`
     : 'You have no upcoming appointments saved for that period in AUREN.';
@@ -1230,6 +1277,20 @@ async function planSpeech(text){
   if(/^(?:schedule|add|move|change|remove|delete|what|discuss)\b/i.test(t))planClarification=null;
   else return previous.kind==='which'?'Which event do you mean?':'Please tell me the time, including AM or PM.';
  }
+ // v2.36: A correction to a pending addition/move always edits the draft,
+ // never creates a second event and never silently commits a calendar change.
+ if(pendingPlan && pendingPlan.kind!=='delete' && /^(?:actually[, ]*|instead[, ]*|no[, ]+(?:make|move|change)(?: it| that)?(?: to)?\s+|(?:make|change) (?:it|that) (?:for|to)\s+|(?:how|what) about\s+)(?:tomorrow|today|the day after tomorrow|next |this |on |at |\d)/i.test(t)){
+   const newDate=parseDateIntent(t);
+   const newTime=timeFromText(t) || extractLooseTime(t);
+   if(newTime==='ambiguous')return 'Would that be AM or PM?';
+   if(!newDate && !newTime)return 'Which day or time would you prefer?';
+   if(newDate)pendingPlan.date=newDate;
+   if(newTime)pendingPlan.time=newTime;
+   pendingPlan.suggestedTime=null;
+   pendingPlan.conflictAcknowledged=false;
+   const warning=conflictAdvice(pendingPlan);
+   return warning||`Certainly. Shall I ${changeDescription(pendingPlan)}? Nothing has been saved yet.`;
+ }
  // A single accepted suggested slot is a completed confirmation, not a fresh prompt.
  if(pendingPlan && pendingPlan.suggestedTime && !pendingPlan.conflictAcknowledged){
   if(/^(?:yes|yeah|yep|sure|okay|ok|use that|that works|please do|go ahead|do it|sounds good|confirm)\b/i.test(t)){
@@ -1306,6 +1367,19 @@ async function planSpeech(text){
    if(time==='ambiguous')return 'Did you mean AM or PM?';
    if(time||date||hasDuration){pendingPlan={kind:'move',id:event.id,time:time||event.time,date:date||event.date,duration:hasDuration?durationFromText(t):event.duration};return conflictAdvice(pendingPlan)||`Shall I update ${event.title}${hasDuration?' to '+pendingPlan.duration+' minutes':''}${time?' at '+formatClock(time):''}?`;}
   }
+ }
+ // v2.36: A clearly phrased follow-up correction to the last saved event.
+ // An unrelated "actually, tomorrow" is intentionally not interpreted as a calendar edit.
+ const correction=t.match(/^(?:actually[, ]*|wait[, ]*)(?:move|change|reschedule) (?:that|it|the appointment|the meeting) (?:to|for) (.+)$/i);
+ if(correction && lastDiscussedPlanId && !pendingPlan){
+   const previous=plans.find(p=>p.id===lastDiscussedPlanId);
+   if(!previous)return 'Which saved appointment would you like to change?';
+   const nextDate=parseDateIntent(correction[1]);
+   const nextTime=timeFromText('at '+correction[1].replace(/^at\s+/i,''));
+   if(nextTime==='ambiguous')return 'Would that be AM or PM?';
+   if(!nextDate && !nextTime)return 'What new date or time should I use?';
+   pendingPlan={kind:'move',id:previous.id,title:previous.title,date:nextDate||previous.date,time:nextTime||previous.time,duration:previous.duration};
+   return conflictAdvice(pendingPlan)||`Shall I move ${previous.title} to ${readableDate(pendingPlan.date)} at ${formatClock(pendingPlan.time)}? I have not changed it yet.`;
  }
  if(/\b(?:move|change|reschedule)\b/i.test(t)){const time=timeFromText(t);const event=findMatchingEvent(t);if(!event)return 'Which event would you like me to change?';if(time==='ambiguous')return 'Did you mean AM or PM? Please include that when giving the new time.';const explicitDate=!!parseDateIntent(t);if(!time&&!explicitDate){planClarification={kind:'move-when',plan:{kind:'move',id:event.id,title:event.title,date:event.date,time:event.time,duration:event.duration}};lastDiscussedPlanId=event.id;return `Certainly. Which day or time should I move ${event.title} to?`;}pendingPlan={kind:'move',id:event.id,time:time||event.time,date:explicitDate?proposedDay(t):event.date,duration:/\b\d+\s*(?:hours?|minutes?)\b/i.test(t)?durationFromText(t):event.duration};lastDiscussedPlanId=event.id;return conflictAdvice(pendingPlan)||`Shall I move ${event.title} to ${formatClock(pendingPlan.time)} on ${readableDate(pendingPlan.date)}?`;}
  return null;
@@ -1980,6 +2054,18 @@ async function send(text) {
       const clock=new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date());
       await addMessage('auren',`In Dallas, it is ${clock}, Central Time.`);return;
     }
+    if(/^(?:how much time (?:do i have|is left) (?:before|until) (?:my )?next (?:meeting|appointment|plan)|do i have time before my next (?:meeting|appointment|plan)|how long (?:until|before) my next (?:meeting|appointment|plan))[.!? ]*$/i.test(String(text).trim())){
+      noteDayConversation(localDate(),'day');
+      await addMessage('auren',nextOpeningIntelligence());
+      return;
+    }
+    // Priority questions are direct, concise and based on device-local saved data.
+    const nextActionIntent=priorityIntelligenceIntent(text);
+    if(nextActionIntent){
+      noteDayConversation(nextActionIntent.date,nextActionIntent.scope);
+      await addMessage('auren',nextActionIntelligence(nextActionIntent.date,nextActionIntent.scope));
+      return;
+    }
     // Grounded personal-day questions take priority over generic AI; never invent plans.
     const dayIntent=dailyIntelligenceIntent(text);
     if(dayIntent){
@@ -1988,6 +2074,7 @@ async function send(text) {
       await addMessage('auren',response);
       return;
     }
+    if(/^(?:schedule|add|book|move|reschedule|delete|remove|cancel appointment|actually[, ]+move)\b/i.test(String(text).trim())) dayConversation=null;
     // Interpret brief day follow-ups only after a recent, grounded day conversation.
     const dayFollowup=dayFollowupReply(text);
     if(dayFollowup!==null){ await addMessage('auren',dayFollowup); return; }
@@ -1997,6 +2084,9 @@ async function send(text) {
         ? 'Saved overlapping appointments: '+report.conflictPairs.slice(0,3).map(([a,b])=>`${a.title} and ${b.title} on ${readableDate(a.date)}`).join('; ')+'. I have not changed anything.'
         : 'I cannot find overlapping appointments in your saved AUREN planner this week.');
       return;
+    }
+    if(/^(?:actually[, ]+)?(?:tomorrow|today|next (?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)) instead[.!? ]*$/i.test(text.trim()) && !pendingPlan && !planClarification){
+      await addMessage('auren','Do you want to review that day, or change a saved appointment? Nothing has been changed.');return;
     }
     // An imminent departure is NOT a request to schedule; never infer a conflict hours away.
     const leaving=text.trim().match(/^(?:i\s+(?:need|have|got)\s+to|i(?:'m| am)\s+going\s+to)\s+(?:leave|head out|go)(?:\s+(?:for|to)\s+(.+?))?\s+in\s+(\d{1,3})\s*(minutes?|mins?|hours?|hrs?)\b/i);
