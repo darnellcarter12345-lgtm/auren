@@ -1,3 +1,6 @@
+// AUREN v2.81 — Reliable direct reminder routing, tonight support, and honest saves.
+// AUREN v2.80.1 — Internal planner only; email drafting without unverified Gmail access.
+// AUREN v2.80 — Verified action boundaries and useful AI handoffs.
 // AUREN v2.79 — Grounded capability routing and accurate external-app boundaries.
 // AUREN v2.78 — Safe continuity bridge for local and AI responses.
 // AUREN v2.77 — Stable integration release; unchanged v2.76 planning features.
@@ -663,7 +666,7 @@ setInterval(()=>{checkReminders();upNextIndex++;renderUpNext();},5000);
 window.addEventListener('pageshow',checkReminders);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkReminders();});
 // Calendar integration is explicitly opt-in. An .ics download lets the user
-// import an event into Apple Calendar, Google Calendar or Outlook. No direct
+// import an event into other calendar apps. No direct
 // external calendar write or background sync is claimed.
 let calendarOffer = null;
 function calendarEscape(s) { return String(s||'').replace(/\\/g,'\\\\').replace(/\r?\n/g,'\\n').replace(/,/g,'\\,').replace(/;/g,'\\;'); }
@@ -789,8 +792,18 @@ function respectfulUncertainty(text) {
  ]);
 }
 
+function aurenNormalizeReminderCommand(raw) {
+ const q=String(raw||'').trim();
+ if(/^(?:can|could|would|will) you (?:please )?remind me\b/i.test(q))return q.replace(/^(?:can|could|would|will) you (?:please )?/i,'');
+ if(/^please (?:remind me|set (?:a )?reminder)\b/i.test(q))return q.replace(/^please\s+/i,'');
+ if(/^set (?:me )?(?:a )?reminder to\b/i.test(q))return q.replace(/^set (?:me )?(?:a )?reminder to\b/i,'remind me to');
+ return q;
+}
+function aurenIsReminderCommand(raw) {
+ return /^(?:remind me\b|set (?:a )?reminder\b|set (?:me )?(?:a )?reminder to\b)/i.test(aurenNormalizeReminderCommand(raw));
+}
 function reminderSpeech(t){
- const text=t.trim();
+ const text=aurenNormalizeReminderCommand(t);
  if(pendingReminder){
   if(pendingReminder.kind==='relative-subject'){
    if(/^(?:no|cancel|nevermind|never mind|not now)\b/i.test(text)){pendingReminder=null;return 'Of course. Nothing was scheduled.';}
@@ -841,14 +854,14 @@ function reminderSpeech(t){
   pendingReminder={kind:'add',text:event.title,at:at.toISOString()};
   return 'Shall I remind you about '+event.title+' '+offset+' minutes beforehand?';
  }
- const direct=text.match(/\b(?:tomorrow|today|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i);
+ const direct=text.match(/\b(?:tomorrow|today|tonight|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i);
  const time=text.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
  if(!direct||!time)return 'Certainly. Please tell me what to remind you about, with a day and time, such as “remind me tomorrow at 3 PM to call Alex.”';
  const day=parseDateIntent(text),clock=timeFromText('at '+time[1]+(time[2]?':'+time[2]:'')+' '+time[3]);
  if(!day||!clock||clock==='ambiguous')return 'Which day and time would you prefer?';
  const [y,m,d]=day.split('-').map(Number),[h,min]=clock.split(':').map(Number);const when=new Date(y,m-1,d,h,min);
  if(when.getTime()<=Date.now())return 'That time has already passed. Please choose a future time.';
- const subject=text.replace(/^(?:please\s+)?(?:remind me|set (?:a )?reminder)\s*/i,'').replace(/\b(?:today|tomorrow|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/gi,'').replace(/\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi,'').replace(/^(?:to|about)\s+/i,'').trim();
+ const subject=text.replace(/^(?:please\s+)?(?:remind me|set (?:a )?reminder)\s*/i,'').replace(/\b(?:today|tomorrow|tonight|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/gi,'').replace(/\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi,'').replace(/^(?:to|about)\s+/i,'').trim().replace(/[.!?]+$/,'').trim();
  if(!subject)return 'What would you like me to remind you about?';
  pendingReminder={kind:'add',text:subject,at:when.toISOString()};
  return 'Shall I remind you to '+subject+' '+when.toLocaleString([],{weekday:'long',hour:'numeric',minute:'2-digit'})+'?';
@@ -883,7 +896,7 @@ function extractWeekdayDate(t,baseDate=localDate()){
 function parseDateIntent(t){
  const lower=t.toLowerCase();if(/\bday after tomorrow\b/.test(lower))return shiftedDate(localDate(),2);
  if(/\btomorrow\b/.test(lower))return shiftedDate(localDate(),1);
- if(/\btoday\b/.test(lower))return localDate();
+ if(/\b(?:today|tonight)\b/.test(lower))return localDate();
  const day=extractWeekdayDate(t);if(day)return day;
  if(/\bnext week\b/.test(lower))return shiftedDate(weekStart(localDate()),7);
  if(/\bthis week\b/.test(lower))return weekStart(localDate());
@@ -2668,7 +2681,7 @@ function aurenStyleGuidance(question){
 function aurenVerifiedCapabilities(question) {
   const q=String(question||'').trim().toLowerCase().replace(/[.!?]+$/,'');
   if (/^(?:what (?:can|do) you do|what are your (?:capabilities|features|functions)|what (?:features|capabilities) (?:do you have|are available)|how can you help me|tell me (?:what you can do|about your capabilities)|what can auren do|what are you able to do|are you limited|what are your limitations)$/.test(q)) {
-    return 'I can manage appointments in my built-in AUREN planner after your confirmation, set reminders while AUREN is open, track tasks and routines, save approved memories and projects, provide daily briefings, check weather, and help with questions through the connected AI service. I cannot directly edit Apple or Google Calendar, and reminders do not run when this page is closed.';
+    return 'I can manage appointments in my built-in AUREN planner after your confirmation, set reminders while AUREN is open, track tasks and routines, save approved memories and projects, provide daily briefings, check weather, and help with questions through the connected AI service. Reminder alerts work only while AUREN is open.';
   }
   // Only answer capability questions here. Actual requests to add, remove or
   // change records must continue to their existing confirmation handlers.
@@ -2677,10 +2690,10 @@ function aurenVerifiedCapabilities(question) {
   const target=q.replace(/^(?:can you|could you|are you able to|do you (?:have the ability to|know how to)|is it possible for you to)\s+/,'');
   const action=/\b(?:manage|edit|change|save|create|add|move|delete|remove|reschedule|schedule|verify|check|view|read|track|remember|set|show|list|remind|organize|update)\b/.test(target);
   if(!action)return null;
-  if(/\b(?:apple calendar|google calendar|outlook|external calendar|icloud calendar)\b/.test(target))
-    return 'I can work with appointments in the built-in AUREN planner, but I cannot directly read or edit Apple Calendar, Google Calendar or Outlook. Those need a separate authorized integration.';
+  if(/\b(?:external calendar apps?)\b/.test(target))
+    return 'I can check and edit appointments saved in AUREN’s own planner after confirmation. I do not have access to another calendar service.';
   if(/\b(?:calendar|appointments?|meetings?|events?|schedule|plans?|planner)\b/.test(target))
-    return 'Yes. I can check, add, move and remove appointments in AUREN’s own planner, with confirmation before changes. I can verify the records saved there, but not appointments in external calendar apps.';
+    return 'Yes. I can check, add, move and remove appointments in AUREN’s own planner, with confirmation before changes. I verify only records saved in AUREN.';
   if(/\b(?:reminders?|alerts?|notifications?)\b/.test(target))
     return 'Yes. I can save and check reminders in AUREN. Reminder alerts work while AUREN is open; I cannot guarantee a notification after the browser is closed.';
   if(/\b(?:tasks?|to.do lists?|routines?|deadlines?)\b/.test(target))
@@ -2695,7 +2708,7 @@ function correctFalseCapabilityClaims(question, answer) {
   const claim=String(answer||'');
   const q=String(question||'').toLowerCase();
   // Don't overwrite a correct refusal about external integrations.
-  if(/\b(?:apple calendar|google calendar|outlook|external calendar|icloud calendar)\b/i.test(q))return claim;
+  if(/\b(?:external calendar apps?)\b/i.test(q))return claim;
   const negative=/\b(?:i (?:do not|don't(?: have the ability to)?|cannot|can't|lack the ability to)|i have no (?:ability|access)|not able to)\b[^.!?]{0,240}\b(?:calendar|schedule|appointments?|plans?|reminders?|tasks?)\b/i;
   const local=/\b(?:auren|my planner|your planner|your calendar|my calendar|my schedule|my appointments|your capabilities|your features|what can you do)\b/i;
   if(negative.test(claim)&&local.test(q)) {
@@ -3321,6 +3334,23 @@ function aurenMultiStepReply(intent){
  return responses.join(' ');
 }
 
+// v2.80: Narrow boundary for unsupported external writes, not a catch-all
+// command router. Information requests and composing drafts still reach AI.
+function aurenExternalActionBoundary(raw) {
+  const q=String(raw||'').trim();
+  const text=q.toLowerCase().replace(/[.!?]+$/,'');
+  if(!text || /^(?:how|why|what|who|when|where|explain|describe|compare|write|draft|compose|help me (?:write|draft|plan|understand|figure out))\b/.test(text))return null;
+  const command=text.replace(/^(?:(?:hey\s+)?auren[,! ]*)?(?:(?:please|can you|could you|would you|will you)\s+)?/,'');
+  // Require an explicit external target plus a meaningful write verb.
+  if(/^(?:send|email|text|message|dm|reply to|forward)\b/.test(command) &&
+     /\b(?:email|mail|sms|imessage|whatsapp|instagram|discord|inbox|message|text|dm)\b/.test(command))
+    return 'I can help draft a message for your review, but AUREN does not have permission to send email or messages through another service. Nothing was sent.';
+  if(/^(?:buy|purchase|order|pay for|checkout|check out)\b/.test(command) &&
+     /\b(?:on amazon|from amazon|on ebay|from ebay|on a website|online|with my card)\b/.test(command))
+    return 'I can help compare options or prepare an order checklist, but I cannot make purchases on external websites through this AUREN setup. No purchase or payment was made.';
+  return null;
+}
+
 async function send(text) {
   const addressed = aurenAddressCommand(text);
   if (addressed.wake) {
@@ -3329,6 +3359,13 @@ async function send(text) {
     return;
   }
   text=addressed.command;
+  // v2.81: AUREN's own reminder writer owns direct reminder commands.
+  // Never send 'remind me to text someone' to the external messaging boundary/AI.
+  if(aurenIsReminderCommand(text)) {
+    await addMessage('user',text);
+    await addMessage('auren',reminderSpeech(text));
+    return;
+  }
   const verifiedCapability=aurenVerifiedCapabilities(text);
   if(verifiedCapability){await addMessage('user',text);await addMessage('auren',verifiedCapability);return;}
   // Recovery is explicit and safe: only rerun a recent failed informational AI query.
@@ -3835,6 +3872,10 @@ async function send(text) {
       }
       return;
     }
+    // v2.80: Requests to operate unrelated services must never be represented as
+    // completed actions. Keep questions, drafts and the local AUREN planner intact.
+    const externalActionBoundary=aurenExternalActionBoundary(text);
+    if(externalActionBoundary){await addMessage('auren',externalActionBoundary);return;}
     // Verified save/delete/project operations remain local. Other conversation goes to AI.
     // Only verified local actions bypass AI. General questions about the user,
     // interests, and recommendations should reach the AI with saved memory context.
