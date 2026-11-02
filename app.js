@@ -1,3 +1,4 @@
+// AUREN v2.69 — Verified topic-specific memory search, provenance clarity and privacy-first recall.
 // AUREN v2.68 — Confirmed actual task durations, privacy-limited history and adaptive comparisons.
 // AUREN v2.67 — Confirmed task effort estimates and grounded workload fit checks.
 // AUREN v2.66 — Grounded workload and calendar-gap analysis.
@@ -2295,6 +2296,40 @@ async function directPersonalRecall(request){
  return userProfileAnswer(raw,all);
 }
 
+// v2.69 — Verified personal memory search. Read only, no inferred permanent facts.
+function personalMemoryLookupIntent(raw){
+ const q=String(raw||'').trim().replace(/^(?:hey\s+)?auren[,! ]*/i,'').replace(/[?!.]+$/,'').trim();
+ let m=q.match(/^(?:what (?:do you|have you) (?:remember|saved|know) about|what(?:'s| is) (?:saved|remembered) about|show (?:me )?(?:my )?saved memories (?:about|for)|search (?:my )?memor(?:y|ies) (?:for|about))\s+(.+)$/i);
+ if(m)return {type:'topic',subject:m[1].trim()};
+ m=q.match(/^(?:did (?:i|you|we) (?:save|remember)|is (?:there|anything) (?:saved|in (?:your |my )?memory) (?:about|for)|do you have (?:a )?saved memor(?:y|ies) (?:about|for))\s+(.+)$/i);
+ if(m)return {type:'check',subject:m[1].trim()};
+ m=q.match(/^(?:why do you (?:think|say|believe|remember) (?:that )?|where did you (?:get|learn|save) (?:that )?(?:memory|fact|information) (?:about )?)\s*(.+)$/i);
+ if(m&&m[1].length>2)return {type:'source',subject:m[1].trim()};
+ return null;
+}
+async function verifiedPersonalMemoryLookup(raw){
+ const intent=personalMemoryLookupIntent(raw);
+ if(!intent)return null;
+ const all=safePersonalMemories(await Mem.listMemories());
+ const subject=intent.subject.replace(/^(?:my|the|that|this)\s+/i,'').trim();
+ if(subject.length<3)return 'Which saved topic would you like me to check?';
+ // No conversational-topic inheritance for explicit searches: only match the requested subject.
+ const queryWords=memoryTerms(subject);
+ const stop=new Set(['what','about','that','this','with','have','there','been','some','your','mine','know','like','does','from','thing','things']);
+ const keys=[...queryWords].filter(w=>!stop.has(w));
+ const themes=memoryTopicSet(subject);
+ const matches=all.map((m,index)=>{
+  const words=memoryTerms([m.text,...(m.tags||[])].join(' '));
+  const overlap=keys.filter(k=>words.has(k)).length;
+  const sameTopic=[...themes].some(t=>memoryTopicSet([m.text,...(m.tags||[])].join(' ')).has(t));
+  return {m,index,score:overlap*5+(sameTopic?2:0)};
+ }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score||a.index-b.index).slice(0,4);
+ if(!matches.length)return `I have no verified, non-sensitive saved memories matching “${subject.slice(0,75)}” on this device. Discussing something doesn't automatically save it.`;
+ const summary=matches.map(x=>`“${x.m.text.slice(0,190)}”`).join('; ');
+ const lead=intent.type==='check'?'Yes, I found saved memory information related to that: ':intent.type==='source'?'My only verified basis is what is currently saved in Memory: ':'Here's what I found in your saved Memory: ';
+ return lead+summary+'. Saved records are not independent proof that a statement is still accurate. You can review or correct them in Memory.';
+}
+
 // v2.53 — Verify state before answering whether AUREN actually saved something.
 // This NEVER writes to localStorage or IndexedDB; it reports the current records.
 async function verifiedSaveStatus(question){
@@ -3480,13 +3515,16 @@ async function send(text) {
       || /^(?:for now|just for now|this session|for this session|save session note)\s+/i.test(text);
     const reminderResponse = reminderSpeech(text);
     const planResponse = reminderResponse || await planSpeech(text);
-    const memoryDispute = isLocal || planResponse ? null : await memoryDisputeReply(text);
+    const verifiedMemorySearch = !isLocal && !planResponse ? await verifiedPersonalMemoryLookup(text) : null;
+    const memoryDispute = isLocal || planResponse || verifiedMemorySearch ? null : await memoryDisputeReply(text);
     const planningSuggestion = !isLocal && !planResponse && !memoryDispute && !pendingPlan && !planningOffer
       && butlerPreferences.suggestions && Date.now()-lastPlanningOfferAt>PLANNING_OFFER_COOLDOWN_MS ? planningOpportunity(text) : null;
     if (planResponse) {
       await addMessage('auren', planResponse);
     } else if (isLocal) {
       await presentResult(await butler.handle(text));
+    } else if (verifiedMemorySearch) {
+      await addMessage('auren', verifiedMemorySearch);
     } else if (memoryDispute) {
       await addMessage('auren', memoryDispute);
     } else if (!getAIEndpoint()) {
