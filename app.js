@@ -1,3 +1,4 @@
+// AUREN v2.59 — safe new-question handoff and correction recovery.
 // AUREN v2.58 — conversation repair, bounded clarifications, safe context recovery.
 // AUREN v2.57 — end-to-end action handoff and regression guards.
 // AUREN v2.56 — Regression safeguards for pending actions and topic changes.
@@ -2665,7 +2666,7 @@ async function send(text) {
   if(/^(?:never mind|nevermind|forget that request|cancel that request|drop that request)[.!? ]*$/i.test(text.trim())){
     await addMessage('user',text);
     const hadDraft=!!(pendingTaskChange||pendingPlan||pendingReminder||planClarification||contextualMeetingDraft||butler.pending);
-    if(hadDraft){aurenCancelPendingDrafts();await addMessage('auren','Certainly. I have cancelled the unfinished request. Nothing was saved or changed.');}
+    if(hadDraft){aurenCancelPendingDrafts();await addMessage('auren','Certainly. I have cancelled the unfinished request. I have not saved or changed anything from that request.');}
     else await addMessage('auren','Certainly. There is no unfinished request to cancel.');
     return;
   }
@@ -2673,6 +2674,11 @@ async function send(text) {
   const corrected=parseConversationCorrection(text);
   if(corrected!==null){
     const old=freshConversationReference();
+    // Correcting a draft never approves the old version. The replacement is
+    // discussed afresh and must pass the normal confirmation workflow.
+    if(corrected && (pendingPlan||pendingReminder||pendingTaskChange||planClarification||contextualMeetingDraft||butler.pending)){
+      aurenCancelPendingDrafts();
+    }
     if(corrected){
       conversationCorrection={at:Date.now(),question:old?.question||'',reply:old?.reply||''};
       await addMessage('user',text);
@@ -2703,6 +2709,14 @@ async function send(text) {
     aurenRetireConversationTopic();
     aurenCancelPendingDrafts();
     text=topicShift.question;
+  }
+  // v2.59: An unmistakable new informational question ends an old, uncommitted
+  // action draft. A bare consent, pronoun follow-up or status check does not.
+  // This prevents the stale draft from hijacking the next unrelated answer.
+  const freshInfoQuestion=/^(?:(?:please\s+)?(?:explain|describe|compare|define)\s+(?!that\b|it\b)|(?:what|who|where|when|why)\s+(?:is|are|was|were)\s+(?!that\b|it\b|the meeting\b|the task\b)|how\s+(?:do|does)\s+(?!that\b|it\b))/.test(text.trim().toLowerCase());
+  if(freshInfoQuestion && !conversationalReference(text) &&
+     (pendingPlan||pendingReminder||pendingTaskChange||planClarification||contextualMeetingDraft||butler.pending)){
+    aurenCancelPendingDrafts();
   }
   // v2.57: An explicit NEW command ends an unfinished, different kind of draft.
   // This prevents yesterday's unanswered confirmation from swallowing a new action.
