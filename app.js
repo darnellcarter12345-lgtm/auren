@@ -1,3 +1,4 @@
+// AUREN v3.11 — Optional Wellness Care and Time-Aware Greetings.
 // AUREN v3.10 — Advanced Alfred-Style Attentiveness, grounded voluntary context.
 // AUREN v3.09 — Adaptive Learning Over Time; transparent suggestion scores and user controls.
 // AUREN v3.08 — Trust & Attentiveness Engine; grounded tone, selective support, respectful correction.
@@ -3042,6 +3043,67 @@ function correctFalseCapabilityClaims(question, answer) {
   }
   return claim;
 }
+// AUREN v3.11 — voluntary wellness and time-aware first-conversation intelligence.
+// Only the USER can report meals, hydration or sleep. Ephemeral by design.
+const aurenWellness311={lastQuestion:{},pausedUntil:0,declined:new Set(),recentUserWaking:false};
+function aurenWellness311Time(raw){
+ const q=String(raw||'').trim();
+ if(/\b(?:i (?:just |recently )?woke up|i(?:'ve| have) just woken up|just got out of bed|good morning)\b/i.test(q))aurenWellness311.recentUserWaking=true;
+ if(/\b(?:good night|going to sleep|going to bed)\b/i.test(q))aurenWellness311.recentUserWaking=false;
+}
+function aurenWellness311Blocked(topic){
+ if(!aurenCare.checkins||aurenButler.checkinFrequency==='off'||Date.now()<aurenWellness311.pausedUntil)return true;
+ if(topic==='water'&&aurenCare.topics?.hydration===false)return true;
+ if(topic==='meals'&&aurenCare.topics?.meals===false)return true;
+ if(topic==='rest'&&aurenCare.topics?.rest===false)return true;
+ if(aurenRelationship?.declined?.[topic]||aurenWellness311.declined.has(topic))return true;
+ return false;
+}
+function aurenWellness311Candidate(hour){
+ // Time windows are prompts for an OPTIONAL offer, NEVER evidence of eating/sleeping.
+ const candidates=hour>=21||hour<5?['rest']:hour>=11&&hour<=19?['meals','water']:['water','planning'];
+ for(const topic of candidates){
+  if(aurenWellness311Blocked(topic))continue;
+  if(Date.now()-Number(aurenWellness311.lastQuestion[topic]||0)<24*3600000)continue;
+  if(!aurenAdaptiveMayOffer(topic==='water'?'rest':topic,hour))continue;
+  return topic;
+ }
+ return null;
+}
+function aurenWellness311Question(topic){
+ if(topic==='meals')return 'Have you had a chance to eat today?';
+ if(topic==='water')return 'Would a water break be useful?';
+ if(topic==='rest')return 'Would you like to wind down for the evening?';
+ return 'Would you like a quick look at your day?';
+}
+function aurenWellness311Offer(hour){
+ const topic=aurenWellness311Candidate(hour);if(!topic)return '';
+ aurenWellness311.lastQuestion[topic]=Date.now();aurenWellness311.lastQuestion.lastTopic=topic;
+ aurenRelationshipMarkPrompt(topic==='water'?'rest':topic);
+ return ' '+aurenWellness311Question(topic);
+}
+function aurenWellness311Respond(raw){
+ const q=String(raw||'').trim().toLowerCase();
+ const topic=aurenWellness311.lastQuestion.lastTopic;
+ if(!topic)return null;
+ const previous=Number(aurenWellness311.lastQuestion[topic]||0);
+ if(Date.now()-previous>180000)return null;
+ if(/^(?:no|nope|nah|not now|maybe later|no thanks|i'm good|im good|please stop)[.! ]*$/.test(q)){
+   aurenWellness311.pausedUntil=Date.now()+24*3600000;
+   aurenWellness311.lastQuestion.lastTopic=null;
+   return 'Of course. I won’t bring that up again today.';
+ }
+ if(/^(?:yes|yeah|yep|sure|i did|already did|i have|i ate|i drank some water|i'm fine|im fine)[.! ]*$/.test(q)){
+   aurenWellness311.lastQuestion.lastTopic=null;
+   return 'Very good. What can I help you with?';
+ }
+ return null;
+}
+function aurenWellness311Guidance(question){
+ const q=String(question||'');const hour=new Date().getHours();
+ return 'AUREN v3.11 OPTIONAL WELLNESS AND MORNING CONTEXT: '+JSON.stringify({localHour:hour,userExplicitlyMentionedWaking:/\b(?:just woke up|woken up|good morning)\b/i.test(q),userSaidGoodMorning:/\bgood morning\b/i.test(q),optionalCheckinsEnabled:!!aurenCare.checkins,blockedWellnessTopics:['meals','rest','water'].filter(aurenWellness311Blocked),currentQuestionFirst:true})+'. Treat a user saying good morning as a friendly greeting, NOT proof they just woke up. When they explicitly say they just woke up, an appropriate greeting is fine; do not claim to have monitored sleep. Only offer a SINGLE short meal, hydration, or rest check-in during an ordinary greeting when enabled and not declined. Time of day alone does not tell you whether they ate, drank or slept. Never pressure, shame, monitor, or repeatedly probe. If they are asking for an action or information, do the task without an unsolicited wellness question. Never claim independent emotions, personal attachment, or background observations.';
+}
+
 // AUREN v3.10 — grounded Alfred-style attentiveness.
 // Recent self-reports are TEMPORARY per tab. Never infer meals/sleep from clocks,
 // never write private wellness facts to persistent storage, and never monitor users.
@@ -3166,6 +3228,7 @@ async function askWithMemory(question) {
   const deviceContext = [
     aurenUnifiedBrainGuidance(question),
     aurenAttentivenessGuidance(question),
+    aurenWellness311Guidance(question),
     aurenTrustGuidance(question),
     correctionContext(question),
     `CURRENT RESPONSE STYLE (high priority, per-turn only): ${aurenStyleGuidance(question)}`,
@@ -3443,7 +3506,7 @@ function aurenCareGreeting(raw){
  if(!/^(?:hey|hi|hello|good (?:morning|afternoon|evening|night)|how are you|what's up|whats up)(?:[, ]+(?:auren|sir))?$/.test(q))return null;
  const f=aurenCareFacts();
  const firstOfDay=aurenCare.lastGreetingDay!==f.day;
- const baseGreeting=f.hour<5?'Good evening.':f.hour<12?'Good morning.':f.hour<17?'Good afternoon.':'Good evening.';
+ const baseGreeting=q.startsWith('good morning')?'Good morning.':q.startsWith('good afternoon')?'Good afternoon.':q.startsWith('good evening')?'Good evening.':f.hour<5?'Good evening.':f.hour<12?'Good morning.':f.hour<17?'Good afternoon.':'Good evening.';
  const greeting=firstOfDay?aurenButlerGreeting(baseGreeting):baseGreeting;
  let note=' What can I help with?';
  if(aurenCare.lastGreetingDay===f.day)return greeting+' What can I help with?';
@@ -3453,9 +3516,10 @@ function aurenCareGreeting(raw){
    const choices=[];
    if(aurenCare.topics.planning&&aurenAdaptiveMayOffer('planning',f.hour))choices.push(['planning','Anything you would like to make time for today?']);
    if(aurenCare.topics.rest&&aurenAdaptiveMayOffer('rest',f.hour)&&f.hour>=22)choices.push(['rest','Would you prefer to wind down, or is there something I can help finish?']);
-   if(aurenCare.topics.meals&&aurenAdaptiveMayOffer('meals',f.hour)&&f.hour>=11&&f.hour<=20)choices.push(['meals','Would you like help finding something to eat?']);
+   if(aurenCare.topics.meals&&aurenAdaptiveMayOffer('meals',f.hour)&&f.hour>=11&&f.hour<=20)choices.push(['meals','Have you had a chance to eat today?']);
+   if(aurenWellness311Candidate(f.hour)==='water')choices.push(['water','Would a water break be useful?']);
    const picked=choices.find(x=>x[0]!==aurenCare.lastCheckinTopic)||choices[0];
-   if(picked){aurenAdaptiveMarkOffer(picked[0]);note=' '+picked[1];aurenCare.lastCheckinDay=f.day;aurenCare.lastCheckinTopic=picked[0];aurenSaveCare();}
+   if(picked){aurenAdaptiveMarkOffer(picked[0]==='water'?'rest':picked[0]);aurenWellness311.lastQuestion[picked[0]]=Date.now();aurenWellness311.lastQuestion.lastTopic=picked[0];note=' '+picked[1];aurenCare.lastCheckinDay=f.day;aurenCare.lastCheckinTopic=picked[0];aurenSaveCare();}
  }else if(f.hour>=22)note=' What can I help you with tonight?';
  aurenCare.lastGreetingDay=f.day;aurenSaveCare();
  return greeting+note;
@@ -4430,6 +4494,8 @@ async function send(text) {
     aurenAttentiveness.reports=[];
     await addMessage('user',text);await addMessage('auren','Understood. I cleared the recent wellness conversation context for this tab.');return;
   }
+  aurenWellness311Time(text);
+  if(!pendingReminder&&!pendingPlan&&!pendingTaskChange){const wellnessReply=aurenWellness311Respond(text);if(wellnessReply!==null){await addMessage('user',text);await addMessage('auren',wellnessReply);return;}}
   const careGreeting=aurenCareGreeting(text);
   if(careGreeting!==null){await addMessage('user',text);await addMessage('auren',careGreeting);return;}
   // v2.99: Verified conversions and edits take priority over vague AI responses.
