@@ -1,3 +1,4 @@
+// AUREN v3.06 — Unified Personal Brain; consistent grounded context.
 // AUREN v3.05 — contextual conversation, selective initiative, persistent feedback.
 // AUREN v3.04 — Conversational sensitivity and grounded situation awareness.
 // AUREN v3.03 — Explicit feedback learning, respectful check-ins, and contextual butler improvements.
@@ -3037,6 +3038,38 @@ function correctFalseCapabilityClaims(question, answer) {
   }
   return claim;
 }
+// AUREN v3.06 — unified, read-only personal brain. Produces one grounded per-turn
+// decision snapshot. This layer NEVER writes appointments, reminders or memories.
+function aurenUnifiedBrain(question){
+ const q=String(question||'').trim();
+ const lower=q.toLowerCase();
+ const facts=aurenCareFacts();
+ const anchor=readConversationAnchor();
+ const isShortFollowup=/^(?:yes|yeah|yep|no|nope|not now|maybe later|and (?:tomorrow|today|then)|what about|how about|that one|the other one|tell me more|are you sure|why|how)\b/i.test(lower);
+ const isNewTopic=/^(?:find|search|show me|where|look up|remind me|set a reminder|schedule|book|arrange|add |make an appointment|what is|who is|how do i)\b/i.test(lower);
+ const currentIntent= /\b(?:remind me|set a reminder|don't let me forget)\b/i.test(q)?'reminder_request':
+  /\b(?:find|search|nearby|restaurant|places to eat|google maps|directions)\b/i.test(q)?'place_request':
+  /\b(?:what.*(?:plan|schedule|calendar)|go over (?:my|the) day|briefing|what do i have)\b/i.test(q)?'schedule_review':
+  /\b(?:schedule|book|arrange|pencil in|block off time)\b/i.test(q)?'appointment_request':
+  isShortFollowup?'followup':'conversation';
+ const usePrevious=!!(isShortFollowup&&!isNewTopic&&anchor&&Date.now()-Number(anchor.at||0)<10*60*1000);
+ const planned=facts.nextItems.map(item=>({kind:item.kind,title:String(item.title||item.text||'').slice(0,90),minutesAway:item.minutesAway}));
+ return {
+  intentHint:currentIntent,followup:usePrevious,previousTopic:usePrevious?String(anchor.question||'').slice(0,180):null,
+  profile:{name:aurenSavedName()||null,title:personalTitle()||null},
+  preferences:{butlerStyle:aurenButler.style,addressMode:aurenButler.addressMode,replyLength:aurenAdaptive.replyLength,checkins:!!aurenCare.checkins,checkinFrequency:aurenButler.checkinFrequency},
+  localSituation:{day:facts.day,daypart:facts.daypart,nextSavedItems:planned,unfinishedTasks:facts.tasks},
+  conversationalSignal:aurenExplicitConversationSignal(q),
+  feedback:{blockedCheckinTopics:Object.keys(aurenCare.topics).filter(k=>aurenCare.topics[k]===false),declinedTopics:Object.keys(aurenRelationship.declined).filter(k=>aurenRelationship.declined[k])},
+  capabilities:{reminders:'local_save_after_confirmation;alerts_only_while_open',appointments:'local_save_after_confirmation',maps:'link_or_user_click_not_unverified_navigation'},
+  grounding:'Personal facts only from profile and saved records. Current user text is not a persisted fact.'
+ };
+}
+function aurenUnifiedBrainGuidance(question){
+ const snapshot=aurenUnifiedBrain(question);
+ return `AUREN UNIFIED PERSONAL BRAIN v3.06 — READ-ONLY CONTEXT: ${JSON.stringify(snapshot)}. Priority: (1) current request and explicit corrections, (2) verified local records and saved user preferences, (3) recent conversation ONLY for a genuine follow-up, (4) optional situation-aware suggestion. Never let an older reminder draft, conversation subject or a check-in override a clear new topic. For action requests, the existing local handler alone performs and verifies the save; the AI must never claim a save, conversion, Maps opening, message delivery or external action happened. A reminder and appointment are different types, even when both display in Your Day. Ask ONE short clarifying question if essential information is missing; never repeat a detail already supplied. If a user says no/not now, accept it without offering the same topic again. Address user by saved name or preferred title only when appropriate; do not add either after every answer. Do not infer feelings, meals, sleep, weather or location from the clock or guess at personal facts. No autonomous monitoring or browser-closed check-ins. Respond to the question FIRST; skip unsolicited suggestions in action requests or when the user is frustrated.`;
+}
+
 async function askWithMemory(question) {
   refreshPersonalProfile();
   const context = await contextForAI(question);
@@ -3057,6 +3090,7 @@ async function askWithMemory(question) {
   const briefing = (isFollowup || /\b(?:briefing|earlier|mentioned|you (?:just )?said|that overview|your summary|that story|that part|those plans)\b/i.test(question)) && latestBriefingContext && Date.now()-latestBriefingContext.at < 45*60*1000
     ? latestBriefingContext.text : '';
   const deviceContext = [
+    aurenUnifiedBrainGuidance(question),
     correctionContext(question),
     `CURRENT RESPONSE STYLE (high priority, per-turn only): ${aurenStyleGuidance(question)}`,
     `CURRENT PERSONALITY DELIVERY (high priority, per-turn only): ${aurenPersonalityGuidance(question)}`,
