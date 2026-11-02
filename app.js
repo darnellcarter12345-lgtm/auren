@@ -1,3 +1,4 @@
+// AUREN v2.38 — Proactive daily readiness, context-grounded preparation, and safe follow-through.
 // AUREN v2.37 — grounded next-action priority intelligence and focused schedule guidance.
 // AUREN v2.36 — reliable appointment corrections, confirmed saves and focused follow-through.
 // AUREN v2.35 — grounded day follow-ups and concise, context-safe daily guidance.
@@ -944,6 +945,60 @@ function nextOpeningIntelligence(){
   if(minutes<=0)return `${next.title} is due now according to your saved schedule.`;
   if(minutes<15)return `${next.title} begins in about ${minutes} minutes. I cannot estimate preparation or travel time without more information.`;
   return `You have about ${minutes} minutes until your saved appointment, ${next.title}, at ${spokenClock(next.time)}. That is calendar time, not a guarantee you have enough time to travel or complete another task.`;
+}
+// v2.38 — Preparation guidance is anchored exclusively to locally saved time data.
+// These are *calendar* estimates, not assumed travel, preparation, or importance.
+let readinessContext=null;
+function nextCommitmentFor(date=localDate()){
+  const now=Date.now();
+  return plans.filter(p=>p.date===date && eventTimestamp(p)>now)
+    .sort((a,b)=>eventTimestamp(a)-eventTimestamp(b))[0]||null;
+}
+function readinessReport(date=localDate()){
+  const now=Date.now(), event=nextCommitmentFor(date);
+  const pending=reminders.filter(r=>!r.fired&&Date.parse(r.at)>now&&localDate(new Date(r.at))===date)
+    .sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
+  const overlaps=event?conflictingEvents(event,event.id).filter(p=>eventTimestamp(p)>=now):[];
+  if(!event){
+    return {reply:pending.length?`Your next saved reminder is ${pending[0].text}. I see no upcoming appointment for that day in AUREN.`:'I see no upcoming appointments or reminders saved for that day in AUREN. That does not mean you have no other commitments.',event:null};
+  }
+  const mins=Math.max(0,Math.floor((eventTimestamp(event)-now)/60000));
+  let reply=`Your next saved appointment is ${event.title} at ${spokenClock(event.time)}${date===localDate()?`, in about ${mins} minutes`:''}.`;
+  if(date===localDate())reply+=mins<30?' It is soon; consider anything you personally need to prepare.':` You have roughly ${mins} minutes of calendar time until it starts, but I cannot estimate preparation or travel time.`;
+  if(pending.length)reply+=` You also have ${pending.length} upcoming saved reminder${pending.length===1?'':'s'} that day.`;
+  if(overlaps.length)reply+=` There is an overlap with ${overlaps[0].title}. Nothing has been changed.`;
+  return {reply,event};
+}
+function proactiveDayIntent(raw){
+ const q=String(raw||'').trim().toLowerCase().replace(/[.!?]+$/,'');
+ if(/^(?:anything i should (?:do|prepare|know) (?:beforehand|before my next (?:appointment|meeting))|how should i prepare for (?:my )?next (?:meeting|appointment)|how much time (?:have i got|do i have) before (?:my )?next (?:meeting|appointment)|is there anything i need to do before (?:my )?next (?:meeting|appointment)|how should i plan (?:my )?(?:afternoon|day)|am i cutting it close(?: for my next appointment)?|do i have (?:enough )?time before my next (?:meeting|appointment))$/.test(q))return {kind:'readiness',date:parseDateIntent(q)||localDate()};
+ if(/^(?:check (?:my )?(?:upcoming )?conflicts|warn me about (?:schedule )?conflicts|what might overlap(?: today| tomorrow| this week)?|any overlaps coming up)$/.test(q))return {kind:'conflicts',date:parseDateIntent(q)||localDate()};
+ return null;
+}
+function proactiveDayReply(intent){
+ if(intent.kind==='conflicts'){
+  const report=savedDayIntelligence(intent.date,'day');
+  return report.conflictPairs.length?'Upcoming saved overlaps: '+report.conflictPairs.slice(0,2).map(([a,b])=>`${a.title} and ${b.title} at ${spokenClock(a.time)}`).join('; ')+'. I have not changed anything.':'I found no overlapping appointments in AUREN for that day.';
+ }
+ const report=readinessReport(intent.date);
+ readinessContext={eventId:report.event?.id||null,date:intent.date,at:Date.now()};
+ noteDayConversation(intent.date,'day');
+ return report.reply;
+}
+function readinessFollowup(raw){
+ if(!readinessContext||Date.now()-readinessContext.at>4*60000)return null;
+ const q=String(raw||'').trim().toLowerCase().replace(/[.!?]+$/,'');
+ const event=plans.find(p=>p.id===readinessContext.eventId);
+ if(/^(?:anything (?:else|i should do) beforehand|what should i prepare|what about getting ready|is that enough time|what about travel time)$/.test(q)){
+  readinessContext.at=Date.now();
+  if(!event)return 'I do not have a saved upcoming appointment to prepare for. What is the commitment?';
+  return `For ${event.title}, I can confirm the scheduled time is ${spokenClock(event.time)}. Preparation and travel duration are not saved, so I cannot promise you have enough time.`;
+ }
+ if(/^(?:i(?:'ll| will) do that later|not now|maybe later|leave it for later)$/.test(q)){
+   readinessContext=null;
+   return 'Certainly. I have not scheduled or changed anything.';
+ }
+ return null;
 }
 function priorityIntelligenceIntent(raw){
   const q=String(raw||'').trim().toLowerCase().replace(/[.!?]+$/,'');
@@ -2059,6 +2114,14 @@ async function send(text) {
       await addMessage('auren',nextOpeningIntelligence());
       return;
     }
+    // v2.38: respond with verified preparation guidance, without creating a task.
+    const proactiveIntent=proactiveDayIntent(text);
+    if(proactiveIntent){
+      await addMessage('auren',proactiveDayReply(proactiveIntent));
+      return;
+    }
+    const proactiveFollowup=readinessFollowup(text);
+    if(proactiveFollowup!==null){await addMessage('auren',proactiveFollowup);return;}
     // Priority questions are direct, concise and based on device-local saved data.
     const nextActionIntent=priorityIntelligenceIntent(text);
     if(nextActionIntent){
