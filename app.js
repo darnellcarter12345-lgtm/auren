@@ -1,3 +1,4 @@
+// AUREN v2.84 — Natural Your Day language and context-aware suggestions.
 // AUREN v2.83 — Verified reminder storage and real Your Day reminder entries.
 // AUREN v2.82 — Persistent local profile identity and priority name recall.
 // AUREN v2.81 — Reliable direct reminder routing, tonight support, and honest saves.
@@ -592,7 +593,13 @@ const PLANNING_OFFER_COOLDOWN_MS=10*60*1000;
 function planningOpportunity(text){
   const t=String(text||'').trim();
   if(t.length<12 || t.length>280 || /[?]$/.test(t) || /^(?:no|yes|cancel|forget|remember|schedule|add|move|delete)\b/i.test(t))return null;
-  if(/\b(?:deadline|due (?:on|by|tomorrow|next)|need to finish|have to finish|a lot to do|busy (?:tomorrow|this week|next week)|falling behind)\b/i.test(t))return 'Would you like me to help you make time for that in your planner?';
+  if(/\b(?:deadline|due (?:on|by|tomorrow|next)|need to finish|have to finish|a lot to do|busy (?:tomorrow|this week|next week)|falling behind)\b/i.test(t))return varyButler('planningOffer', [
+    'Would you like to put some time for that in Your Day?',
+    'Shall we find a spot for it on your schedule?',
+    'I can help you plan around that. Want to add it to Your Day?',
+    'Would it help to set aside a time for that?',
+    'Do you want to make a plan for that, or leave it for now?'
+  ]);
   return null;
 }
 let lastDiscussedPlanId=null;
@@ -655,7 +662,11 @@ function aurenReminderPlacementReply(raw){
  const referring=/\b(?:that|it|this|the reminder|my reminder)\b/.test(q);
  if(!((place||check)&&referring))return null;
  const focused=aurenLastReminderFocus&&Date.now()-aurenLastReminderFocus.at<30*60000?aurenSavedReminder(aurenLastReminderFocus.id):null;
- if(!focused)return 'I cannot verify which reminder you mean. Please tell me its subject and time; I will not claim it was added without checking.';
+ if(!focused)return varyButler('missingReminderReference', [
+  'Do you mean a reminder or an appointment? Both appear in Your Day. Tell me what it is and when, and I can save it after your confirmation.',
+  'Your Day holds your meetings and reminders. Which item should I add, and at what time?',
+  'I can put that in Your Day once I know what you mean. Is it a reminder or a scheduled appointment?'
+ ]);
  const when=new Date(focused.at);
  const viewDate=localDate(when);
  const displayed=aurenRemindersForView(viewDate).some(x=>x.id===focused.id);
@@ -3429,6 +3440,22 @@ async function send(text) {
     const answer=personalCommand(text);
     await addMessage('auren',answer || 'I could not read your saved name. Please check Your profile in Settings.');
     return;
+  }
+  // v2.84: A conversational alias for the built-in schedule. Clarify only when
+  // the person has not supplied an actionable reminder or appointment description.
+  // Never claim to have saved something when the item is not in storage.
+  const shortScheduleRequest=/^(?:(?:can|could|would) you\s+)?(?:please\s+)?(?:put|add|save|send|place|move)\s+(?:(?:this|that|it)\s+)?(?:on|in|into|to)\s+(?:my\s+|the\s+)?(?:schedule|planner|your day|day section|calendar)\s*[?.!]*$/i.test(text.trim());
+  if(shortScheduleRequest && !pendingPlan && !pendingReminder){
+    const reminder = aurenLastReminderFocus && Date.now()-aurenLastReminderFocus.at<30*60000 ? aurenSavedReminder(aurenLastReminderFocus.id) : null;
+    if(!reminder){
+      await addMessage('user',text);
+      await addMessage('auren',varyButler('scheduleClarification',[
+        'Of course. Is this an appointment or a reminder? Both show in Your Day.',
+        'I can add it to Your Day. What should it be called, and when should it happen?',
+        'Your Day includes meetings and reminders. Which one did you have in mind?'
+      ]));
+      return;
+    }
   }
   // v2.83: Verify reminders in the same Your Day section as appointments.
   const placement=aurenReminderPlacementReply(text);
