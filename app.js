@@ -1,3 +1,4 @@
+// AUREN v2.63 — Unified grounded tasks, routines, appointments and reminder recommendations.
 // AUREN v2.62 — Grounded personal routine intelligence and realistic daily routine checks.
 // AUREN v2.61 — Read-only proactive preparation and attention checks from saved plans.
 // AUREN v2.60 — Grounded smart daily planning, preparation and next-step suggestions.
@@ -1379,6 +1380,40 @@ function personalRoutineReply(intent){
   parts.push('The routine tasks do not have saved start times, so I cannot determine whether they overlap that appointment. Consider choosing your own routine time around it.');
  }else parts.push('No upcoming appointments were found for that period in AUREN; this does not prove your calendar is free.');
  parts.push('This is a suggestion based on saved records. I have not scheduled, rescheduled, or completed anything.');
+ return parts.join(' ');
+}
+// v2.63: One read-only recommendation from confirmed records, never inferred obligations.
+function unifiedDayIntent(raw){
+ const q=String(raw||'').trim().toLowerCase().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/,'').replace(/[.!?]+$/,'').trim();
+ if(/^(?:what should i focus on (?:today|tomorrow)|what should i do first (?:today|tomorrow)|what(?:'s| is) (?:my )?(?:best next step|top daily recommendation|daily recommendation)|combine my (?:tasks|routines|schedule)(?: and (?:tasks|routines|schedule))*|(?:give me|make me|show me) (?:one |a |my )?(?:unified |combined |smart )?(?:daily |day )?(?:recommendation|priority plan|action plan)|help me balance (?:my )?(?:routines|tasks) (?:and|with) (?:my )?(?:appointments|schedule)|what should i tackle first (?:today|tomorrow))$/.test(q))return {date:parseDateIntent(q)||localDate()};
+ return null;
+}
+function unifiedDayReply(intent){
+ const date=intent.date,today=localDate(),now=Date.now();
+ const label=date===today?'today':date===shiftedDate(today,1)?'tomorrow':readableDate(date);
+ const appointments=plans.filter(p=>p.date===date&&eventTimestamp(p)>=now).sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+ const dueReminders=reminders.filter(r=>!r.fired&&Number.isFinite(Date.parse(r.at))&&Date.parse(r.at)>=now&&localDate(new Date(r.at))===date).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
+ const open=tasksOnDate(date).filter(t=>!isTaskComplete(t,date));
+ const routine=open.filter(t=>t.repeat!=='once');
+ const oneOff=open.filter(t=>t.repeat==='once');
+ // A previously missed one-off remains a candidate, but must never be called a new appointment.
+ const overdue=aurenTasks.filter(t=>t.repeat==='once'&&!isTaskComplete(t)&&t.due<date).sort((a,b)=>a.due.localeCompare(b.due));
+ const parts=[`Here's one practical recommendation based on your saved AUREN information for ${label}.`];
+ const next=appointments[0];
+ if(next){
+  parts.push(`Keep your next confirmed appointment in view: ${next.title} at ${spokenClock(next.time)}.`);
+  if(date===today){const minutes=Math.max(0,Math.floor((eventTimestamp(next)-now)/60000));
+   if(minutes<=60)parts.push(`It begins in about ${minutes} minutes. Consider preparing now; I cannot verify travel or preparation time.`);
+  }
+ }
+ if(overdue.length)parts.push(`A saved unfinished task is overdue: ${overdue[0].title} (${deadlineLabel(overdue[0])}). Review whether it still needs doing.`);
+ else if(oneOff.length)parts.push(`A useful next task to consider is ${oneOff[0].title}, due ${readableDate(oneOff[0].due)}.`);
+ else if(routine.length)parts.push(`Your next open saved routine is ${routine[0].title}. You can choose when to do it.`);
+ else if(!next&&!dueReminders.length)parts.push('There are no upcoming saved appointments, due tasks or open routines for that day. That does not establish that your day is free.');
+ if(routine.length&&(overdue.length||oneOff.length))parts.push(`Also on your routine list: ${routine.slice(0,2).map(t=>t.title).join('; ')}. No start times are recorded for these routines.`);
+ if(dueReminders.length)parts.push(`Your next saved reminder: ${dueReminders[0].text}, ${new Date(dueReminders[0].at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}.`);
+ if(appointments.length>1){const conflicts=savedDayIntelligence(date,'day').conflictPairs;if(conflicts.length)parts.push(`There ${conflicts.length===1?'is':'are'} ${conflicts.length} overlapping saved appointment pair${conflicts.length===1?'':'s'} to review.`);}
+ parts.push('This is a suggested order based on saved dates, not a judgment of your personal priorities. No tasks or appointments were changed.');
  return parts.join(' ');
 }
 function smartDayPlanIntent(raw){
@@ -3007,6 +3042,13 @@ async function send(text) {
     if(/^(?:how much time (?:do i have|is left) (?:before|until) (?:my )?next (?:meeting|appointment|plan)|do i have time before my next (?:meeting|appointment|plan)|how long (?:until|before) my next (?:meeting|appointment|plan))[.!? ]*$/i.test(String(text).trim())){
       noteDayConversation(localDate(),'day');
       await addMessage('auren',nextOpeningIntelligence());
+      return;
+    }
+    // v2.63: Unified read-only daily recommendation before individual planning routes.
+    const unifiedRequest=unifiedDayIntent(text);
+    if(unifiedRequest){
+      noteDayConversation(unifiedRequest.date,'day');
+      await addMessage('auren',unifiedDayReply(unifiedRequest));
       return;
     }
     // v2.62: On-demand routine analysis, without inventing times or changing records.
