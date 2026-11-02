@@ -1,3 +1,4 @@
+// AUREN voice v3.16 — Safari iOS playback reliability.
 // AUREN voice v2.9.9 — patient sentence endings and intentional interruptions.
 // AUREN v2.9.4: truthful iPhone microphone state and no silent early-exit loops.
 // SpeechRecognition is browser-dependent and may process microphone audio online.
@@ -393,8 +394,9 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     interruptionCandidate = ''; interruptionSamples = 0;
     const u = new SpeechSynthesisUtterance(text);
     currentUtterance = u; // Keep a strong reference; Safari may drop async utterances.
-    u.lang = 'en-GB'; u.rate = voiceRate; u.pitch = voicePitch;
+    u.lang = mobileWebKit ? (navigator.language || 'en-US') : 'en-GB'; u.rate = voiceRate; u.pitch = voicePitch;
     const chosen = voicePick(); if (chosen) { u.voice = chosen; u.lang = chosen.lang; }
+    else if(mobileWebKit){ /* Use Safari's built-in voice; forcing a missing voice can produce silence. */ }
     u.onstart = () => { if (currentUtterance !== u) return; onSpoken?.(text, text); report('AUREN speaking…'); };
     u.onboundary = e => { if (currentUtterance !== u) return;
       // Safari supplies word boundaries on some voices but not all.
