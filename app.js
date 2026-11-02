@@ -1,3 +1,4 @@
+// AUREN v2.56 — Regression safeguards for pending actions and topic changes.
 // AUREN v2.55 — Verified intent handoffs and safe confirmation routing.
 // AUREN v2.54 — Conversational decision routing, bounded clarification and safe action handling.
 // AUREN v2.53 — verified save status, consistent conversational facts, and safe confirmations.
@@ -2572,6 +2573,20 @@ function contextualMoveTurn(raw){
  pendingPlan={kind:'move',id:event.id,title:event.title,date:event.date,time,duration:event.duration||60};
  return conflictAdvice(pendingPlan)||`Shall I move ${event.title} to ${formatClock(time)} on ${readableDate(event.date)}?`;
 }
+// v2.56: A topic pivot cancels only uncommitted drafts; never touches saved records.
+function aurenCancelPendingDrafts(){
+  pendingPlan=null;
+  pendingReminder=null;
+  planClarification=null;
+  planningOffer=null;
+  pendingTaskChange=null;
+  contextualMeetingDraft=null;
+  personalPendingInterest=null;
+  pendingWeatherOffer=null;
+  aurenClarificationState={kind:'',at:0,repeats:0};
+  // The local Butler may still hold an uncommitted memory confirmation.
+  if(butler.pending)butler.pending=null;
+}
 // v2.55: All pending writers (task, memory, planner, meeting draft) own their confirmations.
 // v2.54: A narrow decision gate for ambiguous confirmations and action requests.
 // Never invent an action, or allow a vague "yes" to trigger a change with no pending proposal.
@@ -2652,8 +2667,7 @@ async function send(text) {
   // A deliberate topic switch discards stale AI conversational references.
   if(conversationTopicChange(text)){
     aurenRetireConversationTopic();
-    contextualMeetingDraft=null;
-    aurenClarificationState={kind:'',at:0,repeats:0};
+    aurenCancelPendingDrafts();
     await addMessage('user',text);
     await addMessage('auren','Certainly. What would you like to discuss?');
     return;
@@ -2663,8 +2677,7 @@ async function send(text) {
   const topicShift=aurenTopicShift(text);
   if(topicShift.changed){
     aurenRetireConversationTopic();
-    contextualMeetingDraft=null;
-    aurenClarificationState={kind:'',at:0,repeats:0};
+    aurenCancelPendingDrafts();
     text=topicShift.question;
   }
   // Respond only when a safe, grounded decision is possible. Pending calendar/task
@@ -2782,8 +2795,7 @@ async function send(text) {
     // memories or previous subjects. Retire unfinished topic-specific offers.
     const topicChange=/^(?:(?:auren[, ]+)?(?:i(?:'d| would)? (?:like|want|need) to (?:talk|speak|chat) (?:about|on) (?:something else|another (?:topic|thing)|something different)|(?:can|could) we (?:talk about|discuss|switch to) (?:something else|something different|another topic)|(?:let's|lets) (?:change|switch) (?:the )?(?:subject|topic)|(?:new|different) (?:topic|subject)|(?:i want to )?change the subject|(?:i have|i've got) something else (?:to (?:talk about|discuss)|on my mind)))[.!?]*$/i.test(text.trim());
     if (topicChange) {
-      pendingPlan=null;pendingReminder=null;planClarification=null;
-      planningOffer=null;pendingWeatherOffer=null;
+      aurenCancelPendingDrafts();
       await addMessage('auren','Of course. What would you like to talk about?');
       return;
     }
