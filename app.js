@@ -1,3 +1,4 @@
+// AUREN v2.42 — Personalized daily preparation, real commitments and restrained next steps.
 // AUREN v2.41 — Smarter deadlines, overdue tasks and calendar-safe work suggestions.
 // AUREN v2.40 — Confirmed tasks, repeatable routines, and grounded daily task awareness.
 // AUREN v2.39 — Adaptive Daily Intelligence: grounded rankings, briefings, and follow-ups.
@@ -1176,6 +1177,50 @@ function deadlineReply(intent){
  return `${task.title} is ${deadlineLabel(task)}. Your AUREN calendar shows a possible one-hour opening ${readableDate(slot.date)} at ${formatClock(slot.time)}. This is only a suggestion; nothing has been scheduled, and I cannot account for travel or commitments outside AUREN.`;
 }
 
+
+// v2.42 — Personal daily preparation. Read-only and grounded in saved AUREN data.
+let preparationContext=null;
+function preparationUpcoming(date,scope='day'){
+ const now=Date.now(), last=scope==='week'?shiftedDate(weekStart(date),6):date;
+ const events=plans.filter(p=>p.date>=date&&p.date<=last&&eventTimestamp(p)>=now)
+   .sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+ const dueReminders=reminders.filter(r=>!r.fired&&Date.parse(r.at)>=now&&localDate(new Date(r.at))>=date&&localDate(new Date(r.at))<=last)
+   .sort((a,b)=>a.at.localeCompare(b.at));
+ const openTasks=aurenTasks.filter(t=>!isTaskComplete(t,date)&&((t.repeat==='once'&&t.due<=last)||(t.repeat!=='once'&&taskOnDay(t,date))))
+   .sort((a,b)=>a.due.localeCompare(b.due));
+ return {events,dueReminders,openTasks};
+}
+function preparationIntent(raw){
+ const q=String(raw||'').trim().toLowerCase().replace(/^(?:(?:hey|hello)\s+)?auren[,! ]*/,'').replace(/[.!?]+$/,'').trim();
+ const date=parseDateIntent(q)||localDate(),scope=/\b(?:this|next) week\b|\bweekly\b/.test(q)?'week':'day';
+ if(/^(?:what (?:do i|should i|can i) (?:prepare|get ready|do) (?:for|before) (?:my )?(?:day|today|tomorrow|this week|next week|next meeting|next appointment)|help me (?:prepare|get ready) for (?:my )?(?:day|today|tomorrow|this week|next week|next appointment|next meeting)|(?:give me|make me|what(?:'s| is)) (?:a |my |the )?(?:daily |morning |today(?:'s)? |tomorrow(?:'s)? )?(?:preparation|prep|readiness) (?:checklist|plan|brief|summary)|what (?:should|do) i (?:get ready for|need to prepare) (?:today|tomorrow|this week|next week))$/.test(q))return {kind:'overview',date,scope};
+ if(/^(?:what should i prepare|anything i should prepare|anything to prepare|how do i prepare for that|how can i get ready for that|what should i do beforehand|what do i need beforehand|what about preparing for it)$/.test(q))return {kind:'follow'};
+ if(/^(?:what(?:'s| is) the next thing i need to get ready for|what should i get ready for next|do i need to prepare for my next appointment)$/.test(q))return {kind:'overview',date:localDate(),scope:'week'};
+ return null;
+}
+function preparationReply(intent){
+ const cached=intent.kind==='follow'&&preparationContext&&Date.now()-preparationContext.at<5*60000?preparationContext:null;
+ if(intent.kind==='follow'&&!cached)return 'Which appointment or day would you like to prepare for?';
+ const date=cached?cached.date:intent.date,scope=cached?cached.scope:intent.scope;
+ const {events,dueReminders,openTasks}=preparationUpcoming(date,scope);
+ const nextEvent=events[0],nextReminder=dueReminders[0],nextTask=openTasks[0];
+ preparationContext={date,scope,eventId:nextEvent?.id||null,at:Date.now()};
+ const label=scope==='week'?'the coming week':date===localDate()?'today':date===shiftedDate(localDate(),1)?'tomorrow':readableDate(date);
+ if(!nextEvent&&!nextReminder&&!nextTask)return `I don't see any upcoming appointments, reminders or unfinished tasks in AUREN for ${label}. I can't see commitments you haven't saved.`;
+ const parts=[];
+ if(nextEvent){
+   const when=eventTimestamp(nextEvent),minutes=Math.max(0,Math.floor((when-Date.now())/60000));
+   const datePart=readableDate(nextEvent.date),time=spokenClock(nextEvent.time);
+   parts.push(`Your next saved appointment is ${nextEvent.title} on ${datePart} at ${time}${minutes<=120?`, in about ${minutes} minutes`:''}. Check any details you need for it; AUREN has no saved preparation checklist for that appointment.`);
+ }
+ if(nextTask)parts.push(`An unfinished task to review is ${nextTask.title}, ${nextTask.repeat==='once'?deadlineLabel(nextTask):'part of your routine'}.`);
+ if(nextReminder)parts.push(`Your next reminder is ${nextReminder.text} at ${new Date(nextReminder.at).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})}.`);
+ const overlapping=events.some((a,i)=>events.slice(i+1).some(b=>overlaps(a,b)));
+ if(overlapping)parts.push('There is an overlap between saved appointments; check the times before making other plans.');
+ parts.push('No changes have been made.');
+ return parts.join(' ');
+}
+
 function adaptivePriority(date,scope='day'){
  const {report,items}=adaptiveItems(date,scope);
  if(!items.length)return 'I have no upcoming appointments or reminders saved for that period. I cannot rank personal goals I do not know.';
@@ -2344,6 +2389,9 @@ async function send(text) {
       const taskRequest=taskIntent(text);
       if(taskRequest){await addMessage('auren',taskResponse(taskRequest));return;}
     }
+    // v2.42: grounded preparation summaries that never alter plans.
+    const prepareRequest=preparationIntent(text);
+    if(prepareRequest){await addMessage('auren',preparationReply(prepareRequest));return;}
     // v2.41: read-only deadline summaries and free calendar openings.
     const deadlineRequest=deadlineIntent(text);
     if(deadlineRequest){await addMessage('auren',deadlineReply(deadlineRequest));return;}
