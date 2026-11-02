@@ -1,4 +1,4 @@
-// AUREN v2.97 — field-aware reminder clarification plus saved-profile-first name memory.
+// AUREN v2.98 — field-aware reminder clarification plus saved-profile-first name memory.
 // AUREN v2.93 — saved-profile-first name authority; no conversation-memory false positives.
 // AUREN v2.92 — persistent name recall, refreshed profile context, verified loader.
 // AUREN v2.91 — Defensive schedule intent engine, verified reminder-aware speech, cache update.
@@ -3297,7 +3297,7 @@ function locationPaint(){
 }
 function locationOff(){
  locationRequestSequence++;locationApproved=false;locationPending=false;aurenLocation=null;pendingLocationIntent=null;
- locationPermissionBar.hidden=true;nearbyResultPanel.hidden=true;nearbyResultLink.removeAttribute('href');aurenPlaces.clear();locationPaint();
+ locationPermissionBar.hidden=true;locationPermissionEnable.disabled=false;locationPermissionEnable.textContent='Enable location now';nearbyResultPanel.hidden=true;nearbyResultLink.removeAttribute('href');aurenPlaces.clear();locationPaint();
 }
 function nearbySearchTerm(request){
  const t=String(request||'').trim();
@@ -3324,11 +3324,21 @@ function showNearbyResults(request){
 function locationOn(){
  if(locationApproved&&aurenLocation){locationPaint();if(pendingLocationIntent){const request=pendingLocationIntent;pendingLocationIntent=null;showNearbyResults(request);}return true;}
  if(locationPending)return true;
- if(!navigator.geolocation){locationStatus.textContent='Location is unavailable in this browser.';locationPermissionHint.textContent=locationStatus.textContent;locationPermissionBar.hidden=false;return false;}
- const id=++locationRequestSequence;locationPending=true;locationPermissionBar.hidden=true;locationPaint();
+ // Geolocation requests must start inside a real user click; never auto-request permission during AI replies.
+ if(!window.isSecureContext){
+  const msg='Location needs a secure HTTPS page. Open AUREN on its GitHub Pages https:// address, then tap Enable location again.';
+  locationStatus.textContent=msg;locationPermissionHint.textContent=msg;locationPermissionBar.hidden=false;return false;
+ }
+ if(!navigator.geolocation){
+  const msg='Location is not available in this browser or is blocked by browser settings.';
+  locationStatus.textContent=msg;locationPermissionHint.textContent=msg;locationPermissionBar.hidden=false;return false;
+ }
+ const id=++locationRequestSequence;locationPending=true;locationPermissionBar.hidden=false;locationPaint();
+ locationPermissionEnable.disabled=true;locationPermissionEnable.textContent='Waiting for Safari…';
  navigator.geolocation.getCurrentPosition(pos=>{
   if(id!==locationRequestSequence)return;
   locationPending=false;locationApproved=true;
+  locationPermissionEnable.disabled=false;locationPermissionEnable.textContent='Enable location now';
   aurenLocation={latitude:pos.coords.latitude,longitude:pos.coords.longitude,accuracy:pos.coords.accuracy};
   locationPaint();
   const request=pendingLocationIntent;pendingLocationIntent=null;
@@ -3337,14 +3347,15 @@ function locationOn(){
  },err=>{
   if(id!==locationRequestSequence)return;
   locationOff();
-  locationStatus.textContent=err.code===1?'Safari blocked location. In Safari, adjust this website’s Location permission to Ask or Allow, then try again.':err.code===3?'Safari location timed out. Please try again.':'Could not get location. Nothing was saved.';
+  locationPermissionEnable.disabled=false;locationPermissionEnable.textContent='Try location again';
+  locationStatus.textContent=err.code===1?'Location denied. In Safari, open Website Settings for this site, set Location to Ask or Allow, then tap Try location again. Also check macOS/iPhone Location Services.':err.code===3?'Location timed out. Check Safari Location Services, then try again.':'Could not get your location. Make sure Location Services are enabled and try again.';
   locationPermissionHint.textContent=locationStatus.textContent;
   locationPermissionBar.hidden=false;
  },{enableHighAccuracy:false,maximumAge:0,timeout:12000});return true;
 }
 locationButton.addEventListener('click',()=>{if(locationApproved||locationPending)locationOff();else locationOn();});
 locationPanel.append(locationTitle,locationDesc,locationButton,locationStatus);$('settings').append(locationPanel);
-locationTitle.textContent='Location';locationDesc.textContent='Allow location only when you want nearby suggestions. Toggle anytime.';
+locationTitle.textContent='Location';locationDesc.textContent='Tap Turn location ON to request Safari permission. AUREN uses it only for nearby suggestions while this tab is open. Safari may require Website Settings → Location → Allow.';
 const voiceDetails=document.createElement('details');voiceDetails.className='card';
 const voiceSummary=document.createElement('summary');voiceSummary.textContent='Voice & listening';voiceSummary.style.cursor='pointer';
 voiceCard.replaceWith(voiceDetails);voiceDetails.append(voiceSummary,voiceCard);
@@ -3361,7 +3372,7 @@ const locationPermissionHint=document.createElement('p');
 locationPermissionHint.textContent='AUREN needs your permission to use location for nearby suggestions.';
 locationPermissionHint.style.cssText='margin:0 0 12px;line-height:1.4;';
 const locationPermissionEnable=document.createElement('button');
-locationPermissionEnable.type='button';locationPermissionEnable.textContent='Enable location now';
+locationPermissionEnable.type='button';locationPermissionEnable.textContent='Enable location now';locationPermissionEnable.style.cssText='padding:12px 18px;background:#d9ae55;color:#161616;font-weight:800;border:0;border-radius:9px;cursor:pointer';
 locationPermissionEnable.onclick=()=>locationOn();
 const locationPermissionDismiss=document.createElement('button');
 locationPermissionDismiss.type='button';locationPermissionDismiss.textContent='Not now';
@@ -3755,6 +3766,16 @@ async function aurenHandlePlaceDialogue(text){
  await addMessage('auren',followup?'Here is the Google Maps search link again. Tap it to view the places.':
    'I can help you find '+category+'. Tap the Google Maps link for restaurant names, ratings and directions. For a list of nearby places inside AUREN, choose Nearby suggestions and allow location access.');
  aurenAppendPlaceLink(query);
+ // v2.98: Place discovery is the natural place to offer GPS consent, not only Settings.
+ // Never call geolocation here: Safari requires a direct user gesture on the button.
+ if(category){
+  if(locationApproved&&aurenLocation){showNearbyResults(text);}
+  else {
+   pendingLocationIntent=text;
+   offerLocationButton();
+   locationPermissionHint.textContent='To find places near you instead of generic Maps results, tap Enable location now. Safari will ask for permission. Not now keeps location off.';
+  }
+ }else if(locationApproved&&aurenLocation){showNearbyResults(query);}
  return true;
 }
 
