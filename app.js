@@ -1,3 +1,4 @@
+// AUREN v2.92 — persistent name recall, refreshed profile context, verified loader.
 // AUREN v2.91 — Defensive schedule intent engine, verified reminder-aware speech, cache update.
 // AUREN v2.89 — Fix undefined schedule parser variable; unify spoken briefing and Your Day truth.
 // AUREN v2.88 — Unified Your Day schedule reading and saved-record truth.
@@ -2616,6 +2617,7 @@ function userProfileAnswer(request,memories){
  const category=/preferences/i.test(t)?'preference':/interests/i.test(t)?'interest':/goals/i.test(t)?'goal':/routines/i.test(t)?'routine':null;
  const filtered=category?memories.filter(m=>m.category===category):memories;
  const chosen=filtered.slice(0,5);
+ refreshPersonalProfile();
  const identity=personalProfile.name?`Your saved name is ${personalProfile.name}. `:'';
  if(!chosen.length)return identity+'I don’t have any matching long-term memories saved on this device yet. You can add them in Memory.';
  const facts=chosen.map(m=>m.text.replace(/[.!?]+$/,'')).join('; ');
@@ -2970,8 +2972,29 @@ function savePersonalProfile(){
  }catch(error){showStatus('Your profile was not saved: '+error.message,'error');return false;}
 }
 function refreshPersonalProfile(){
- try {const saved=JSON.parse(localStorage.getItem(PERSONAL_PROFILE_KEY)||'null');if(saved&&typeof saved==='object')Object.assign(personalProfile,saved);}catch{}
+ try {
+  const saved=JSON.parse(localStorage.getItem(PERSONAL_PROFILE_KEY)||'null');
+  if(saved && typeof saved==='object'){
+   // Never erase a valid in-memory name because of a temporary empty read.
+   const next={...saved};
+   if(typeof next.name==='string')next.name=next.name.trim().slice(0,45);
+   Object.assign(personalProfile,next);
+  }
+ }catch(error){console.warn('AUREN profile read failed',error);}
 }
+function aurenSavedName(){
+ refreshPersonalProfile();
+ return String(personalProfile.name||'').trim();
+}
+function aurenNameAnswer(){
+ const name=aurenSavedName();
+ return name?`Your saved name is ${name}.`:'I do not have a name saved in this browser. You can enter one in Settings under Your profile.';
+}
+// Handle login/tab return without clobbering in-progress input fields.
+window.addEventListener('focus',()=>refreshPersonalProfile());
+window.addEventListener('storage',event=>{
+ if(event.key===PERSONAL_PROFILE_KEY){refreshPersonalProfile();if(document.activeElement!==nameField)paintPersonal();}
+});
 
 function savePersonalSignals(){try{localStorage.setItem(PERSONAL_SIGNALS_KEY,JSON.stringify(personalSignals));}catch{}}
 function preferredAddress(){const a=personalProfile.address;return a==='name'?personalProfile.name:a==='custom'?personalProfile.customAddress:a==='none'?'':a;}
@@ -3034,6 +3057,10 @@ const welcomeText=document.createElement('p');welcomeText.textContent='Welcome t
 const welcomeSetup=document.createElement('button');welcomeSetup.type='button';welcomeSetup.textContent='Set my name and preferences';welcomeSetup.onclick=()=>{void activateScreen('settings');nameField.focus();};
 const welcomeLater=document.createElement('button');welcomeLater.type='button';welcomeLater.className='ghost';welcomeLater.textContent='Maybe later';welcomeLater.onclick=()=>{personalProfile.onboarded=true;savePersonalProfile();personalWelcome.hidden=true;};
 personalWelcome.append(welcomeText,welcomeSetup,welcomeLater);orbButton.insertAdjacentElement('afterend',personalWelcome);personalWelcome.hidden=!!personalProfile.onboarded;
+function aurenNameQuestion(raw){
+ const s=String(raw||'').trim().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/i,'').replace(/[?.!]+$/,'').trim();
+ return /^(?:(?:hey\s+)?(?:what\s+(?:is|was)\s+my\s+name|what'?s\s+my\s+name|tell\s+me\s+my\s+name|do\s+you\s+(?:still\s+)?(?:know|remember)\s+my\s+name|have\s+you\s+(?:saved|forgotten)\s+my\s+name|did\s+you\s+(?:save|remember)\s+my\s+name|what\s+name\s+do\s+you\s+(?:have|remember)|what\s+did\s+i\s+(?:tell|say)\s+my\s+name\s+(?:was|is)|who\s+am\s+i|who\s+do\s+you\s+have\s+me\s+as|what\s+should\s+you\s+call\s+me))(?:\s+(?:now|again|then|yet|on\s+file|saved))?$/i.test(s);
+}
 function aurenIsPersonalIdentityRequest(raw) {
  const t=String(raw||'').trim().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/i,'').trim();
  return /^(?:(?:please\s+)?(?:call me|start calling me|you can call me|my name is)\s+.{1,60}|(?:what(?:'s| is) my name|what is my name now|do you (?:know|remember) my name|do you (?:still )?remember (?:my name|what my name is)|who am i|tell me my name|what name (?:did i|have i) (?:give|saved|set)|what(?:'s| is) my nickname|what do you call me|what(?:'s| is) my preferred name|how should you address me|did you (?:save|remember) my name|is my name saved|what name do you have saved)(?:\s+(?:now|yet|again))?)[?!. ]*$/i.test(t);
@@ -3568,6 +3595,7 @@ function aurenYourDayFollowup(raw) {
   return null;
 }
 async function send(text) {
+  refreshPersonalProfile();
   const addressed = aurenAddressCommand(text);
   if (addressed.wake) {
     await addMessage('user',text);
@@ -3575,6 +3603,12 @@ async function send(text) {
     return;
   }
   text=addressed.command;
+  // v2.92: Name recall always consults the persisted profile, never the generic AI.
+  if(aurenNameQuestion(text)){
+    await addMessage('user',text);
+    await addMessage('auren',aurenNameAnswer());
+    return;
+  }
   // v2.82: Profile ownership takes precedence over conversational AI fallbacks.
   // A saved profile is authoritative and is re-read on every name question.
   if(aurenIsPersonalIdentityRequest(text)) {
