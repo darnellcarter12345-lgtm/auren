@@ -1,3 +1,4 @@
+// AUREN v2.62 — Grounded personal routine intelligence and realistic daily routine checks.
 // AUREN v2.61 — Read-only proactive preparation and attention checks from saved plans.
 // AUREN v2.60 — Grounded smart daily planning, preparation and next-step suggestions.
 // AUREN v2.59 — safe new-question handoff and correction recovery.
@@ -1343,6 +1344,41 @@ function proactiveAttentionReply(intent){
  const overlaps=savedDayIntelligence(today,'week').conflictPairs;
  if(overlaps.length)parts.push(`I found ${overlaps.length} overlapping saved appointment pair${overlaps.length===1?'':'s'} this week. Review their times.`);
  parts.push('These are suggestions, not verified preparation requirements. Nothing has been saved, moved, or completed.');
+ return parts.join(' ');
+}
+// v2.62: A routine is an explicitly saved repeating task, not a calendar appointment.
+// Read-only analysis: do not create events or presume a time for recurring tasks.
+function personalRoutineIntent(raw){
+ const q=String(raw||'').trim().toLowerCase().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/,'').replace(/[.!?]+$/,'').trim();
+ if(/^(?:how do my routines fit (?:into|around) (?:my )?(?:day|schedule|appointments)|help me (?:plan|organize|fit) my routines(?: (?:for|around) (?:today|tomorrow|this week))?|(?:show|give) me (?:my |a )?(?:routine overview|routine check|routine plan|routine summary)(?: (?:for|on) (?:today|tomorrow|this week))?|what (?:saved )?routines (?:are due|should i do|do i have) (?:today|tomorrow|this week)|(?:check|review) (?:my )?routines (?:for )?(?:today|tomorrow|this week)?)$/.test(q)){
+  const scope=/\bthis week\b/.test(q)?'week':'day';
+  return {date:parseDateIntent(q)||localDate(),scope};
+ }
+ return null;
+}
+function personalRoutineReply(intent){
+ const today=localDate(),date=intent.date,scope=intent.scope;
+ const days=scope==='week'?Array.from({length:7},(_,i)=>shiftedDate(weekStart(date),i)):[date];
+ const relevantDays=days.filter(x=>x>=today);
+ const stored=aurenTasks.filter(x=>x.repeat==='daily'||x.repeat==='weekdays');
+ if(!stored.length)return 'You have no saved repeating routines in AUREN. You can add one by saying, for example, add a daily routine to read. No schedule was changed.';
+ const due=stored.map(t=>({task:t,days:relevantDays.filter(day=>taskOnDay(t,day)),completed:relevantDays.filter(day=>taskOnDay(t,day)&&isTaskComplete(t,day))})).filter(x=>x.days.length);
+ if(!due.length)return `You have ${stored.length} saved repeating routine${stored.length===1?'':'s'}, but none falls on the remaining days of that period. No changes were made.`;
+ const label=scope==='week'?'this week':date===today?'today':readableDate(date);
+ const parts=[`Here is your saved routine check for ${label}.`];
+ for(const entry of due.slice(0,5)){
+  const t=entry.task;const cadence=t.repeat==='weekdays'?'weekdays':'daily';
+  if(scope==='week')parts.push(`${t.title} (${cadence}): ${entry.completed.length} of ${entry.days.length} scheduled occurrences marked complete.`);
+  else parts.push(`${t.title} (${cadence}) is ${entry.completed.length?'marked complete':'still open'} for ${label}.`);
+ }
+ if(due.length>5)parts.push(`${due.length-5} additional saved routines are not listed.`);
+ const appointments=plans.filter(p=>relevantDays.includes(p.date)&&eventTimestamp(p)>=Date.now()).sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+ if(appointments.length){
+  const first=appointments[0];
+  parts.push(`Your next saved appointment in that period is ${first.title}, ${readableDate(first.date)} at ${spokenClock(first.time)}.`);
+  parts.push('The routine tasks do not have saved start times, so I cannot determine whether they overlap that appointment. Consider choosing your own routine time around it.');
+ }else parts.push('No upcoming appointments were found for that period in AUREN; this does not prove your calendar is free.');
+ parts.push('This is a suggestion based on saved records. I have not scheduled, rescheduled, or completed anything.');
  return parts.join(' ');
 }
 function smartDayPlanIntent(raw){
@@ -2971,6 +3007,12 @@ async function send(text) {
     if(/^(?:how much time (?:do i have|is left) (?:before|until) (?:my )?next (?:meeting|appointment|plan)|do i have time before my next (?:meeting|appointment|plan)|how long (?:until|before) my next (?:meeting|appointment|plan))[.!? ]*$/i.test(String(text).trim())){
       noteDayConversation(localDate(),'day');
       await addMessage('auren',nextOpeningIntelligence());
+      return;
+    }
+    // v2.62: On-demand routine analysis, without inventing times or changing records.
+    const routineRequest=personalRoutineIntent(text);
+    if(routineRequest){
+      await addMessage('auren',personalRoutineReply(routineRequest));
       return;
     }
     // v2.61: On-demand readiness, never an unsolicited notification or mutation.
