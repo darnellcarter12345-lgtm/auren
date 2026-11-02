@@ -1,4 +1,4 @@
-// AUREN v2.94 — field-aware reminder clarification plus saved-profile-first name memory.
+// AUREN v2.95 — field-aware reminder clarification plus saved-profile-first name memory.
 // AUREN v2.93 — saved-profile-first name authority; no conversation-memory false positives.
 // AUREN v2.92 — persistent name recall, refreshed profile context, verified loader.
 // AUREN v2.91 — Defensive schedule intent engine, verified reminder-aware speech, cache update.
@@ -939,7 +939,7 @@ function aurenCompleteReminderClarification(raw){
  if(/^(?:cancel|no thanks|never mind|nevermind|forget it)$/i.test(q)){aurenReminderQuestion=null;return 'Of course. Nothing was saved.';}
  if(aurenIsReminderCommand(q)){aurenReminderQuestion=null;return null;}
  // Avoid consuming unrelated new questions or actions.
- if(/^(?:what|why|how|where|who|show|search|delete|remove|change|move)\b/i.test(q))return null;
+ if(/^(?:what|why|how|where|who|show|search|delete|remove|change|move|find|suggest|recommend|locate|look)\b/i.test(q))return null;
  const received=aurenReminderFields(q);
  const merged={subject:draft.fields.subject||received.subject,date:received.date||draft.fields.date,time:received.time||draft.fields.time};
  // If we asked only for the subject, short freeform speech is the subject, not a new command.
@@ -2659,7 +2659,7 @@ function userProfileAnswer(request,memories){
  const chosen=filtered.slice(0,5);
  refreshPersonalProfile();
  const verifiedName=aurenSavedName();
- const identity=verifiedName?`Your saved name is ${verifiedName}. `:'';
+ const identity=verifiedName?`Your name is ${verifiedName}. `:'';
  if(!chosen.length)return identity+'I don’t have any matching long-term memories saved on this device yet. You can add them in Memory.';
  const facts=chosen.map(m=>m.text.replace(/[.!?]+$/,'')).join('; ');
  return identity+`From your saved memories: ${facts}. You can review or correct them in Memory.`;
@@ -2930,7 +2930,10 @@ function correctFalseCapabilityClaims(question, answer) {
   // Don't overwrite a correct refusal about external integrations.
   if(/\b(?:external calendar apps?)\b/i.test(q))return claim;
   const negative=/\b(?:i (?:do not|don't(?: have the ability to)?|cannot|can't|lack the ability to)|i have no (?:ability|access)|not able to)\b[^.!?]{0,240}\b(?:calendar|schedule|appointments?|plans?|reminders?|tasks?)\b/i;
-  const local=/\b(?:auren|my planner|your planner|your calendar|my calendar|my schedule|my appointments|your capabilities|your features|what can you do)\b/i;
+  const local=/\b(?:auren|my planner|your planner|your calendar|my calendar|my schedule|my appointments|your capabilities|your features|what can you do|remind|reminder|reminders|alert|notification|don't forget|forget)\b/i;
+  // Correct an AI denial of local reminders even in an open-ended discussion.
+  const deniesReminders=/\b(?:can(?:not|'t)|unable|not able|do not|don't|no ability|lack the ability)\b[^.!?]{0,180}\b(?:remind|reminders?|alerts?|notifications?|set (?:that|it) up)\b|\b(?:reminders?|alerts?)\b[^.!?]{0,90}\b(?:not supported|unavailable|not possible)\b/i;
+  if(deniesReminders.test(claim) && /\b(?:remind|reminders?|alerts?|forget|notification)\b/i.test(q))return 'I can set reminders in AUREN itself. Tell me what you want to remember and when, and I’ll confirm before saving it. Alerts work while AUREN is open.';
   if(negative.test(claim)&&local.test(q)) {
     return 'To clarify my actual abilities: I can manage appointments in AUREN’s own planner after confirmation, check saved plans, track local tasks and set reminders while AUREN is open. I cannot change external calendar apps without a separate integration.';
   }
@@ -2971,7 +2974,7 @@ async function askWithMemory(question) {
     'Butler manner: be warm, professional, tactful and helpful, never condescending, argumentative or patronizing. Do not insist on your name, boast about being AI, or give an unnecessary disclaimer for ordinary requests. For a simple command, respond in one short sentence or carry out the available action. Do not imply physical-world capabilities you lack.',
     'Answer are you sure by checking the specific preceding claim. Do not automatically apologize, list projects, or change topics. If not verifiable, clearly say which part you cannot confirm.',
     'When describing a verified appointment with a family member use natural second-person wording such as meeting with your dad. Never assume a relationship not explicitly provided.',
-    'AUREN capabilities: You CAN create, move and delete appointments in the built-in AUREN calendar after confirmation. NEVER say you cannot save in AUREN. Do not offer external calendar downloads. Do not claim a plan was saved if it was only discussed. Use exact scheduled times and subjects from the calendar.',
+    'AUREN capabilities: You CAN create, move and delete appointments in your built-in planner after confirmation AND you CAN create and check reminders using the AUREN reminder workflow. NEVER deny the existence of your local reminder feature or tell the user to use a separate app. Reminder alerts run while the AUREN page is open; do not promise notifications while closed. A conversation alone does not save anything: use the local action handler and confirm only after verification. Do not offer external calendar downloads. Use exact scheduled times and subjects from saved records.',
     `Verified upcoming appointments (read-only data): ${JSON.stringify(upcoming)}`,
     `Verified active reminders (read-only data): ${JSON.stringify(due)}`,
     `Verified non-sensitive projects (read-only data): ${JSON.stringify(projects)}`,
@@ -3034,7 +3037,7 @@ function aurenSavedName(){
 }
 function aurenNameAnswer(){
  const name=aurenSavedName();
- return name?`Your saved name is ${name}.`:'I do not have a name saved in this browser. You can enter one in Settings under Your profile.';
+ return name?`Your name is ${name}.`:'I do not have a name saved in this browser. You can enter one in Settings under Your profile.';
 }
 // Handle login/tab return without clobbering in-progress input fields.
 window.addEventListener('focus',()=>refreshPersonalProfile());
@@ -3130,7 +3133,7 @@ function personalCommand(text){
  }
  if(/^(?:what(?:'s| is) my name|what is my name now|do you (?:know|remember) my name|do you (?:still )?remember (?:my name|what my name is)|who am i|tell me my name|what name (?:did i|have i) (?:give|saved|set)|what(?:'s| is) my nickname|what do you call me|what(?:'s| is) my preferred name|how should you address me|did you (?:save|remember) my name|is my name saved|what name do you have saved)(?:\s+(?:now|yet|again))?[?!. ]*$/i.test(t)){
   if(!aurenSavedName())return 'I do not have your name saved yet. You can enter it in Settings under Your profile.';
-  return /nickname|what do you call me|address me/i.test(t)?`I call you ${personalTitle()||personalProfile.name}. Your saved name is ${personalProfile.name}.`:`Your name is ${aurenSavedName()}.`;
+  return /nickname|what do you call me|address me/i.test(t)?`I call you ${personalTitle()||personalProfile.name}. Your name is ${personalProfile.name}.`:`Your name is ${aurenSavedName()}.`;
  }
  if(/\b(?:stop learning my interests|turn (?:off|on) interest learning|stop suggesting memories|start learning my interests)\b/i.test(t)){
   personalProfile.learnInterests=/\b(?:start|on)\b/i.test(t);savePersonalProfile();paintPersonal();return personalProfile.learnInterests?'I can suggest interests after repeated mentions. I will ask before saving them.':'Interest learning suggestions are off.';
@@ -3678,6 +3681,26 @@ async function send(text) {
   if(dayConversation && Date.now()-dayConversation.at<5*60000 && /^(?:are you sure|really|but i have something|there is something|you missed something|check again|that's wrong|that isn't right)[?.! ]*$/i.test(text.trim())){
     await addMessage('user',text);
     await addMessage('auren','I checked Your Day again. '+aurenScheduleRead(dayConversation.date,dayConversation.scope).text);
+    return;
+  }
+  // v2.95: A new places/discovery request always wins over an old reminder draft.
+  // The preexisting Smart Places handler provides Google Maps choices; no reminder is saved.
+  const placesDiscovery = /\b(?:find|show|suggest|recommend|locate|search for|look for|looking for|where (?:can|should|could) (?:i|we) (?:go|eat)|anywhere|somewhere|places? to|spots? to)\b[\s\S]{0,100}\b(?:eat|food|restaurant|lunch|dinner|breakfast|brunch|coffee|cafe|places?|spots?|activities|things to do|go|visit|shops?|stores?|parks?|gyms?|movies?|hotels?)\b|\b(?:where (?:can|should) (?:i|we) eat|restaurants? near me|places? to eat|food near me|things to do near me)\b/i.test(text) || /\b(?:restaurants?|cafes?|coffee shops?|food|places?|shops?|parks?)\b.{0,55}\b(?:near me|nearby|around me|in my area)\b/i.test(text);
+  const reminderAboutFinding = /\b(?:remind me|set (?:a|me a) reminder|don't let me forget|make sure i remember)\b/i.test(text);
+  if(placesDiscovery && !reminderAboutFinding){
+    // Retire only unfinished reminder drafts, not saved reminders.
+    aurenReminderQuestion=null;
+    pendingReminder=null;
+    pendingYourDayChoice=null;
+    if(await aurenPlaces.handle(text)){conversationAnchor=null;return;}
+    // Always retain a clickable map route if the place-intent handler can't classify this wording.
+    const query=/\b(?:eat|food|dinner|lunch|breakfast|brunch|restaurant)\b/i.test(text)?'restaurants near me':text.slice(0,90);
+    const url='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(query);
+    await addMessage('user',text);
+    await addMessage('auren','This is a place search, not a reminder. Open Google Maps to explore nearby options.');
+    const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Open results in Google Maps';
+    link.style.cssText='color:#e6c581;font-weight:700;text-decoration:underline;display:block;margin:8px';
+    $('log')?.append(link);
     return;
   }
   // Handle the direct response to a recent Your Day clarification first.
