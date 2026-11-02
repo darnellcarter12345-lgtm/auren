@@ -1,3 +1,4 @@
+// AUREN v3.04 — Conversational sensitivity and grounded situation awareness.
 // AUREN v3.03 — Explicit feedback learning, respectful check-ins, and contextual butler improvements.
 // AUREN v3.02 — Butler personality controls, grounded dialogue and consent-first check-ins.
 // AUREN v3.01 — Safari geolocation recovery, accurate failures, and city/ZIP fallback.
@@ -3061,6 +3062,7 @@ async function askWithMemory(question) {
     aurenCareAIGuidance(question),
     aurenButlerGuidance(),
     aurenRelationshipAIGuidance(),
+    aurenSituationAndEmotionGuidance(question),
     `Current actual Dallas date/time: ${new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',dateStyle:'full',timeStyle:'long'}).format(new Date())}. Verify time gaps with numeric timestamps; do not imply 11:20 PM is close to 12:47 PM.`,
     `Time clarity: Always include a clear AM/PM or natural daypart (morning, afternoon, evening, night) for appointments and reminders; distinguish noon from midnight. Never infer a daypart without using the actual scheduled hour.`,
     'If the user says they need to leave in N minutes, that is an imminent departure, not spare time. Never say they have plenty of time unless the timing clearly supports it. Discuss conflicts against actual saved appointment times only. Do not invent travel duration or imply a calendar event was created merely because the user mentioned leaving.',
@@ -3188,17 +3190,34 @@ function aurenRelationshipAIGuidance(){
  return `ADAPTIVE FEEDBACK (explicit only): ${JSON.stringify({topicsNotToSuggest:Object.keys(aurenRelationship.declined).filter(k=>aurenRelationship.declined[k]),helpfulSuggestionTopics:aurenRelationship.helpful,checkinsPaused:Date.now()<Number(aurenRelationship.quietUntil||0)})}. Use as a LIGHT preference signal, never infer feelings or private traits, never repeat declined topics, never manufacture check-ins. User's question and confirmed records come first; no background activity or false action claims.`;
 }
 
+// v3.04 — source-grounded situational awareness and conversational sensitivity.
+// Never persist mood guesses or use activity/time to diagnose feelings.
+function aurenExplicitConversationSignal(raw){
+ const q=String(raw||'').trim().toLowerCase();
+ // The signal describes the user's WORDS on this turn; it is not an emotion diagnosis.
+ if(/\b(?:i(?:'m| am) (?:feeling )?(?:stressed|overwhelmed|frustrated|upset|worried)|i(?: had|(?:'ve| have) had) (?:a )?(?:rough|hard|stressful) day|this (?:has been|is) (?:really )?(?:frustrating|stressful))\b/.test(q))return 'user_explicitly_described_difficulty';
+ if(/\b(?:i(?:'m| am) (?:feeling )?(?:excited|happy|proud)|great news|good news|i (?:did it|got accepted|passed))\b/.test(q))return 'user_explicitly_shared_positive_news';
+ if(/\b(?:i(?:'m| am) (?:confused|not sure)|i don(?:'t|’t) understand|can you explain|what do you mean)\b/.test(q))return 'user_requested_clarity';
+ if(/\b(?:you're not listening|you keep (?:asking|repeating)|that's wrong|this isn't working|stop repeating)\b/.test(q))return 'user_corrected_assistant';
+ return 'none';
+}
 function aurenCareFacts(){
- const now=new Date(),hour=now.getHours(),day=localDate();
- const appointments=plansFor(day).map(e=>({kind:'appointment',title:String(e.title||'').slice(0,90),time:e.time}));
- const todayReminders=reminders.filter(r=>Number.isFinite(new Date(r.at).getTime())&&localDate(new Date(r.at))===day).map(r=>({kind:'reminder',text:String(r.text||'').slice(0,90),at:r.at,fired:!!r.fired}));
+ const now=new Date(), hour=now.getHours(), day=localDate(), minutes=hour*60+now.getMinutes();
+ const appointments=plansFor(day).map(e=>({kind:'appointment',title:String(e.title||'').slice(0,90),time:e.time})).sort((a,b)=>String(a.time).localeCompare(String(b.time)));
+ const todayReminders=reminders.filter(r=>Number.isFinite(new Date(r.at).getTime())&&localDate(new Date(r.at))===day).map(r=>({kind:'reminder',text:String(r.text||'').slice(0,90),at:r.at,fired:!!r.fired})).sort((a,b)=>new Date(a.at)-new Date(b.at));
  const tasks=tasksOnDate(day).filter(t=>!t.done).slice(0,5).map(t=>({title:String(t.title||'').slice(0,90)}));
- const upcoming=appointments.filter(e=>{const [h,m]=String(e.time||'').split(':').map(Number);return Number.isFinite(h)&&h*60+(m||0)>=hour*60+now.getMinutes();});
- return {hour,day,daypart:hour<5?'late night':hour<11?'morning':hour<17?'daytime':hour<21?'evening':'late evening',appointments,reminders:todayReminders,tasks,nextAppointment:upcoming[0]||null};
+ const upcoming=appointments.filter(e=>{const [h,m]=String(e.time||'').split(':').map(Number);return Number.isFinite(h)&&h*60+(m||0)>=minutes;});
+ const upcomingReminders=todayReminders.filter(r=>!r.fired&&new Date(r.at).getTime()>now.getTime());
+ const nextItems=[...upcoming.map(e=>({...e,at:new Date(day+'T'+e.time+':00').getTime()})),...upcomingReminders.map(r=>({...r,at:new Date(r.at).getTime()}))].filter(x=>Number.isFinite(x.at)).sort((x,y)=>x.at-y.at).slice(0,3).map(({at,...item})=>({...item,minutesAway:Math.round((at-now.getTime())/60000)}));
+ return {hour,day,daypart:hour<5?'late night':hour<11?'morning':hour<17?'daytime':hour<21?'evening':'late evening',appointments,reminders:todayReminders,tasks,nextAppointment:upcoming[0]||null,nextItems};
+}
+function aurenSituationAndEmotionGuidance(question){
+ const signal=aurenExplicitConversationSignal(question),f=aurenCareFacts();
+ return `AUREN v3.04 CONVERSATIONAL & SITUATION ENGINE: ${JSON.stringify({explicitUserLanguageSignal:signal,timeOfDay:f.daypart,today:f.day,upcomingItems:f.nextItems,unfinishedTasks:f.tasks,optionalCheckins:aurenCare.checkins,blockedTopics:Object.keys(aurenCare.topics).filter(k=>!aurenCare.topics[k]),declinedSuggestions:Object.keys(aurenRelationship.declined).filter(k=>aurenRelationship.declined[k])})}. First, directly address the user's actual request. If the user EXPLICITLY described difficulty, briefly acknowledge their words and offer a useful next step; do not diagnose, exaggerate, or insert a personal question if they requested a concrete action. If they shared positive news, acknowledge it proportionately. If they corrected AUREN, acknowledge the error and fix the concrete problem; don't defend previous responses. If confused, simplify. If signal=none, do not invent feelings. Mention verified upcoming records only when contextually useful (planning, greetings, related questions), never in unrelated answers; do not infer mood, sleep, hunger or wellbeing from time of day. An item is 'soon' only if its computed minutesAway is positive and small; do not claim an alert was delivered. Only ask an optional check-in when enabled and not declined; don't repeat questions or hijack topic changes. Never claim to observe real-world behavior, weather, live location, or completed actions without verified data. Respect selected form of address without using name/sir every time. No covert profiling; the language signal is ephemeral and NOT saved.`;
 }
 function aurenCareAIGuidance(question){
  const f=aurenCareFacts();
- return `AUREN CONTEXT-AND-CARE ENGINE (grounded, per turn): ${JSON.stringify({timeOfDay:f.daypart,localDate:f.day,localHour:f.hour,appointmentsToday:f.appointments,remindersToday:f.reminders,unfinishedTasksToday:f.tasks,checkinsEnabled:aurenCare.checkins,preferredTone:aurenCare.tone,blockedCheckinTopics:Object.keys(aurenCare.topics).filter(k=>!aurenCare.topics[k])})}. Use these VERIFIED records only when relevant; do not overwhelm the user with their schedule. Respond first to the actual question. Warmth means attentiveness, respect, helpful context, and memory accuracy, not pretending to have feelings, a life, or intimate attachment. NEVER infer a person's mood, hunger, health, relationship, or fatigue from the clock or activity alone. You may gently ask a personal check-in only when user explicitly opted into check-ins AND their current message naturally invites it; ask at most one optional question, never pressure, guilt, or repeated checking. Do not ask about blocked topics. Never imply weather was checked unless a real weather result is available. Respect a 'no' or topic change immediately. Learn preferences only from explicit feedback; do not claim model retraining or background awareness. No background or browser-closed outreach.`;
+ return `AUREN CONTEXT-AND-CARE ENGINE (grounded, per turn): ${JSON.stringify({timeOfDay:f.daypart,localDate:f.day,localHour:f.hour,appointmentsToday:f.appointments,remindersToday:f.reminders,unfinishedTasksToday:f.tasks,checkinsEnabled:aurenCare.checkins,preferredTone:aurenCare.tone,blockedCheckinTopics:Object.keys(aurenCare.topics).filter(k=>!aurenCare.topics[k])})}. Verified local context is not proof of external events. Answer the request before optional commentary. Warmth means attentiveness and respect, not pretending to have feelings. Do not infer a user's health or emotional state based on the clock. Do not repeat declined check-ins. Never claim weather was checked without a verified weather result. No browser-closed outreach.`;
 }
 function aurenCareGreeting(raw){
  const q=String(raw||'').trim().toLowerCase().replace(/[.!?]+$/,'');
