@@ -1,3 +1,4 @@
+// AUREN v2.72.1 — Safari-safe regex compatibility / clean full-source startup repair.
 // AUREN v2.72 — Adaptive JARVIS Personality; grounded conversational modes.
 // AUREN v2.71 — Safe Multi-Step Action Intelligence.
 // AUREN v2.70 — Grounded, on-demand personal recommendations from saved tasks, plans and approved preferences.
@@ -2708,7 +2709,7 @@ personalWelcome.append(welcomeText,welcomeSetup,welcomeLater);orbButton.insertAd
 function personalCommand(text){
  refreshPersonalProfile();
  const t=String(text||'').trim();let m;
- if((m=t.match(/^(?:please\s+)?(?:call me|start calling me|you can call me|my name is)\s+([\p{L}\p{N} .'_-]{1,45})[.!?]*$/iu))){
+ if((m=t.match(/^(?:please\s+)?(?:call me|start calling me|you can call me|my name is)\s+([A-Za-zÀ-ÖØ-öø-ÿ0-9 .'_-]{1,45})[.!?]*$/i))){
   const v=m[1].trim().replace(/[.!?]+$/,'');
   if(/^(?:sir|ma'am|ma’am|madam|mister|mr\.?|miss)$/i.test(v)){
    personalProfile.address=/^sir$/i.test(v)?'sir':/ma/i.test(v)?'maam':'custom';personalProfile.customAddress=v;
@@ -3006,7 +3007,7 @@ let contextualPerson=null;
 function freshContextualPerson(){return contextualPerson && Date.now()-contextualPerson.at<10*60000?contextualPerson.relation:null;}
 function contextualPlannerTurn(raw){
  const t=String(raw||'').trim();
- const mention=t.match(/^(?:i (?:have|got)|i(?:'ve| have) got|there(?:'s| is))\s+(?:an?\s+)?(meeting|appointment|call|lunch|dinner)\s+with\s+(my\s+(?:dad|father|mom|mother|brother|sister)|[\p{L}][\p{L}' -]{1,40})\s+(today|tomorrow|(?:this|next)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\.?$/iu);
+ const mention=t.match(/^(?:i (?:have|got)|i(?:'ve| have) got|there(?:'s| is))\s+(?:an?\s+)?(meeting|appointment|call|lunch|dinner)\s+with\s+(my\s+(?:dad|father|mom|mother|brother|sister)|[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ' -]{1,40})\s+(today|tomorrow|(?:this|next)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\.?$/i);
  if(mention){
    const date=parseDateIntent(mention[3]);
    if(!date)return null;
