@@ -1,3 +1,4 @@
+// AUREN v2.72.3 — Corrected invalid regex in workload estimate lookup; full startup syntax repair.
 // AUREN v2.72.1 — Safari-safe regex compatibility / clean full-source startup repair.
 // AUREN v2.72 — Adaptive JARVIS Personality; grounded conversational modes.
 // AUREN v2.71 — Safe Multi-Step Action Intelligence.
@@ -1476,7 +1477,7 @@ function workloadEstimateIntent(raw){
  const save=q.match(/^(?:set|save|update|change|record)\s+(?:an?\s+)?(?:time\s+)?estimate\s+(?:for\s+)?(?:my\s+)?(?:task\s+)?(.+?)\s+(?:to|as|at)\s+(\d{1,3})\s*(minutes?|mins?|hours?|hrs?)$/i)
    ||q.match(/^(?:my\s+)?(?:task\s+)?(.+?)\s+(?:will\s+take|takes|needs)\s+(\d{1,3})\s*(minutes?|mins?|hours?|hrs?)$/i);
  if(save){const n=Number(save[2])*(/^h/i.test(save[3])?60:1);return {kind:'save',subject:save[1].trim(),minutes:n};}
- const show=q.match(/^(?:how long (?:will|should|does)\s+(?:my\s+)?(?:task\s+)?(.+?)\s+take|(?:what(?:'s| is) (?:the\s+)?(?:time\s+)?estimate\s+for\s+(?:my\s+)?(?:task\s+)?(.+))$/i);
+ const show=q.match(/^(?:how long (?:will|should|does)\s+(?:my\s+)?(?:task\s+)?(.+?)\s+take|what(?:'s| is) (?:the\s+)?(?:time\s+)?estimate\s+for\s+(?:my\s+)?(?:task\s+)?(.+))$/i);
  if(show)return {kind:'show',subject:(show[1]||show[2]).trim()};
  return null;
 }
