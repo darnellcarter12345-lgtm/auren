@@ -1,3 +1,4 @@
+// AUREN v2.70 — Grounded, on-demand personal recommendations from saved tasks, plans and approved preferences.
 // AUREN v2.69 — Verified topic-specific memory search, provenance clarity and privacy-first recall.
 // AUREN v2.68 — Confirmed actual task durations, privacy-limited history and adaptive comparisons.
 // AUREN v2.67 — Confirmed task effort estimates and grounded workload fit checks.
@@ -1388,6 +1389,48 @@ function personalRoutineReply(intent){
  parts.push('This is a suggestion based on saved records. I have not scheduled, rescheduled, or completed anything.');
  return parts.join(' ');
 }
+// v2.70 — Optional, on-demand personal recommendations from verified saved facts.
+// Never persist inferred preferences, generate unsolicited messages or modify plans.
+function personalRecommendationIntent(raw){
+ const q=String(raw||'').trim().toLowerCase().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/,'').replace(/[.!?]+$/,'').trim();
+ if(/^(?:give me (?:some |a |my )?(?:personalized |personal |proactive |smart )?(?:recommendations|suggestions|advice)|what do you recommend (?:for me|today|tomorrow)|what would you recommend (?:for me|today|tomorrow)|make (?:me |a )?(?:personalized |personal )?(?:recommendation|suggestion)|what (?:should|could) i do (?:based on what you know about me|based on my saved preferences)|use my (?:saved )?(?:preferences|goals|memories) to (?:recommend|suggest) (?:something|my next step|what to do)|give me a personal recommendation(?: for (?:today|tomorrow))?)$/.test(q))return {date:/\btomorrow\b/.test(q)?shiftedDate(localDate(),1):localDate()};
+ return null;
+}
+async function personalRecommendationReply(intent){
+ const date=intent.date,today=localDate(),now=Date.now();
+ const label=date===today?'today':date===shiftedDate(today,1)?'tomorrow':readableDate(date);
+ const upcoming=plans.filter(p=>p.date===date&&eventTimestamp(p)>=now).sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+ const overdue=aurenTasks.filter(t=>t.repeat==='once'&&!isTaskComplete(t)&&t.due<date).sort((a,b)=>a.due.localeCompare(b.due));
+ const open=tasksOnDate(date).filter(t=>!isTaskComplete(t,date));
+ const firstTask=overdue[0]||open.find(t=>t.repeat==='once')||open[0]||null;
+ const reminder=reminders.filter(m=>!m.fired&&Number.isFinite(Date.parse(m.at))&&Date.parse(m.at)>=now&&localDate(new Date(m.at))===date).sort((a,b)=>Date.parse(a.at)-Date.parse(b.at))[0];
+ const parts=[`Here is an on-demand recommendation for ${label}, using only your saved AUREN information.`];
+ if(upcoming.length){
+  const p=upcoming[0];parts.push(`Keep your saved appointment, ${p.title} at ${spokenClock(p.time)}, in view.`);
+  if(date===today&&eventTimestamp(p)-now<=3600000)parts.push('It starts within the hour. Allow preparation and travel time, which I cannot verify.');
+ }
+ if(firstTask){
+  const reason=firstTask===overdue[0]?'because it is overdue':firstTask.repeat==='once'?'because it is an unfinished scheduled task':'because it is an unfinished saved routine';
+  parts.push(`One possible next step: ${firstTask.title}, ${reason}.`);
+  const estimated=Number(firstTask.estimatedMinutes);
+  if(Number.isFinite(estimated)&&estimated>0)parts.push(`You estimated ${estimated} minutes for this task; that is not a guaranteed finish time.`);
+ }
+ if(reminder)parts.push(`You also saved a reminder: ${reminder.text}.`);
+ // Keep personal context separate: match only the concrete recommended task, not the entire schedule.
+ // Merely having a saved preference never proves user currently wants the suggested activity.
+ if(firstTask){
+  try{
+   const saved=safePersonalMemories(await Mem.listMemories());
+   const relevant=relevantPersonalMemories(firstTask.title,saved,2);
+   const preferences=relevant.filter(m=>['preference','goal','interest','routine'].includes(m.category));
+   if(preferences.length)parts.push(`For optional context, you have a saved ${preferences[0].category} related to this topic: ${String(preferences[0].text).slice(0,140)}. That does not make this task mandatory.`);
+  }catch(e){/* A memory-storage failure must not break basic planning. */}
+ }
+ if(!upcoming.length&&!firstTask&&!reminder)parts.push('I found no relevant upcoming appointments, unfinished tasks, or reminders for that day. I cannot see unsaved commitments. You can save a goal or task if you want more tailored suggestions.');
+ parts.push('This is a suggestion, not a scheduled action. I have not saved, changed or completed anything.');
+ return parts.join(' ');
+}
+
 // v2.63: One read-only recommendation from confirmed records, never inferred obligations.
 function unifiedDayIntent(raw){
  const q=String(raw||'').trim().toLowerCase().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/,'').replace(/[.!?]+$/,'').trim();
@@ -3319,6 +3362,14 @@ async function send(text) {
     const decisionRequest=planningDecisionIntent(text);
     if(decisionRequest){
       await addMessage('auren',planningDecisionReply(decisionRequest));
+      return;
+    }
+    // v2.70: On-demand personalized suggestions, grounded in confirmed records.
+    const personalSuggestion=personalRecommendationIntent(text);
+    if(personalSuggestion){
+      noteDayConversation(personalSuggestion.date,'day');
+      rememberScheduleFocus(personalSuggestion.date);
+      await addMessage('auren',await personalRecommendationReply(personalSuggestion));
       return;
     }
     // v2.63: Unified read-only daily recommendation before individual planning routes.
