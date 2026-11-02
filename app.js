@@ -1,4 +1,4 @@
-// AUREN v2.90 — Defensive schedule intent engine, verified reminder-aware speech, cache update.
+// AUREN v2.91 — Defensive schedule intent engine, verified reminder-aware speech, cache update.
 // AUREN v2.89 — Fix undefined schedule parser variable; unify spoken briefing and Your Day truth.
 // AUREN v2.88 — Unified Your Day schedule reading and saved-record truth.
 // AUREN v2.87 — Flexible reminder phrasing and non-repeating clarification.
@@ -683,17 +683,31 @@ function aurenReminderPlacementReply(raw){
 }
 
 function eventTimestamp(p){const [y,m,d]=p.date.split('-').map(Number);const [h,min]=p.time.split(':').map(Number);return new Date(y,m-1,d,h,min).getTime();}
+function aurenReminderTitle(text){
+ // Older spoken requests sometimes saved an extra 'at' before 'to'. Repair
+ // presentation only; never silently rewrite the user's stored reminder.
+ return String(text||'').trim().replace(/^(?:at\s+)+(to\b)/i,'$1').replace(/\s+/g,' ');
+}
 function upcomingItems(){
- const now=Date.now();const all=[];
- for(const p of plans){const when=eventTimestamp(p);if(when>=now)all.push({when,text:p.title+' · '+readableDate(p.date)+' at '+formatClock(p.time)});}
- for(const r of reminders){const when=new Date(r.at).getTime();if(!r.fired&&Number.isFinite(when)&&when>=now)all.push({when,text:'Reminder: '+r.text+' · '+new Date(when).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})});}
- return all.sort((a,b)=>a.when-b.when).slice(0,6);
+ const now=Date.now(),today=localDate(),all=[],recent=[];
+ for(const p of plans){const when=eventTimestamp(p);if(when>=now)all.push({when,text:'Appointment: '+p.title+' · '+readableDate(p.date)+' at '+formatClock(p.time)});}
+ for(const r of reminders){
+  const when=Date.parse(r.at);if(!Number.isFinite(when))continue;
+  const label='Reminder: '+aurenReminderTitle(r.text)+' · '+new Date(when).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'});
+  if(!r.fired&&when>=now)all.push({when,text:label});
+  else if(localDate(new Date(when))===today)recent.push({when,text:label+' · Time passed'});
+ }
+ all.sort((a,b)=>a.when-b.when);
+ // If there are no future items, acknowledge reminders still visible today.
+ // Never say the day is empty if the current Your Day view contains a record.
+ if(!all.length && recent.length)return recent.sort((a,b)=>b.when-a.when).slice(0,3);
+ return all.slice(0,6);
 }
 let upNextIndex=0, homeMessageUntil=0;
 function renderUpNext(){
  const reply=$('latestReply');if(!reply)return;
  const items=upcomingItems();
- reply.textContent=items.length?items[upNextIndex%items.length].text:'Nothing coming up. Your day is clear.';
+ reply.textContent=items.length?items[upNextIndex%items.length].text:(plansFor(localDate()).length||aurenRemindersForView(localDate()).length?'Nothing else upcoming. Check Your Day for earlier plans and reminders.':'Nothing coming up. Your day is clear.');
  reply.setAttribute('aria-label','Upcoming plans and reminders');
 }
 function refreshUpNext(){upNextIndex=0;renderUpNext();}
@@ -708,7 +722,7 @@ function checkReminders(){
    continue;
  }
  // Clearly mark a due reminder even if the user is in another section.
- showStatus('Reminder: '+r.text,'info');
+ showStatus('Reminder: '+aurenReminderTitle(r.text),'info');
  if(document.visibilityState==='visible'){
    // Reminder banner handles alert; upcoming ticker continues cycling.
    // Only speak when spoken replies were enabled already; never switch on audio unexpectedly.
@@ -731,7 +745,7 @@ function prepareCalendarOffer(kind, item) {
   return; // No device-calendar downloads; saved items belong to AUREN's own planner.
   const when = kind==='appointment' ? eventTimestamp(item) : new Date(item.at).getTime();
   if(!Number.isFinite(when)) return;
-  calendarOffer={kind, title:kind==='appointment'?item.title:'Reminder: '+item.text,
+  calendarOffer={kind, title:kind==='appointment'?item.title:'Reminder: '+aurenReminderTitle(item.text),
     when, duration:kind==='appointment'?Math.max(1, Number(item.duration)||60):5};
 }
 function downloadCalendarFile(offer) {
@@ -1942,7 +1956,7 @@ function aurenScheduleRead(date=localDate(),scope='day') {
   for(const item of combined.slice(0,7)){
    const stamp=new Date(item.at);
    const day=localDate(stamp), hm=`${String(stamp.getHours()).padStart(2,'0')}:${String(stamp.getMinutes()).padStart(2,'0')}`;
-   pieces.push(`${item.kind==='reminder'?'Reminder':'Appointment'}: ${item.text}, ${scope==='week'?readableDate(day)+' at ':''}${spokenClock(hm)}.`);
+   pieces.push(`${item.kind==='reminder'?'Reminder':'Appointment'}: ${item.kind==='reminder'?aurenReminderTitle(item.text):item.text}, ${scope==='week'?readableDate(day)+' at ':''}${spokenClock(hm)}.`);
   }
   if(combined.length>7)pieces.push(`And ${combined.length-7} more saved items.`);
  }else pieces.push(`I don't see any appointments or reminders in Your Day for ${period}.`);
@@ -2016,7 +2030,7 @@ function renderDay(){
   const card=el('div','day-event');card.dataset.aurenReminderId=r.id;
   const clock=el('div','day-event-clock',(plannerScope==='week'?weekdayNames[when.getDay()].slice(0,3)+' · ':'')+formatClock(time));
   const content=el('div','day-event-content');
-  content.append(el('div','day-event-title','Reminder: '+r.text));
+  content.append(el('div','day-event-title','Reminder: '+aurenReminderTitle(r.text)));
   const state=el('small','hint',r.fired?'Reminder time passed':'Saved reminder · Alerts while AUREN is open');
   content.append(state);
   const remove=el('button','remove-plan','×');remove.type='button';
@@ -2225,8 +2239,16 @@ function normalizedPlannerRequest(raw){
  if(/^(?:i (?:need|have|want|plan) to|i'm (?:going|heading)|we (?:need|have) to)\b/i.test(t))return null;
  const lead=t.match(/^(?:(?:hey\s+)?auren[,! ]*)?(?:(?:can|could|would|will) you\s+|i(?:'d| would) like (?:you )?to\s+|please\s+)(.*)$/i);
  const cleaned=(lead?lead[1]:t).replace(/[?.!]+$/,'').trim();
+ // Reminder intent always belongs to the reminder tool, never the planner.
+ if(/\b(?:remind me|reminder|don't let me forget|notify me|alert me)\b/i.test(cleaned))return null;
+ // An appointment is an event occupying time; understand ordinary requests,
+ // including indirect phrasing, without treating a casual statement as a save.
+ const natural=cleaned.match(/^(?:i(?:'d| would) like to|i want to|i need to|help me|let's|can we|could we|would you mind|do you mind|please)\s+(?:have you\s+)?(?:put|add|book|arrange|organize|schedule|set up|create|plan|block off|reserve|make time for|pencil in)\s+(.+)$/i);
+ if(natural)return 'schedule '+natural[1].replace(/\s+(?:on|in|into)\s+(?:my\s+)?(?:calendar|schedule|planner|your day)$/i,'').trim();
+ const calendarEnd=cleaned.match(/^(?:i(?:'d| would) like|i want|i need)\s+(.+?)\s+(?:on|in|into)\s+(?:my\s+)?(?:calendar|schedule|planner|your day)$/i);
+ if(calendarEnd)return 'schedule '+calendarEnd[1].trim();
  // Common ways of asking to put a new appointment on the calendar.
- if(/^(?:put|add|schedule|book|create|set up|plan|move|change|reschedule|remove|delete|cancel)\b/i.test(cleaned))return cleaned;
+ if(/^(?:put|add|schedule|book|create|set up|plan|arrange|organize|pencil in|block off|reserve|move|change|reschedule|remove|delete|cancel)\b/i.test(cleaned))return cleaned;
  const alternative=cleaned.match(/^(?:make|set)\s+(?:me\s+)?(?:an?\s+)?(?:appointment|event|plan)\s+(?:for\s+)?(.+)$/i);
  if(alternative)return 'schedule '+alternative[1];
  const record=cleaned.match(/^(?:put|write|mark)\s+(.+?)\s+(?:on|in|into)\s+(?:my\s+)?(?:calendar|schedule|planner)$/i);
@@ -2253,6 +2275,7 @@ async function planSpeech(text){
  }
  const normalized=normalizedPlannerRequest(raw);
  let t=scheduleForMe ? 'schedule '+scheduleForMe[1].trim() : (normalized||raw);
+ t=t.replace(/^(?:arrange|organize|pencil in|block off|reserve|make time for)\b/i,'schedule');
  if (planClarification?.kind === 'subject') {
    if (/^(?:cancel|never mind|not now|no thanks)\b/i.test(raw)) {planClarification=null;return 'No appointment has been scheduled.';}
    if (!/^(?:schedule|book|add|put|plan)\b/i.test(t)) t='schedule '+raw;
