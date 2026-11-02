@@ -1,5 +1,6 @@
+// AUREN v2.55 — Verified intent handoffs and safe confirmation routing.
 // AUREN v2.54 — Conversational decision routing, bounded clarification and safe action handling.
-// AUREN v2.54 — verified save status, consistent conversational facts, and safe confirmations.
+// AUREN v2.53 — verified save status, consistent conversational facts, and safe confirmations.
 // AUREN v2.52 — safer appointment and place references, targeted clarification.
 // AUREN v2.51 — Longer conversation continuity, bounded non-sensitive topic trail.
 // AUREN v2.50 — Multi-turn appointment references and contextual people awareness.
@@ -2571,6 +2572,7 @@ function contextualMoveTurn(raw){
  pendingPlan={kind:'move',id:event.id,title:event.title,date:event.date,time,duration:event.duration||60};
  return conflictAdvice(pendingPlan)||`Shall I move ${event.title} to ${formatClock(time)} on ${readableDate(event.date)}?`;
 }
+// v2.55: All pending writers (task, memory, planner, meeting draft) own their confirmations.
 // v2.54: A narrow decision gate for ambiguous confirmations and action requests.
 // Never invent an action, or allow a vague "yes" to trigger a change with no pending proposal.
 let aurenClarificationState = {kind:'', at:0, repeats:0};
@@ -2579,9 +2581,11 @@ function aurenConversationDecision(raw){
  const q=String(raw||'').trim();
  const simple=q.toLowerCase().replace(/[.!?]+$/,'').trim();
  const hasPending=!!(pendingPlan||pendingReminder||planClarification||planningOffer||personalPendingInterest);
- const hasTaskPending=typeof taskPending !== 'undefined' && !!taskPending;
+ const hasTaskPending=!!pendingTaskChange;
+ const hasMemoryPending=!!butler.pending;
+ const hasMeetingDraft=!!(contextualMeetingDraft && Date.now()-contextualMeetingDraft.at<5*60000);
  // Explicit full commands always continue through their specialist handler.
- if(hasPending||hasTaskPending)return null;
+ if(hasPending||hasTaskPending||hasMemoryPending||hasMeetingDraft)return null;
  const bareConsent=/^(?:yes|yep|yeah|sure|correct|confirm|go ahead|do it|please do|okay|ok|sounds good|no|nope|cancel|not now)$/i.test(simple);
  const vagueAction=/^(?:(?:can|could|would) you )?(?:do that|do it for me|make that happen|go ahead with that|set that up)$/i.test(simple);
  if(bareConsent||vagueAction){
@@ -2648,6 +2652,8 @@ async function send(text) {
   // A deliberate topic switch discards stale AI conversational references.
   if(conversationTopicChange(text)){
     aurenRetireConversationTopic();
+    contextualMeetingDraft=null;
+    aurenClarificationState={kind:'',at:0,repeats:0};
     await addMessage('user',text);
     await addMessage('auren','Certainly. What would you like to discuss?');
     return;
@@ -2657,6 +2663,8 @@ async function send(text) {
   const topicShift=aurenTopicShift(text);
   if(topicShift.changed){
     aurenRetireConversationTopic();
+    contextualMeetingDraft=null;
+    aurenClarificationState={kind:'',at:0,repeats:0};
     text=topicShift.question;
   }
   // Respond only when a safe, grounded decision is possible. Pending calendar/task
