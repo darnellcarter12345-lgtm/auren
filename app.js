@@ -1,3 +1,4 @@
+// AUREN v2.88 — Unified Your Day schedule reading and saved-record truth.
 // AUREN v2.87 — Flexible reminder phrasing and non-repeating clarification.
 // AUREN v2.86 — Patient listening, reduced accidental interruptions.
 // AUREN v2.85 — Context-aware schedule clarification and corrected Safari loader.
@@ -974,13 +975,7 @@ $('viewDay').onclick=()=>setPlannerScope('day');$('viewWeek').onclick=()=>setPla
 $('briefDay').onclick=()=>setBriefingScope('day');$('briefWeek').onclick=()=>setBriefingScope('week');
 const weatherCityField=document.createElement('input');weatherCityField.id='weatherCity';weatherCityField.type='text';weatherCityField.maxLength=80;weatherCityField.setAttribute('aria-label','Weather city');weatherCityField.placeholder='Weather city';weatherCityField.value=localStorage.getItem('auren_weather_city')||'Dallas';const weatherCityWrap=document.createElement('label');weatherCityWrap.className='hint';weatherCityWrap.textContent='Weather city ';weatherCityWrap.append(weatherCityField);$('settings').append(weatherCityWrap);
 $('weatherCity').addEventListener('change',()=>{const city=$('weatherCity').value.trim().slice(0,80); if(city){localStorage.setItem('auren_weather_city',city); $('weatherCity').value=city;}});
-function weekSummary(date){
- const items=weekItems(date);
- if(!items.length)return 'There are no plans saved for this week. That is only what is in this planner.';
- const groups=new Map();for(const p of items){const name=weekdayNames[parseISO(p.date).getDay()];if(!groups.has(name))groups.set(name,[]);groups.get(name).push(`${p.title} at ${spokenClock(p.time)}`);}
- const spoken=[...groups].map(([day,entries])=>`${day}: ${entries.slice(0,3).join(', ')}${entries.length>3?', and more':''}`).join('. ');
- return `This week you have ${items.length} ${items.length===1?'plan':'plans'}. ${spoken}.`;
-}
+function weekSummary(date){return aurenScheduleRead(date,'week').text;}
 function requestedScope(t){return /\b(?:this week|next week|my week|the week|weekly|whole week)\b/i.test(t)?'week':'day';}
 function weekOrDaySummary(date,scope){return scope==='week'?weekSummary(date):planSummary(date);}
 function extractWeekdayDate(t,baseDate=localDate()){
@@ -1889,14 +1884,7 @@ function dailyIntelligenceIntent(t){
   if(/^(?:how(?:'s| is) my (?:day|schedule|week)(?: looking)?|how(?:'s| is) (?:today|tomorrow|this week) looking|what(?:'s| is) (?:the )?(?:plan|priority|schedule) for (?:today|tomorrow|this week)|give me (?:a|my) (?:quick )?(?:day|daily|weekly|morning) (?:overview|briefing|summary)|what should i (?:focus on|prioritize) (?:today|tomorrow|this week)|any (?:schedule )?conflicts (?:today|tomorrow|this week)?|am i (?:busy|free) (?:today|tomorrow|this week))$/.test(q))return {date:parseDateIntent(q)||localDate(),scope:/\b(?:week|weekly)\b/.test(q)?'week':'day'};
   return null;
 }
-function spokenDayIntelligence(date,scope='day'){
-  const report=savedDayIntelligence(date,scope);
-  if(!report.events.length&&!report.due.length)return `Based on your AUREN planner, ${scope==='week'?'this week':'that day'} has no saved appointments or reminders. I can't tell whether you have plans outside AUREN.`;
-  let text=report.spoken;
-  if(report.conflictPairs.length)text+=' Would you like me to review the conflicting appointments?';
-  else if(report.next)text+=' I can help you plan around it if you wish.';
-  return text;
-}
+function spokenDayIntelligence(date,scope='day'){return aurenScheduleRead(date,scope).text;}
 // v2.35: Only inherit calendar context from an actual day-summary conversation.
 // Expire it quickly so unrelated questions never get hijacked by planner logic.
 let dayConversation=null;
@@ -1932,7 +1920,46 @@ function dayFollowupReply(raw){
     ? `Next is ${future[0].title} on ${readableDate(future[0].date)} at ${spokenClock(future[0].time)}.`
     : 'You have no upcoming appointments saved for that period in AUREN.';
 }
-function planSummary(date){const items=plansFor(date); if(!items.length)return 'You have nothing scheduled for this day.';const names=items.slice(0,5).map(p=>`${p.title} at ${spokenClock(p.time)}`).join(', ');return `You have ${items.length} ${items.length===1?'plan':'plans'}: ${names}${items.length>5?', and others':''}.`;}
+// One truthful read model for speech, daily briefings and Your Day.
+// This includes the same reminder records shown by renderDay(). No records are written.
+function aurenScheduleRead(date=localDate(),scope='day') {
+ const first=scope==='week'?weekStart(date):date;
+ const last=scope==='week'?shiftedDate(first,6):date;
+ const events=plans.filter(x=>x.date>=first&&x.date<=last).slice().sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+ const notices=aurenRemindersForView(date,scope).slice();
+ const tasks=[];
+ for(let day=first;day<=last;day=shiftedDate(day,1)){
+  for(const task of tasksOnDate(day))if(!isTaskComplete(task,day))tasks.push({task,day});
+ }
+ const combined=[...events.map(x=>({kind:'appointment',at:eventTimestamp(x),text:x.title})),...notices.map(x=>({kind:'reminder',at:Date.parse(x.at),text:x.text}))]
+   .filter(x=>Number.isFinite(x.at)).sort((a,b)=>a.at-b.at);
+ const period=scope==='week'?'this week':date===localDate()?'today':date===shiftedDate(localDate(),1)?'tomorrow':readableDate(date);
+ const pieces=[];
+ if(combined.length){
+  pieces.push(`In Your Day for ${period}, I found ${events.length} appointment${events.length===1?'':'s'} and ${notices.length} reminder${notices.length===1?'':'s'}.`);
+  for(const item of combined.slice(0,7)){
+   const stamp=new Date(item.at);
+   const day=localDate(stamp), hm=`${String(stamp.getHours()).padStart(2,'0')}:${String(stamp.getMinutes()).padStart(2,'0')}`;
+   pieces.push(`${item.kind==='reminder'?'Reminder':'Appointment'}: ${item.text}, ${scope==='week'?readableDate(day)+' at ':''}${spokenClock(hm)}.`);
+  }
+  if(combined.length>7)pieces.push(`And ${combined.length-7} more saved items.`);
+ }else pieces.push(`I don't see any appointments or reminders in Your Day for ${period}.`);
+ if(tasks.length)pieces.push(`You also have ${tasks.length} unfinished scheduled task${tasks.length===1?'':'s'}${scope==='week'?' this week':''}: ${tasks.slice(0,3).map(x=>x.task.title).join(', ')}${tasks.length>3?', and more':''}.`);
+ if(!combined.length&&!tasks.length)pieces.push('This reflects only the records saved in AUREN.');
+ return {events,notices,tasks,combined,text:pieces.join(' ')};
+}
+function aurenScheduleQuery(raw){
+ const q=String(raw||'').trim().toLowerCase().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/,'').replace(/[.!?]+$/,'').trim();
+ if(/^(?:add|save|put|create|schedule|book|move|change|cancel|delete|remove|set|remind|mark|complete)\b/.test(q))return null;
+ const direct=/^(?:(?:can|could|would) you (?:please )?)?(?:go over|review|read|check|show|list|tell me about|give me|walk me through|pull up)\s+(?:(?:what(?:'s| is) )?(?:on|in) )?(?:my |the |your )?(?:schedule|calendar|planner|your day|day section|appointments|plans|reminders)(?:\s+(?:for|on|today|tomorrow|this week|next week|tonight).*)?$/.test(q);
+ const general=/^(?:what(?:'s| is| do i have| have i got)|do i have|is there|are there|have i got|anything)\b.*\b(?:on my (?:schedule|calendar|planner)|in (?:your day|my day)|scheduled|planned|coming up|appointments|reminders|my (?:schedule|calendar|planner))\b/.test(q);
+ const bare=/^(?:my )?(?:schedule|calendar|planner|your day|day section|appointments|plans|reminders)(?:\s+(?:today|tomorrow|this week|next week))?$/.test(q);
+ if(!direct&&!general&&!bare&&!simple)return null;
+ const scope=/\b(?:this week|next week|weekly|week)\b/.test(q)?'week':'day';
+ const date=/\bnext week\b/.test(q)?shiftedDate(weekStart(localDate()),7):parseDateIntent(q)||localDate();
+ return {date,scope};
+}
+function planSummary(date){return aurenScheduleRead(date,'day').text;}
 function renderDay(){
  const node=$('dayTimeline');
  node.replaceChildren();
@@ -3523,6 +3550,16 @@ async function send(text) {
     await addMessage('user',text);
     const answer=personalCommand(text);
     await addMessage('auren',answer || 'I could not read your saved name. Please check Your profile in Settings.');
+    return;
+  }
+  // v2.88: Read the same appointments AND reminders displayed by Your Day.
+  // Read requests never enter AI, which cannot verify local records.
+  const scheduleReadIntent=aurenScheduleQuery(text);
+  if(scheduleReadIntent){
+    await addMessage('user',text);
+    noteDayConversation(scheduleReadIntent.date,scheduleReadIntent.scope);
+    rememberScheduleFocus(scheduleReadIntent.date);
+    await addMessage('auren',aurenScheduleRead(scheduleReadIntent.date,scheduleReadIntent.scope).text);
     return;
   }
   // Handle the direct response to a recent Your Day clarification first.
