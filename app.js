@@ -1,3 +1,4 @@
+// AUREN v2.35 — grounded day follow-ups and concise, context-safe daily guidance.
 // AUREN v2.34 — grounded daily intelligence, conflicts, priorities and context.
 // AUREN v2.33 — focused nearby popup: results or directions and close.
 // AUREN v2.32 — reliable actions, contextual place follow-ups, honest recommendations.
@@ -903,7 +904,7 @@ function savedDayIntelligence(date=localDate(), scope='day') {
 }
 function dailyIntelligenceIntent(t){
   const q=String(t||'').trim().toLowerCase().replace(/[.!?]+$/,'');
-  if(/^(?:how(?:'s| is) my (?:day|schedule|week)(?: looking)?|how(?:'s| is) (?:today|tomorrow|this week) looking|what(?:'s| is) (?:the )?(?:plan|priority|schedule) for (?:today|tomorrow|this week)|give me (?:a|my) (?:quick )?(?:day|daily|weekly|morning) (?:overview|briefing|summary)|what should i (?:focus on|prioritize) (?:today|tomorrow|this week)|any (?:schedule )?conflicts (?:today|tomorrow|this week)?|am i (?:busy|free) (?:today|tomorrow|this week))$/.test(q))return {date:parseDateIntent(q)||localDate(),scope:/(?:week|weekly)/.test(q)?'week':'day'};
+  if(/^(?:how(?:'s| is) my (?:day|schedule|week)(?: looking)?|how(?:'s| is) (?:today|tomorrow|this week) looking|what(?:'s| is) (?:the )?(?:plan|priority|schedule) for (?:today|tomorrow|this week)|give me (?:a|my) (?:quick )?(?:day|daily|weekly|morning) (?:overview|briefing|summary)|what should i (?:focus on|prioritize) (?:today|tomorrow|this week)|any (?:schedule )?conflicts (?:today|tomorrow|this week)?|am i (?:busy|free) (?:today|tomorrow|this week))$/.test(q))return {date:parseDateIntent(q)||localDate(),scope:/\b(?:week|weekly)\b/.test(q)?'week':'day'};
   return null;
 }
 function spokenDayIntelligence(date,scope='day'){
@@ -911,8 +912,45 @@ function spokenDayIntelligence(date,scope='day'){
   if(!report.events.length&&!report.due.length)return `Based on your AUREN planner, ${scope==='week'?'this week':'that day'} has no saved appointments or reminders. I can't tell whether you have plans outside AUREN.`;
   let text=report.spoken;
   if(report.conflictPairs.length)text+=' Would you like me to review the conflicting appointments?';
-  else if(report.next)text+=' Your next saved appointment is the most immediate scheduled priority; I cannot judge your personal priorities without more context.';
+  else if(report.next)text+=' I can help you plan around it if you wish.';
   return text;
+}
+// v2.35: Only inherit calendar context from an actual day-summary conversation.
+// Expire it quickly so unrelated questions never get hijacked by planner logic.
+let dayConversation=null;
+function noteDayConversation(date,scope){dayConversation={date,scope,at:Date.now()};}
+function dayFollowupReply(raw){
+  if(!dayConversation || Date.now()-dayConversation.at>5*60*1000)return null;
+  const q=String(raw||'').trim().toLowerCase().replace(/[.!?]+$/,'');
+  const period=/^(?:what about|how about|and|what's on|what is on) (?:my )?(today|tomorrow|this week|next week)$/.exec(q);
+  if(period){
+    const date=parseDateIntent(period[1])||localDate();
+    const scope=period[1].includes('week')?'week':'day';
+    noteDayConversation(date,scope);
+    return spokenDayIntelligence(date,scope);
+  }
+  const allowed=/^(?:what(?:'s| is) next|what (?:else|comes after that)|anything else|what about (?:the )?reminders|any reminders|what reminders|when(?:'s| is) (?:my |the )?next (?:appointment|meeting|plan)|how much (?:free )?time (?:do i have|is there)|any (?:schedule )?conflicts|what about (?:the )?conflicts|tell me (?:more )?about (?:the )?conflicts|which (?:ones|appointments) overlap|what should i do first|what should i focus on|what's my priority|and after that)$/i;
+  if(!allowed.test(q))return null;
+  dayConversation.at=Date.now();
+  const {date,scope}=dayConversation;
+  const report=savedDayIntelligence(date,scope);
+  const future=report.events.filter(p=>eventTimestamp(p)>=Date.now());
+  if(/reminder/.test(q))return report.due.length
+    ? `You have ${report.due.length} saved reminder${report.due.length===1?'':'s'}: ${report.due.slice(0,3).map(r=>`${r.text}, ${new Date(r.at).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})}`).join('; ')}.`
+    : 'No reminders are saved for that period in AUREN.';
+  if(/conflict|overlap/.test(q))return report.conflictPairs.length
+    ? 'These saved appointments overlap: '+report.conflictPairs.slice(0,3).map(([a,b])=>`${a.title} and ${b.title} on ${readableDate(a.date)}`).join('; ')+'. No changes have been made.'
+    : 'I found no overlapping appointments in AUREN for that period.';
+  if(/free time/.test(q))return 'I can see gaps between saved appointments, but that does not guarantee you are free. Ask me to find an opening if you want a time suggestion.';
+  if(/else|after that/.test(q))return future.length>1
+    ? `After ${future[0].title}, you have ${future[1].title} on ${readableDate(future[1].date)} at ${spokenClock(future[1].time)}.`
+    : future.length===1?'No other future appointments are saved in AUREN for that period.':'No further appointments are saved for that period.';
+  if(/priority|focus|first/.test(q))return future.length
+    ? `Your next saved commitment is ${future[0].title} on ${readableDate(future[0].date)} at ${spokenClock(future[0].time)}. Is that what you want to prioritize?`
+    : 'I cannot identify your personal priority from the saved planner alone. What would you like to accomplish?';
+  return future.length
+    ? `Next is ${future[0].title} on ${readableDate(future[0].date)} at ${spokenClock(future[0].time)}.`
+    : 'You have no upcoming appointments saved for that period in AUREN.';
 }
 function planSummary(date){const items=plansFor(date); if(!items.length)return 'You have nothing scheduled for this day.';const names=items.slice(0,5).map(p=>`${p.title} at ${spokenClock(p.time)}`).join(', ');return `You have ${items.length} ${items.length===1?'plan':'plans'}: ${names}${items.length>5?', and others':''}.`;}
 function renderDay(){
@@ -1945,10 +1983,14 @@ async function send(text) {
     // Grounded personal-day questions take priority over generic AI; never invent plans.
     const dayIntent=dailyIntelligenceIntent(text);
     if(dayIntent){
+      noteDayConversation(dayIntent.date,dayIntent.scope);
       const response=spokenDayIntelligence(dayIntent.date,dayIntent.scope);
       await addMessage('auren',response);
       return;
     }
+    // Interpret brief day follow-ups only after a recent, grounded day conversation.
+    const dayFollowup=dayFollowupReply(text);
+    if(dayFollowup!==null){ await addMessage('auren',dayFollowup); return; }
     if(/^(?:tell me (?:more )?about|review|show|explain) (?:my |the )?(?:conflict|conflicts|overlapping appointments)[.!? ]*$/i.test(text.trim())){
       const report=savedDayIntelligence(localDate(),'week');
       await addMessage('auren',report.conflictPairs.length
