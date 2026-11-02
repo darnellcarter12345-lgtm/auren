@@ -1,3 +1,4 @@
+// AUREN v2.57 — end-to-end action handoff and regression guards.
 // AUREN v2.56 — Regression safeguards for pending actions and topic changes.
 // AUREN v2.55 — Verified intent handoffs and safe confirmation routing.
 // AUREN v2.54 — Conversational decision routing, bounded clarification and safe action handling.
@@ -1142,7 +1143,9 @@ function taskConfirmation(text){
   return change.kind==='delete'?`Removed ${task.title}.`:`Marked ${task.title} complete${task.repeat==='once'?'':' for today'}.`;
  }
  if(/^(?:actually|instead|change that|make it)\b/i.test(q)){pendingTaskChange=null;return null;}
- // A completely different request should not get stuck behind a confirmation.
+ // Questions should not silently discard a pending task confirmation.
+ if(/^(?:what|why|how|when|where|who|is|are|do|does|can|could|would|will)\b/i.test(q))return null;
+ // A completely different request ends this task draft.
  pendingTaskChange=null;return null;
 }
 
@@ -2679,6 +2682,24 @@ async function send(text) {
     aurenRetireConversationTopic();
     aurenCancelPendingDrafts();
     text=topicShift.question;
+  }
+  // v2.57: An explicit NEW command ends an unfinished, different kind of draft.
+  // This prevents yesterday's unanswered confirmation from swallowing a new action.
+  // Bare yes/no are deliberately excluded: they belong to the awaiting specialist.
+  const explicitNewTask=/^(?:(?:please|can you|could you)\s+)?(?:add (?:a )?task|create (?:a )?task|new task|i need to finish|i have to finish|mark (?:my |the )?task|i finished (?:my |the )?)/i.test(text.trim());
+  const explicitNewAppointment=/^(?:(?:please|can you|could you)\s+)?(?:schedule|book|add (?:an? )?(?:appointment|meeting|event)|move (?:my |the )?(?:appointment|meeting)|reschedule (?:my |the )?(?:appointment|meeting))/i.test(text.trim());
+  if(explicitNewTask && (pendingPlan||planClarification||contextualMeetingDraft)){
+    pendingPlan=null;planClarification=null;contextualMeetingDraft=null;
+  }
+  if(explicitNewAppointment && pendingTaskChange)pendingTaskChange=null;
+  if((explicitNewTask||explicitNewAppointment) && butler.pending)butler.pending=null;
+  // A bare confirmation with an unresolved memory prompt belongs to the memory
+  // specialist, not the task handler or a generic AI conversation.
+  if(butler.pending && !pendingTaskChange && !pendingPlan && !pendingReminder &&
+     /^(?:yes|yeah|yep|sure|confirm|go ahead|please do|no|nope|cancel)[.!? ]*$/i.test(text.trim())){
+    await addMessage('user',text);
+    await presentResult(await butler.handle(text));
+    return;
   }
   // Respond only when a safe, grounded decision is possible. Pending calendar/task
   // confirmations continue to their existing handlers, never through this gate.
