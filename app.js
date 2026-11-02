@@ -1,3 +1,4 @@
+// AUREN v3.17 — iPhone speech output recovery and audible reply fallback.
 // AUREN v3.16 — contextual replies and iPhone Safari speech playback.
 // AUREN v3.15 — Fix unbound record-edit pending state during voice and text requests.
 // AUREN v3.14 — Spoken, opt-in check-ins independent of microphone listening.
@@ -108,7 +109,7 @@ import { NeedsConfirmationError, historySafe, classify } from './sensitive.js';
 import { Butler, isSessionNote } from './butler.js';
 import { buildBackup, encryptBackup, decryptBackup, validateBackup, applyPlan, describeReport, LIMITS } from './backup.js';
 import { loadSettings, saveSettings } from './settings.js';
-import { createVoice } from './voice.js?v=2.9.9';
+import { createVoice } from './voice.js?v=3.17';
 import { createIPhoneRecorder } from './iphone-voice.js?v=2.9.5';
 import { getAIEndpoint, setAIEndpoint, askAI } from './ai.js';
 import { getWeatherBriefing } from './weather.js';
@@ -160,6 +161,19 @@ speechPanel.setAttribute('aria-label','Live voice conversation');
 speechPanel.style.cssText='box-sizing:border-box;width:min(92%,680px);margin:14px auto 12px;padding:14px 18px;border:1px solid rgba(199,168,104,.38);border-radius:15px;background:rgba(25,27,32,.92);color:#e6d5af;line-height:1.55;text-align:left;min-height:66px;max-height:158px;overflow-y:auto;overflow-wrap:anywhere;font-size:15px;';
 const speechPanelTitle=document.createElement('strong');speechPanelTitle.textContent=''; speechPanelTitle.hidden=true;speechPanelTitle.style.cssText='display:block;font-size:10px;letter-spacing:2px;opacity:.75;margin-bottom:5px;';
 const speechPanelText=document.createElement('div');speechPanelText.textContent='Your conversation appears here when speaking.';
+let aurenSpeechRetryText='';
+const aurenSpeechFallback=document.createElement('button');
+aurenSpeechFallback.type='button';aurenSpeechFallback.textContent='🔊 Tap to hear AUREN';
+aurenSpeechFallback.style.cssText='display:none;margin:10px auto;padding:13px 20px;border-radius:12px;border:1px solid #c9a661;background:#342d22;color:#f7dfb2;font-size:16px;font-weight:700;cursor:pointer';
+aurenSpeechFallback.addEventListener('click',()=>{
+ if(!aurenSpeechRetryText)return;
+ if(!capabilities.speak){showStatus('Speech synthesis is not available in this browser.','error');return;}
+ voice.setEnabled(true);$('speakReplies').checked=true;
+ try{localStorage.setItem(AUREN_SPEECH_PREF,'true');}catch{}
+ voice.primeAudio();aurenSpeechFallback.style.display='none';
+ voice.speak(aurenSpeechRetryText,{manual:true});
+});
+
 const chicagoClock=document.createElement('div');chicagoClock.style.cssText='font-size:11px;opacity:.75;margin-top:8px;';
 const paintChicagoClock=()=>{chicagoClock.textContent='Dallas · '+new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',weekday:'short',hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date());};
 paintChicagoClock();setInterval(paintChicagoClock,30000);
@@ -245,6 +259,13 @@ const voice = createVoice({
     }
   },
   onStatus: msg => {
+    if(aurenIOS){
+      if(/spoken reply unavailable|has not started spoken audio|speech output unavailable|speech did not start|speech playback timed out/i.test(msg)){
+        aurenSpeechFallback.style.display = aurenSpeechRetryText ? 'block' : 'none';
+      } else if(/AUREN speaking|Tap the orb to speak/i.test(msg)){
+        if(/AUREN speaking/i.test(msg))aurenSpeechFallback.style.display='none';
+      }
+    }
     $('voiceStatus').textContent = msg;
     // Derive appearance from the actual microphone mode, never a status phrase.
     if (!aurenIOS) queueMicrotask(() => syncVoiceUI());
@@ -367,6 +388,7 @@ $('panelToggle').addEventListener('click', (event) => {
 let lastOrbTap = 0;
 const orbButton = $('orbControl');
 orbButton.insertAdjacentElement('afterend',speechPanel);
+speechPanel.insertAdjacentElement('afterend',aurenSpeechFallback);
 function activateOrb(event) {
   if (aurenIOS) { void toggleIPhoneRecorder(); return; }
   const now = Date.now();
@@ -2720,6 +2742,7 @@ async function addMessage(role, text, opts = {}) {
     }
   }
   if (role === 'auren' && !opts.err && !opts.replay) rememberLastReply(rec.text);
+  if (role === 'auren' && !opts.err && !opts.silent) aurenSpeechRetryText = String(rec.text||'');
   if(role==='auren' && !opts.err && !opts.replay && !opts.silent) aurenCaptureAssistantQuestion(rec.text);
   drawMessage(rec, opts);
   if (role === 'auren' && !opts.err && !opts.silent) voice.speak(rec.text);
