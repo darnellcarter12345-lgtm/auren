@@ -1,3 +1,4 @@
+// AUREN v2.39 — Adaptive Daily Intelligence: grounded rankings, briefings, and follow-ups.
 // AUREN v2.38 — Proactive daily readiness, context-grounded preparation, and safe follow-through.
 // AUREN v2.37 — grounded next-action priority intelligence and focused schedule guidance.
 // AUREN v2.36 — reliable appointment corrections, confirmed saves and focused follow-through.
@@ -997,6 +998,60 @@ function readinessFollowup(raw){
  if(/^(?:i(?:'ll| will) do that later|not now|maybe later|leave it for later)$/.test(q)){
    readinessContext=null;
    return 'Certainly. I have not scheduled or changed anything.';
+ }
+ return null;
+}
+// v2.39: single adaptive schedule context; all responses derive from saved data.
+let adaptiveContext=null;
+function adaptiveContextSet(date,scope='day',focusId=null){adaptiveContext={date,scope,focusId,at:Date.now()};}
+function adaptiveItems(date,scope='day'){
+ const report=savedDayIntelligence(date,scope), now=Date.now();
+ const items=[...report.events.filter(p=>eventTimestamp(p)>=now).map(p=>({kind:'appointment',when:eventTimestamp(p),text:p.title,id:p.id,time:p.time,date:p.date})),
+ ...report.due.filter(r=>!r.fired&&Date.parse(r.at)>=now).map(r=>({kind:'reminder',when:Date.parse(r.at),text:r.text,id:r.id}))];
+ return {report,items:items.sort((a,b)=>a.when-b.when)};
+}
+function adaptivePriority(date,scope='day'){
+ const {report,items}=adaptiveItems(date,scope);
+ if(!items.length)return 'I have no upcoming appointments or reminders saved for that period. I cannot rank personal goals I do not know.';
+ const next=items[0],mins=Math.max(0,Math.round((next.when-Date.now())/60000));
+ adaptiveContextSet(date,scope,next.id);
+ let answer=`Your next time-sensitive item is ${next.text}, ${next.kind==='reminder'?'a reminder':'an appointment'}, at ${new Date(next.when).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})}.`;
+ if(mins<=30)answer+=' It is coming up soon.';
+ if(report.conflictPairs.length)answer+=` You also have ${report.conflictPairs.length} saved schedule overlap${report.conflictPairs.length===1?'':'s'} to review.`;
+ answer+=' This is based on timing, not a judgment about what matters most to you.';
+ return answer;
+}
+function adaptiveBriefing(date,scope,detail){
+ const {report,items}=adaptiveItems(date,scope);
+ adaptiveContextSet(date,scope,items[0]?.id||null);
+ const label=scope==='week'?'this week':date===localDate()?'today':readableDate(date);
+ if(!items.length)return `For ${label}, AUREN has no upcoming saved appointments or reminders. I cannot see commitments outside your planner.`;
+ const next=items[0];
+ if(detail==='quick')return `For ${label}, you have ${report.events.length} saved appointment${report.events.length===1?'':'s'} and ${report.due.length} reminder${report.due.length===1?'':'s'}. Next is ${next.text} at ${new Date(next.when).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}.${report.conflictPairs.length?' There is a scheduling conflict.':''}`;
+ const events=report.events.slice(0,5).map(e=>`${e.title} at ${spokenClock(e.time)}${scope==='week'?' on '+readableDate(e.date):''}`);
+ const due=report.due.slice(0,4).map(r=>`${r.text} at ${new Date(r.at).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})}`);
+ return `Your detailed briefing for ${label}: ${events.length?'Appointments: '+events.join('; ')+'.':'No appointments saved.'} ${due.length?'Reminders: '+due.join('; ')+'.':'No reminders saved.'} ${report.conflictPairs.length?'Overlaps: '+report.conflictPairs.slice(0,3).map(([a,b])=>`${a.title} and ${b.title}`).join('; ')+'.':'No saved appointment overlaps found.'} Your next time-sensitive item is ${next.text}.`;
+}
+function adaptiveIntent(raw){
+ const q=String(raw||'').trim().toLowerCase().replace(/[.!?]+$/,'').replace(/^(?:hey )?auren[, ]+/,'');
+ const date=parseDateIntent(q)||localDate(),scope=/\b(?:week|weekly)\b/.test(q)?'week':'day';
+ if(/^(?:give me |can i have |i want |read me )?(?:a |my |the )?(?:quick|short|15.second|fifteen.second|detailed|full|long)\s+(?:(?:daily|day|morning|weekly|week)\s+)?(?:briefing|summary|overview|breakdown)(?:\s+(?:for|of)\s+(?:today|tomorrow|this week|next week))?$/.test(q))return {kind:'brief',date,scope,detail:/\b(?:detailed|full|long)\b/.test(q)?'detailed':'quick'};
+ if(/^(?:what(?:'s| is) (?:important|most important|most urgent) (?:today|tomorrow|this week)|rank my (?:priorities|commitments)|what should i prioritize (?:today|tomorrow|this week)|help me prioritize (?:my )?(?:day|week|schedule))$/.test(q))return {kind:'priority',date,scope};
+ return null;
+}
+function adaptiveFollowup(raw){
+ if(!adaptiveContext||Date.now()-adaptiveContext.at>5*60000)return null;
+ const q=String(raw||'').trim().toLowerCase().replace(/[.!?]+$/,'');
+ const {date,scope}=adaptiveContext;
+ if(/^(?:give me (?:more|the details)|go into detail|more detail|the detailed version|tell me more about my day)$/.test(q))return adaptiveBriefing(date,scope,'detailed');
+ if(/^(?:shorter|quick version|summarize that|just the highlights)$/.test(q))return adaptiveBriefing(date,scope,'quick');
+ if(/^(?:what about afterward|what about after that|what comes after (?:that|my meeting)|and afterward|anything after that)$/.test(q)){
+  const {items}=adaptiveItems(date,scope);
+  const index=Math.max(0,items.findIndex(x=>x.id===adaptiveContext.focusId));
+  const next=items[index+1];adaptiveContext.at=Date.now();
+  if(!next)return 'I do not see another upcoming commitment saved for that period after it. That does not mean your time is definitely free.';
+  adaptiveContext.focusId=next.id;
+  return `After that, your next saved ${next.kind} is ${next.text} at ${new Date(next.when).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})}.`;
  }
  return null;
 }
@@ -2114,6 +2169,15 @@ async function send(text) {
       await addMessage('auren',nextOpeningIntelligence());
       return;
     }
+    // v2.39: adaptive briefings and follow-ups, grounded in local saved data.
+    const adaptiveRequest=adaptiveIntent(text);
+    if(adaptiveRequest){
+      const response=adaptiveRequest.kind==='priority' ? adaptivePriority(adaptiveRequest.date,adaptiveRequest.scope)
+        : adaptiveBriefing(adaptiveRequest.date,adaptiveRequest.scope,adaptiveRequest.detail);
+      await addMessage('auren',response);return;
+    }
+    const adaptiveFollow=adaptiveFollowup(text);
+    if(adaptiveFollow!==null){await addMessage('auren',adaptiveFollow);return;}
     // v2.38: respond with verified preparation guidance, without creating a task.
     const proactiveIntent=proactiveDayIntent(text);
     if(proactiveIntent){
