@@ -1,3 +1,4 @@
+// AUREN v2.61 — Read-only proactive preparation and attention checks from saved plans.
 // AUREN v2.60 — Grounded smart daily planning, preparation and next-step suggestions.
 // AUREN v2.59 — safe new-question handoff and correction recovery.
 // AUREN v2.58 — conversation repair, bounded clarifications, safe context recovery.
@@ -1299,6 +1300,51 @@ function adaptiveFollowup(raw){
 }
 // v2.60: Advice is computed from actual device-local items, not fabricated
 // commitments, live traffic, travel durations, or unsaved user preferences.
+// v2.61: On-demand proactive suggestions grounded only in locally saved data.
+// Never imply background monitoring, send unsolicited alerts or modify records.
+function proactiveAttentionIntent(raw){
+ const q=String(raw||'').trim().toLowerCase().replace(/^(?:hey\s+)?auren[, ]+/,'').replace(/[.!?]+$/,'').trim();
+ if(/^(?:what (?:needs|requires) my attention|anything (?:i need to know|i should prepare for|coming up i should prepare for)|what should i (?:get ready for|prepare for) next|give me (?:a |my )?(?:proactive |personal )?(?:readiness|preparation|attention) (?:check|brief|update)|check (?:my |for )?(?:upcoming |next )?(?:commitments|appointments|preparation)|am i prepared for (?:my )?next (?:appointment|meeting)|what should i do before my next commitment)$/.test(q))return {date:parseDateIntent(q)||localDate()};
+ return null;
+}
+function proactiveAttentionReply(intent){
+ const now=Date.now(),today=localDate();
+ const end=shiftedDate(today,7);
+ const upcoming=plans.filter(p=>p.date>=today&&p.date<=end&&eventTimestamp(p)>=now)
+  .sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+ const outstanding=[];
+ for(let i=0;i<8;i++){
+  const day=shiftedDate(today,i);
+  for(const task of tasksOnDate(day))if(!task.done)outstanding.push({task,day});
+ }
+ const due=reminders.filter(x=>!x.fired&&Number.isFinite(Date.parse(x.at))&&Date.parse(x.at)>=now&&Date.parse(x.at)<=now+7*86400000)
+  .sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
+ const parts=['Here is your on-demand readiness check from saved AUREN information.'];
+ if(!upcoming.length&&!outstanding.length&&!due.length){
+  return parts.concat(['No upcoming appointments, incomplete scheduled tasks, or reminders were found for the next seven days. I cannot see commitments you have not saved. Nothing has been changed.']).join(' ');
+ }
+ if(upcoming.length){
+  const p=upcoming[0],minutes=Math.round((eventTimestamp(p)-now)/60000);
+  parts.push(`Your next saved appointment is ${p.title}, ${readableDate(p.date)} at ${spokenClock(p.time)}.`);
+  if(minutes<=60)parts.push(`It starts in about ${Math.max(0,minutes)} minutes. Check what you need and allow time to get there; I do not know your travel time.`);
+  else if(minutes<=24*60)parts.push('It is within the next day. Consider reviewing any needed materials and travel arrangements.');
+  else parts.push('Consider checking required materials and travel plans ahead of time.');
+  const words=String(p.title||'').toLowerCase().split(/[^a-z0-9]+/).filter(x=>x.length>=4&&!['meeting','appointment','with','about','your'].includes(x));
+  const match=outstanding.find(x=>words.some(w=>String(x.task.title||'').toLowerCase().includes(w)));
+  if(match)parts.push(`A potentially related saved task is ${match.task.title} (${readableDate(match.day)}).`);
+ }
+ if(outstanding.length){
+  const first=outstanding.slice().sort((a,b)=>a.day.localeCompare(b.day))[0];
+  parts.push(`An unfinished saved task to review is ${first.task.title}, scheduled for ${readableDate(first.day)}.`);
+ }
+ if(due.length){
+  const next=due[0];parts.push(`Your next saved reminder is ${next.text} at ${new Date(next.at).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})}.`);
+ }
+ const overlaps=savedDayIntelligence(today,'week').conflictPairs;
+ if(overlaps.length)parts.push(`I found ${overlaps.length} overlapping saved appointment pair${overlaps.length===1?'':'s'} this week. Review their times.`);
+ parts.push('These are suggestions, not verified preparation requirements. Nothing has been saved, moved, or completed.');
+ return parts.join(' ');
+}
 function smartDayPlanIntent(raw){
  const q=String(raw||'').trim().toLowerCase().replace(/^(?:hey\s+)?auren[, ]+/,'').replace(/[.!?]+$/,'').trim();
  if(/^(?:give me|make me|create|build|show me|help me (?:make|build|organize)) (?:a |my )?(?:smart |personalized |realistic )?(?:plan|game plan|action plan|schedule) (?:for )?(?:today|tomorrow|this week)$/.test(q))return {date:parseDateIntent(q)||localDate(),scope:/this week$/.test(q)?'week':'day'};
@@ -2925,6 +2971,12 @@ async function send(text) {
     if(/^(?:how much time (?:do i have|is left) (?:before|until) (?:my )?next (?:meeting|appointment|plan)|do i have time before my next (?:meeting|appointment|plan)|how long (?:until|before) my next (?:meeting|appointment|plan))[.!? ]*$/i.test(String(text).trim())){
       noteDayConversation(localDate(),'day');
       await addMessage('auren',nextOpeningIntelligence());
+      return;
+    }
+    // v2.61: On-demand readiness, never an unsolicited notification or mutation.
+    const attentionRequest=proactiveAttentionIntent(text);
+    if(attentionRequest){
+      await addMessage('auren',proactiveAttentionReply(attentionRequest));
       return;
     }
     // v2.60: explicitly requested daily coaching; no changes to saved data.
