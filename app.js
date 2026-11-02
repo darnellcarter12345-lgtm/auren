@@ -1,3 +1,4 @@
+// AUREN v2.45 — Contextual butler personality, concise intent routing, restrained suggestions.
 // AUREN v2.44 — Verified long-term memory, transparent recall and preference-aware replies.
 // AUREN v2.43 — Advanced Conversation Intelligence: grounded follow-ups and topic reset.
 // AUREN v2.42 — Personalized daily preparation, real commitments and restrained next steps.
@@ -1879,6 +1880,25 @@ function trackConversationAnchor(question,answer){
  const prior=readConversationAnchor();
  conversationAnchor={at:Date.now(), question: conversationalReference(question)&&prior?prior.question:String(question).slice(0,280), reply:String(answer).slice(0,750)};
 }
+// v2.45 — Response style belongs to the current request, not a permanent profile fact.
+// Recognize direct verbosity requests without hard-coding answers or changing saved data.
+function aurenResponseStyle(question){
+ const t=String(question||'').trim();
+ if(/\b(?:in detail|detailed(?:ly)?|step.by.step|walk me through|full explanation|explain (?:it |that )?thoroughly|go deeper|elaborate|give me (?:more|the full) details)\b/i.test(t))return 'detailed';
+ if(/\b(?:short answer|briefly|keep it short|quick answer|one sentence|just the answer|be concise|simple answer|no explanation|summari[sz]e briefly)\b/i.test(t))return 'brief';
+ if(/^(?:what(?:'s| is) (?:the )?(?:time|date)|what time is it|what day is it|yes|no|okay|ok|thanks|thank you|got it|understood|alright)[?.! ]*$/i.test(t))return 'brief';
+ if(/^(?:can you|could you|would you|please )?(?:explain|teach|compare|analy[sz]e|help me understand|how does|why does|why is)\b/i.test(t))return 'balanced';
+ return 'natural';
+}
+function aurenStyleGuidance(question){
+ const style=aurenResponseStyle(question);
+ const core='Speak like a calm capable British-style butler, not a customer-service chatbot. Answer the request first, with natural wording. Never pad a reply with repeated greetings, formal titles, generic offers, or apologies. Never end every answer with a question. Avoid repeated lists of capabilities and unnecessary disclaimers. If the request requires a UI action, use the available local action rather than describing imagined actions.';
+ if(style==='brief')return core+' This turn explicitly needs a SHORT response: ordinarily one sentence, at most two. No intro, list or follow-up offer.';
+ if(style==='detailed')return core+' This turn asks for a thorough explanation. Give useful specifics and ordered steps only when they improve clarity; do not sacrifice completeness for brevity.';
+ if(style==='balanced')return core+' Explain the essential reasoning clearly, with an example only if useful. Normally 2-5 sentences unless complexity warrants more.';
+ return core+' Default to a compact, friendly answer of 1-3 sentences for straightforward matters. Give more detail for genuinely complex requests. Ask one clarifying question only if the missing information prevents progress.';
+}
+
 async function askWithMemory(question) {
   refreshPersonalProfile();
   const context = await contextForAI(question);
@@ -1899,6 +1919,7 @@ async function askWithMemory(question) {
   const briefing = (isFollowup || /\b(?:briefing|earlier|mentioned|that story|that part|those plans)\b/i.test(question)) && latestBriefingContext && Date.now()-latestBriefingContext.at < 45*60*1000
     ? latestBriefingContext.text : '';
   const deviceContext = [
+    `CURRENT RESPONSE STYLE (high priority, per-turn only): ${aurenStyleGuidance(question)}`,
     `Current actual Dallas date/time: ${new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',dateStyle:'full',timeStyle:'long'}).format(new Date())}. Verify time gaps with numeric timestamps; do not imply 11:20 PM is close to 12:47 PM.`,
     `Time clarity: Always include a clear AM/PM or natural daypart (morning, afternoon, evening, night) for appointments and reminders; distinguish noon from midnight. Never infer a daypart without using the actual scheduled hour.`,
     'If the user says they need to leave in N minutes, that is an imminent departure, not spare time. Never say they have plenty of time unless the timing clearly supports it. Discuss conflicts against actual saved appointment times only. Do not invent travel duration or imply a calendar event was created merely because the user mentioned leaving.',
@@ -2306,7 +2327,7 @@ async function send(text) {
   const addressed = aurenAddressCommand(text);
   if (addressed.wake) {
     await addMessage('user',text);
-    await addMessage('auren',varyButler('wake', ['At your service.','Yes, how may I help?','Listening.','Certainly. What do you need?']));
+    await addMessage('auren',varyButler('wake', ['At your service.','Listening.','Yes?','Ready.']));
     return;
   }
   text=addressed.command;
@@ -2635,7 +2656,7 @@ async function send(text) {
       } else {
         // AUREN asks permission before adding a lasting fact; no data leaves the browser.
         await presentResult(butler.ask({type:'save', payload:{text:candidate, category:Mem.guessCategory(candidate)}},
-          `Shall I remember that for future conversations, sir?\n“${candidate}”\nNothing has been saved yet.`));
+          `Remember this for future conversations?\n“${candidate}”\nNot saved yet.`));
       }
     } else {
       speechPanelText.textContent = 'AUREN: One moment…';
