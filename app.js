@@ -1,3 +1,4 @@
+// AUREN v3.16 — contextual replies and iPhone Safari speech playback.
 // AUREN v3.15 — Fix unbound record-edit pending state during voice and text requests.
 // AUREN v3.14 — Spoken, opt-in check-ins independent of microphone listening.
 // AUREN v3.13 — Quiet check-ins without microphone; restored original v3.11 voice selection.
@@ -266,14 +267,16 @@ const iphoneRecorder = aurenIOS ? createIPhoneRecorder({
   onText: async transcript => {
     $('chatInput').value = transcript;
     showCaption(transcript, 'YOU');
-    voice.setEnabled(true);
-    $('speakReplies').checked = true;
+    // Honor spoken-replies preference; recording does not force speaker volume on.
+    voice.setEnabled($('speakReplies').checked);
     await send(transcript);
   }
 }) : null;
 async function toggleIPhoneRecorder() {
   if (!iphoneRecorder) return;
-  // This function must be invoked directly by a real tap.
+  // Prime speech output within the actual tap, before asynchronous recording/transcription.
+  // Microphone permission is separate from playback; no background recording is enabled.
+  if(capabilities.speak && $('speakReplies').checked){voice.setEnabled(true);voice.primeAudio();}
   if (iphoneRecorder.recording) await iphoneRecorder.stop();
   else iphoneRecorder.start();
 }
@@ -443,6 +446,20 @@ voiceTestButton.onclick=()=>{
   voice.speak('At your service. Voice playback is working.');
 };
 voiceCard.append(voiceTestButton);
+if(aurenIOS){
+ const hint=document.createElement('p');hint.className='hint';
+ hint.textContent='iPhone Safari: enable Spoken replies and tap Test AUREN voice once. Raise media volume and check Safari audio output. iPhone may require a tap each time the page is reopened.';
+ voiceCard.append(hint);
+ const replay=document.createElement('button');replay.type='button';replay.className='ghost';replay.textContent='Replay last AUREN reply';
+ replay.addEventListener('click',()=>{
+   if(!lastSubstantiveReply){showStatus('No earlier response to replay.','info');return;}
+   $('speakReplies').checked=true;voice.setEnabled(true);voice.primeAudio();
+   try{localStorage.setItem(AUREN_SPEECH_PREF,'true');}catch{}
+   voice.speak(lastSubstantiveReply);
+ });
+ voiceCard.append(replay);
+}
+
 
 // Interruptions are off by default to prevent nearby conversations from
 // cutting off AUREN. The setting is local to this browser and persists.
@@ -2617,6 +2634,12 @@ renderDay();document.body.dataset.screen='chat';refreshUpNext();checkReminders()
 // Conversation replay remains anchored to what AUREN actually said last, not
 // the planner, the projects database or an unrelated AI guess.
 let lastSubstantiveReply = '';
+let aurenRecentAssistantQuestion = null;
+function aurenCaptureAssistantQuestion(t) {
+ const s=String(t||'').trim();
+ aurenRecentAssistantQuestion= /\?\s*$/.test(s) ? {text:s,at:Date.now()} : null;
+}
+
 const REPEAT_LAST_REPLY = /^(?:(?:can|could|would|will) you (?:please )?|please )?(?:repeat (?:that|it|yourself|what you (?:just )?said|the last (?:thing|part)|your last (?:answer|response))|say (?:that|it) again|tell me (?:that|it) again|what did you (?:just )?say|what was (?:that|your last (?:answer|response)))(?: please)?[.!?]*$/i;
 function rememberLastReply(text) {
   const value=String(text||'').trim();
@@ -2697,6 +2720,7 @@ async function addMessage(role, text, opts = {}) {
     }
   }
   if (role === 'auren' && !opts.err && !opts.replay) rememberLastReply(rec.text);
+  if(role==='auren' && !opts.err && !opts.replay && !opts.silent) aurenCaptureAssistantQuestion(rec.text);
   drawMessage(rec, opts);
   if (role === 'auren' && !opts.err && !opts.silent) voice.speak(rec.text);
   await persistMessage(rec, opts);
@@ -4637,10 +4661,30 @@ async function send(text) {
     await addMessage('auren',question??reminderSpeech(text));
     return;
   }
-  if(/^(?:ok(?:ay)?(?: do it)?|do it|yes(?: please)?|confirm|go ahead)[.!? ]*$/i.test(text.trim()) && !pendingReminder && !pendingPlan && !pendingTaskChange && !butler.pending){
-    // Do not allow external AI to fabricate a save confirmation.
+  // v3.16: A short 'yes' to a genuine recent conversational question is NOT a
+  // request to save a reminder. This runs after all actual pending write handlers.
+  if(/^(?:yes|yes please|yeah|yep|sure|okay|ok|of course)[.! ]*$/i.test(text.trim()) &&
+     !pendingReminder && !pendingPlan && !pendingTaskChange && !butler.pending && !aurenPendingRecordEdit &&
+     aurenRecentAssistantQuestion && Date.now()-aurenRecentAssistantQuestion.at < 120000){
+    const previous=aurenRecentAssistantQuestion.text;
+    aurenRecentAssistantQuestion=null;
     await addMessage('user',text);
-    await addMessage('auren','There is no pending change for me to save. If you mean a reminder, tell me its subject and time. I will confirm it was saved only after checking.');
+    if(/\b(?:tea|water)\b/i.test(previous) && /\b(?:tea|water)\b/i.test(previous)){
+      await addMessage('auren','Certainly. Would you prefer some water or tea?');
+    } else if(getAIEndpoint()) {
+      try {
+        const response=await askWithMemory('The user just answered YES to your immediately preceding question: '+previous+' Respond naturally to their acceptance. Do not create or claim to have saved anything unless a local action confirms it.');
+        await addMessage('auren',response);
+      } catch(e){console.warn('Conversational yes fallback',e);await addMessage('auren','Of course. What would you like to do next?');}
+    } else {
+      await addMessage('auren','Of course. What would you like to do next?');
+    }
+    return;
+  }
+  // Outside a pending save, a short agreement must not trigger a save warning.
+  if(/^(?:ok(?:ay)?(?: do it)?|do it|yes(?: please)?|confirm|go ahead)[.!? ]*$/i.test(text.trim()) && !pendingReminder && !pendingPlan && !pendingTaskChange && !butler.pending){
+    await addMessage('user',text);
+    await addMessage('auren','Certainly. What would you like me to do?');
     return;
   }
   // v3.07: Recheck actual saved records for indirect day/week follow-ups.
