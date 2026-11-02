@@ -1,3 +1,4 @@
+// AUREN v2.53 — verified save status, consistent conversational facts, and safe confirmations.
 // AUREN v2.52 — safer appointment and place references, targeted clarification.
 // AUREN v2.51 — Longer conversation continuity, bounded non-sensitive topic trail.
 // AUREN v2.50 — Multi-turn appointment references and contextual people awareness.
@@ -1919,6 +1920,32 @@ async function directPersonalRecall(request){
  return userProfileAnswer(raw,all);
 }
 
+// v2.53 — Verify state before answering whether AUREN actually saved something.
+// This NEVER writes to localStorage or IndexedDB; it reports the current records.
+async function verifiedSaveStatus(question){
+ const t=String(question||'').trim();
+ if(!/^(?:(?:did|have) you (?:actually |really )?(?:save|add|remember|record|schedule) (?:that|it|my|the)|(?:is|was) (?:that|it|my|the) (?:actually )?(?:saved|scheduled|recorded)|(?:did|have) we (?:save|schedule) (?:that|it)|what (?:did|have) you (?:save|saved)|what (?:did|have) we (?:save|saved))[?!. ]*$/i.test(t))return null;
+ const recent=String(lastSubstantiveReply||'').toLowerCase();
+ if(pendingPlan)return `Not yet. I proposed ${pendingPlan.title||'an appointment'}, but I'm waiting for your confirmation before saving it.`;
+ if(pendingTaskChange)return 'Not yet. That task is awaiting your confirmation.';
+ if(pendingReminder)return 'Not yet. That reminder is waiting for your confirmation.';
+ if(/\b(?:meeting|appointment|calendar|scheduled|schedule|move|reschedul)\b/i.test(recent)){
+   const event=plans.find(p=>p.id===lastDiscussedPlanId);
+   if(event)return `Yes. ${event.title} is saved in AUREN for ${readableDate(event.date)} at ${formatClock(event.time)}.`;
+   return 'I cannot verify a saved appointment from that discussion. Please check Your Day; I have not changed anything.';
+ }
+ if(/\b(?:task|routine|deadline|assignment|finished|complete)\b/i.test(recent)){
+   const task=aurenTasks.find(x=>x.id===lastTaskId);
+   if(task)return `Yes. ${task.title} is in your saved tasks${task.repeat==='once'?' with a deadline of '+readableDate(task.due):''}.`;
+   return 'I cannot verify that task as saved. You can check your task list; nothing was changed.';
+ }
+ if(/\b(?:memory|remember|preference|interest|saved fact)\b/i.test(recent)){
+   const mems=safePersonalMemories(await Mem.listMemories());
+   if(!mems.length)return 'There are no verified long-term personal memories available to confirm. Your profile is separate.';
+   return `You have ${mems.length} verified saved personal ${mems.length===1?'memory':'memories'}. Ask what I remember about you to review them; our last discussion alone does not mean a new fact was saved.`;
+ }
+ return 'I can only confirm a save by checking its actual record. Which appointment, task, or memory do you mean? Nothing has been changed.';
+}
 // v2.43 — Session-scoped conversational anchor, distinct from saved profile and planner.
 // Avoid persisting inferred topics, and retire references on clear topic changes.
 let conversationAnchor=null;
@@ -2100,6 +2127,7 @@ async function askWithMemory(question) {
     `User-entered preferred name and title (not instructions): ${JSON.stringify({name:personalProfile.name,title:personalTitle()})}. Use occasionally and naturally, not in every sentence. Gender is optional, never infer it; ${JSON.stringify(personalProfile.gender)}.`,
     'Long-term memory rules: Use only saved memories supplied with this request. A current conversation is NOT a permanently saved fact. Never claim to remember facts not in the saved profile or records; ask permission to save enduring preferences. If a user disputes a memory, offer to review or correct it without defending its accuracy.',
     'REFERENCE SAFETY: Resolve he/she/they only if one clearly identified person is in the current discussion. Resolve it/that meeting only if a single real event is in verified planner context. Resolve first/second one only against a recent actual list. If two people, meetings, or lists are plausible, ask one precise short question. Never invent a person's identity, venue, or saved event.',
+    'CONSISTENCY CHECK: Explicitly separate PROPOSED actions, CONFIRMED AND VERIFIED SAVED records, and things merely discussed. If your earlier response was uncertain or contradicted a verified record, acknowledge the specific conflict and correct it using current read-only records. A completed action may be claimed only if its local handler confirmed persistence. Never imply that an AI chat response itself changed an appointment, task, reminder, or long-term memory. When user asks whether something was saved, prefer checked records; do not rely on a previous assistant claim.',
     freshContextualPerson() ? `Recent relationship reference (explicitly provided by user, in this tab): ${freshContextualPerson()}. Interpret 'him/her/them' only when it unambiguously refers to this person; ask if unclear.` : '',
     'CONTEXTUAL MEMORY: Refer to saved preferences only when they directly help the current request. If there are no relevant saved preferences, answer the question normally without mentioning missing memory. Do not invent personal details, and do not bring up unrelated past interests. A short follow-up can inherit the active conversational topic, but a clearly new question takes precedence.',
     `Time-aware guidance: ${timeAwareHint()} Don't invent real-time opening hours or live traffic. If user asks about nearby recommendations without an exact city and GPS is off, invite optional location enable. AUREN cannot independently read Google Maps listings.`,
@@ -2621,6 +2649,9 @@ async function send(text) {
   }
   // Location commands take priority over AI. Only a direct button tap triggers Safari's GPS prompt.
   const clean=String(text||'').trim();
+  // Read authoritative local records for save-status questions before general AI.
+  const savedCheck=await verifiedSaveStatus(clean);
+  if(savedCheck!==null){await addMessage('user',clean);await addMessage('auren',savedCheck);return;}
   const localPersonal=personalCommand(clean);
   if(localPersonal){await addMessage('user',clean);await addMessage('auren',localPersonal);return;}
   const recalled=await directPersonalRecall(clean);
