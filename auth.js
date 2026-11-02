@@ -1,4 +1,5 @@
-// AUREN v2.99 — matching cache-busting loader.
+// AUREN v3.00 — updated app loader for context-and-care engine.
+// AUREN v3.00 — matching cache-busting loader.
 // AUREN v2.93 — verified app.js version loader.
 // AUREN v2.92 — correct app.js cache version and profile recall build.
 // AUREN v2.92 — Load the fixed schedule engine instead of any cached previous version.
@@ -101,14 +102,14 @@ async function runStartupDiagnosis(error) {
     'AUREN diagnostics v2.93',
     'Reported at: '+new Date().toISOString(),
     'Page: '+location.pathname,
-    'Application: app.js?v=2.99',
+    'Application: app.js?v=3.00',
     'Original failure: '+errorDetails(error),
     'Checking deployed application source and dependencies...'
   ];
   displayDiagnosis(entries.join('\n'));
   try {
     // Explicit cache bypass lets us distinguish an outdated deployed app.js from a broken module.
-    const sourceURL=new URL('./app.js?v=2.99',import.meta.url);
+    const sourceURL=new URL('./app.js?v=3.00',import.meta.url);
     sourceURL.searchParams.set('diagnostics',String(Date.now()));
     const sourceResponse=await fetch(sourceURL.href,{cache:'no-store'});
     if(!sourceResponse.ok)throw new Error('HTTP '+sourceResponse.status+' loading deployed app.js');
@@ -150,7 +151,7 @@ async function openApp(user){
   busy=true;setGateMode('loading');
   try{
     // A fresh versioned URL makes Safari request the CURRENT deployed app.js.
-    if(!appPromise)appPromise=import('./app.js?v=2.99').catch(error=>{appPromise=null;throw error;});
+    if(!appPromise)appPromise=import('./app.js?v=3.00').catch(error=>{appPromise=null;throw error;});
     await appPromise;loaded=true;
     if(accountEmail)accountEmail.textContent=user.email||'Signed in';
     if(accountCard)accountCard.hidden=false;
