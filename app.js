@@ -1,3 +1,4 @@
+// AUREN v3.00 — Grounded context-and-care intelligence, consent-first personalization.
 // AUREN v2.99 — Verified reminder/appointment conversion, editing and distinct Your Day labels.
 // AUREN v2.98 — field-aware reminder clarification plus saved-profile-first name memory.
 // AUREN v2.93 — saved-profile-first name authority; no conversation-memory false positives.
@@ -3054,6 +3055,7 @@ async function askWithMemory(question) {
     correctionContext(question),
     `CURRENT RESPONSE STYLE (high priority, per-turn only): ${aurenStyleGuidance(question)}`,
     `CURRENT PERSONALITY DELIVERY (high priority, per-turn only): ${aurenPersonalityGuidance(question)}`,
+    aurenCareAIGuidance(question),
     `Current actual Dallas date/time: ${new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',dateStyle:'full',timeStyle:'long'}).format(new Date())}. Verify time gaps with numeric timestamps; do not imply 11:20 PM is close to 12:47 PM.`,
     `Time clarity: Always include a clear AM/PM or natural daypart (morning, afternoon, evening, night) for appointments and reminders; distinguish noon from midnight. Never infer a daypart without using the actual scheduled hour.`,
     'If the user says they need to leave in N minutes, that is an imminent departure, not spare time. Never say they have plenty of time unless the timing clearly supports it. Discuss conflicts against actual saved appointment times only. Do not invent travel duration or imply a calendar event was created merely because the user mentioned leaving.',
@@ -3089,6 +3091,72 @@ async function askWithMemory(question) {
   // The completed reply is recorded once by addMessage, including locally handled replies.
   trackConversationAnchor(question,checkedAnswer);
   return checkedAnswer;
+}
+
+// AUREN v3.00: grounded context-and-care brain. Consent-first, local preference
+// learning, no emotion inference, no hidden surveillance, no unsolicited alerts.
+const AUREN_CARE_KEY='auren_care_brain_v300';
+let aurenCare={checkins:false,tone:'balanced',topics:{meals:true,rest:true,planning:true},lastCheckinDay:'',lastCheckinTopic:'',lastGreetingDay:''};
+try{
+ const stored=JSON.parse(localStorage.getItem(AUREN_CARE_KEY)||'null');
+ if(stored&&typeof stored==='object'){
+  aurenCare={...aurenCare,checkins:stored.checkins===true,tone:['balanced','warm','concise'].includes(stored.tone)?stored.tone:'balanced',topics:{...aurenCare.topics,...(stored.topics||{})},lastCheckinDay:String(stored.lastCheckinDay||''),lastCheckinTopic:String(stored.lastCheckinTopic||''),lastGreetingDay:String(stored.lastGreetingDay||'')};
+ }
+}catch{}
+function aurenSaveCare(){try{localStorage.setItem(AUREN_CARE_KEY,JSON.stringify(aurenCare));return JSON.parse(localStorage.getItem(AUREN_CARE_KEY)||'null')?.checkins===aurenCare.checkins;}catch{return false;}}
+function aurenCarePreference(raw){
+ const q=String(raw||'').trim().toLowerCase();
+ if(/\b(?:stop (?:checking in|check.ins)|no (?:more )?check.ins|don't (?:check in|ask me about (?:my )?(?:meals|sleep|rest))|turn (?:off|disable) (?:personal )?check.ins)\b/.test(q)){
+  aurenCare.checkins=false;return aurenSaveCare()?'Understood. I will stop personal check-ins. You can still ask for help whenever you want.':'I could not save that preference on this browser.';
+ }
+ if(/\b(?:enable (?:personal )?check.ins|turn on (?:personal )?check.ins|check in with me (?:sometimes|occasionally|from time to time)|ask how i am doing sometimes)\b/.test(q)){
+  aurenCare.checkins=true;return aurenSaveCare()?'I can check in occasionally when you speak to me, without interrupting you. You can turn that off anytime.':'I could not save that preference on this browser.';
+ }
+ if(/\b(?:be less formal|sound (?:more )?natural|be more casual|be warmer|talk (?:to me )?more naturally)\b/.test(q)){
+  aurenCare.tone='warm';return aurenSaveCare()?'I’ll use a more natural, thoughtful tone without overdoing it.':'I could not save that preference.';
+ }
+ if(/\b(?:be more concise|keep it short|less small talk|be more direct|fewer personal questions)\b/.test(q)){
+  aurenCare.tone='concise';return aurenSaveCare()?'Understood. I’ll keep replies more direct.':'I could not save that preference.';
+ }
+ if(/\b(?:don't ask (?:me )?about (?:my )?(?:meals|food|eating))\b/.test(q)){
+  aurenCare.topics.meals=false;return aurenSaveCare()?'Of course. I won’t bring up meals in personal check-ins.':'I could not save that preference.';
+ }
+ if(/\b(?:don't ask (?:me )?about (?:my )?(?:sleep|rest|bedtime))\b/.test(q)){
+  aurenCare.topics.rest=false;return aurenSaveCare()?'Of course. I won’t bring up sleep or rest in personal check-ins.':'I could not save that preference.';
+ }
+ return null;
+}
+function aurenCareFacts(){
+ const now=new Date(),hour=now.getHours(),day=localDate();
+ const appointments=plansFor(day).map(e=>({kind:'appointment',title:String(e.title||'').slice(0,90),time:e.time}));
+ const todayReminders=reminders.filter(r=>Number.isFinite(new Date(r.at).getTime())&&localDate(new Date(r.at))===day).map(r=>({kind:'reminder',text:String(r.text||'').slice(0,90),at:r.at,fired:!!r.fired}));
+ const tasks=tasksOnDate(day).filter(t=>!t.done).slice(0,5).map(t=>({title:String(t.title||'').slice(0,90)}));
+ const upcoming=appointments.filter(e=>{const [h,m]=String(e.time||'').split(':').map(Number);return Number.isFinite(h)&&h*60+(m||0)>=hour*60+now.getMinutes();});
+ return {hour,day,daypart:hour<5?'late night':hour<11?'morning':hour<17?'daytime':hour<21?'evening':'late evening',appointments,reminders:todayReminders,tasks,nextAppointment:upcoming[0]||null};
+}
+function aurenCareAIGuidance(question){
+ const f=aurenCareFacts();
+ return `AUREN CONTEXT-AND-CARE ENGINE (grounded, per turn): ${JSON.stringify({timeOfDay:f.daypart,localDate:f.day,localHour:f.hour,appointmentsToday:f.appointments,remindersToday:f.reminders,unfinishedTasksToday:f.tasks,checkinsEnabled:aurenCare.checkins,preferredTone:aurenCare.tone,blockedCheckinTopics:Object.keys(aurenCare.topics).filter(k=>!aurenCare.topics[k])})}. Use these VERIFIED records only when relevant; do not overwhelm the user with their schedule. Respond first to the actual question. Warmth means attentiveness, respect, helpful context, and memory accuracy, not pretending to have feelings, a life, or intimate attachment. NEVER infer a person's mood, hunger, health, relationship, or fatigue from the clock or activity alone. You may gently ask a personal check-in only when user explicitly opted into check-ins AND their current message naturally invites it; ask at most one optional question, never pressure, guilt, or repeated checking. Do not ask about blocked topics. Never imply weather was checked unless a real weather result is available. Respect a 'no' or topic change immediately. Learn preferences only from explicit feedback; do not claim model retraining or background awareness. No background or browser-closed outreach.`;
+}
+function aurenCareGreeting(raw){
+ const q=String(raw||'').trim().toLowerCase().replace(/[.!?]+$/,'');
+ if(!/^(?:hey|hi|hello|good (?:morning|afternoon|evening|night)|how are you|what's up|whats up)(?:[, ]+(?:auren|sir))?$/.test(q))return null;
+ const f=aurenCareFacts();
+ const greeting=f.hour<5?'Good evening.':f.hour<12?'Good morning.':f.hour<17?'Good afternoon.':'Good evening.';
+ let note=' What can I help with?';
+ if(aurenCare.lastGreetingDay===f.day)return greeting+' What can I help with?';
+ if(f.nextAppointment)note=` You have ${f.nextAppointment.title} at ${formatClock(f.nextAppointment.time)}. Anything you want to prepare?`;
+ else if(f.reminders.some(r=>!r.fired&&new Date(r.at)>new Date()))note=' There is a reminder ahead in Your Day. Want a quick review?';
+ else if(aurenCare.checkins&&aurenCare.lastCheckinDay!==f.day){
+   const choices=[];
+   if(aurenCare.topics.planning)choices.push(['planning','Anything you would like to make time for today?']);
+   if(aurenCare.topics.rest&&f.hour>=22)choices.push(['rest','Would you prefer to wind down, or is there something I can help finish?']);
+   if(aurenCare.topics.meals&&f.hour>=11&&f.hour<=20)choices.push(['meals','Would you like help finding something to eat?']);
+   const picked=choices.find(x=>x[0]!==aurenCare.lastCheckinTopic)||choices[0];
+   if(picked){note=' '+picked[1];aurenCare.lastCheckinDay=f.day;aurenCare.lastCheckinTopic=picked[0];aurenSaveCare();}
+ }else if(f.hour>=22)note=' What can I help you with tonight?';
+ aurenCare.lastGreetingDay=f.day;aurenSaveCare();
+ return greeting+note;
 }
 
 // AUREN v2.14 — device-local, consent-first personalization. Never store identity from inference.
@@ -3880,6 +3948,12 @@ async function send(text) {
     return;
   }
   text=addressed.command;
+  // v3.00: Explicit conversational preferences; local and verified.
+  const carePreference=aurenCarePreference(text);
+  if(carePreference!==null){await addMessage('user',text);await addMessage('auren',carePreference);return;}
+  // Greetings may add ONE verified, optional contextual observation, never an invented one.
+  const careGreeting=aurenCareGreeting(text);
+  if(careGreeting!==null){await addMessage('user',text);await addMessage('auren',careGreeting);return;}
   // v2.99: Verified conversions and edits take priority over vague AI responses.
   const recordEdit=aurenRecordEditDialogue(text);
   if(recordEdit!==null){await addMessage('user',text);await addMessage('auren',recordEdit);return;}
