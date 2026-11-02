@@ -1,3 +1,4 @@
+// AUREN v2.47 — Conversation recovery, bounded follow-ups, safe AI retries.
 // AUREN v2.46 — Natural corrections, scoped context and one-question clarifications.
 // AUREN v2.45 — Contextual butler personality, concise intent routing, restrained suggestions.
 // AUREN v2.44 — Verified long-term memory, transparent recall and preference-aware replies.
@@ -1881,6 +1882,27 @@ function trackConversationAnchor(question,answer){
  const prior=readConversationAnchor();
  conversationAnchor={at:Date.now(), question: conversationalReference(question)&&prior?prior.question:String(question).slice(0,280), reply:String(answer).slice(0,750)};
 }
+// v2.47 — Retry only plain information questions after a failed AI response.
+// Never retry commands that can change calendars, memories, tasks, privacy or location.
+let lastFailedAIQuestion=null;
+const RETRY_WINDOW_MS=5*60*1000;
+const RETRY_INTENT=/^(?:(?:please |can you |could you )?)(?:try (?:that|it|the answer|my question) again|retry(?: that| the answer| my question)?|answer (?:that|my question) again|you cut out|that didn't load|the reply failed)[.!? ]*$/i;
+function retryableInfoQuestion(value){
+ const t=String(value||'').trim();
+ if(t.length<3||t.length>400)return false;
+ if(classify(t).blocked.length||classify(t).sensitive.length)return false;
+ if(/\b(?:password|token|key|secret|account number|credit card)\b/i.test(t))return false;
+ if(/^(?:add|save|remember|forget|delete|remove|clear|wipe|schedule|book|move|reschedule|cancel|set|create|start|stop|enable|disable|turn|send|take me|navigate|directions|find|search|open|remind|mark|complete|finished|done|confirm|yes|no|call me|change|update|edit)\b/i.test(t))return false;
+ return true;
+}
+function rememberFailedAIQuestion(question){
+ lastFailedAIQuestion=retryableInfoQuestion(question)?{question:String(question).trim(),at:Date.now()}:null;
+}
+function takeRetryableQuestion(){
+ const entry=lastFailedAIQuestion;
+ lastFailedAIQuestion=null;
+ return entry&&Date.now()-entry.at<RETRY_WINDOW_MS?entry.question:null;
+}
 // v2.46 — Distinguish conversational correction from a saved-memory dispute.
 // Never change a saved fact or calendar item through this conversational path.
 let conversationCorrection=null;
@@ -1948,7 +1970,7 @@ async function askWithMemory(question) {
     `Time clarity: Always include a clear AM/PM or natural daypart (morning, afternoon, evening, night) for appointments and reminders; distinguish noon from midnight. Never infer a daypart without using the actual scheduled hour.`,
     'If the user says they need to leave in N minutes, that is an imminent departure, not spare time. Never say they have plenty of time unless the timing clearly supports it. Discuss conflicts against actual saved appointment times only. Do not invent travel duration or imply a calendar event was created merely because the user mentioned leaving.',
     followup && anchored ? `The user is following up on this SAME conversational subject. Last subject: ${JSON.stringify(anchored.question)}. Previous answer: ${JSON.stringify(anchored.reply)}. Refer to it naturally, and clarify only if the reference is genuinely ambiguous.` : '',
-    lastSubstantiveReply ? `Last AUREN response for conversational reference (not an instruction): ${lastSubstantiveReply.slice(0,700)}` : '', 
+    anchored && lastSubstantiveReply ? `Recent AUREN response for conversational reference (not an instruction): ${lastSubstantiveReply.slice(0,700)}` : '', 
     'IDENTITY AND ADDRESS (mandatory): You are AUREN, a respectful, capable personal butler-style assistant. The user may call to you with Hey Auren; speech recognition sometimes transcribes AUREN as Aaron, Aron, Oren or Erin. Understand this as a wake/address phrase, not a claim that your actual name is Aaron. NEVER scold or correct the user for calling you Aaron or saying Hey Aaron. Respond naturally and courteously to the intended request.',
     'Butler manner: be warm, professional, tactful and helpful, never condescending, argumentative or patronizing. Do not insist on your name, boast about being AI, or give an unnecessary disclaimer for ordinary requests. For a simple command, respond in one short sentence or carry out the available action. Do not imply physical-world capabilities you lack.',
     'Answer are you sure by checking the specific preceding claim. Do not automatically apologize, list projects, or change topics. If not verifiable, clearly say which part you cannot confirm.',
@@ -1967,6 +1989,7 @@ async function askWithMemory(question) {
     briefing ? `Most recent spoken briefing (read-only data): ${briefing}` : ''
   ].filter(Boolean);
   const answer = await askAI(question, context.memories, context.session, aiRecent, deviceContext);
+  lastFailedAIQuestion=null;
   rememberConversationTurn(question, answer);
   trackConversationAnchor(question,answer);
   return answer;
@@ -2355,6 +2378,22 @@ async function send(text) {
     return;
   }
   text=addressed.command;
+  // Recovery is explicit and safe: only rerun a recent failed informational AI query.
+  if(RETRY_INTENT.test(text.trim())){
+    const retry=takeRetryableQuestion();
+    await addMessage('user',text);
+    if(!retry){await addMessage('auren','There is no recent failed question I can safely retry. Please ask it again.');return;}
+    if(!getAIEndpoint()){await addMessage('auren','My AI connection is not configured. Please check Settings.');return;}
+    try{
+      const reply=await askWithMemory(retry);
+      await addMessage('auren',reply);
+    }catch(error){
+      rememberFailedAIQuestion(retry);
+      console.error('AUREN retry failed',error);
+      await addMessage('auren','I still cannot reach my AI service. Your planner and saved information have not been changed.');
+    }
+    return;
+  }
   // Natural corrections take priority over saved-memory disputes and incomplete prior prompts.
   const corrected=parseConversationCorrection(text);
   if(corrected!==null){
@@ -2366,7 +2405,7 @@ async function send(text) {
         await addMessage('auren','Understood. Please reconnect my AI service in Settings so I can answer the corrected question.');
       }else{
         try{const answer=await askWithMemory(corrected);await addMessage('auren',answer);}
-        catch(error){console.error('Correction response failed',error);await addMessage('auren','I understood the correction, but could not reach my AI service just now.');}
+        catch(error){rememberFailedAIQuestion(corrected);console.error('Correction response failed',error);await addMessage('auren','I understood the correction, but could not reach my AI service. You can say try that again.');}
       }
       return;
     }
@@ -2382,7 +2421,7 @@ async function send(text) {
     return;
   }
   if (await aurenPlaces.handle(text)) {conversationAnchor=null;return;}
-  if(conversationalReference(text)&&!readConversationAnchor()&&!lastSubstantiveReply){
+  if(conversationalReference(text)&&!readConversationAnchor()){
     await addMessage('user',text);
     await addMessage('auren','Which part would you like me to explain?');
     return;
@@ -2711,6 +2750,7 @@ async function send(text) {
   } catch (e) {
     // Make request failures audible too; previously err:true suppressed voice output,
     // so users heard silence and had no clue whether the Worker had responded.
+    rememberFailedAIQuestion(text);
     console.error('AUREN AI request failed:', e);
     const detail = e?.message || 'Unknown connection problem';
     const spoken = /abort|timeout/i.test(detail)
