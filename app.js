@@ -1,4 +1,4 @@
-// AUREN v3.18 — iPhone one-tap, silence-finish microphone experience.
+// AUREN v3.19 — stable one-tap iPhone, silence-finish microphone experience.
 // AUREN v3.17 — iPhone speech output recovery and audible reply fallback.
 // AUREN v3.16 — contextual replies and iPhone Safari speech playback.
 // AUREN v3.15 — Fix unbound record-edit pending state during voice and text requests.
@@ -110,8 +110,8 @@ import { NeedsConfirmationError, historySafe, classify } from './sensitive.js';
 import { Butler, isSessionNote } from './butler.js';
 import { buildBackup, encryptBackup, decryptBackup, validateBackup, applyPlan, describeReport, LIMITS } from './backup.js';
 import { loadSettings, saveSettings } from './settings.js';
-import { createVoice } from './voice.js?v=3.18';
-import { createIPhoneRecorder } from './iphone-voice.js?v=3.18';
+import { createVoice } from './voice.js?v=3.19';
+import { createIPhoneRecorder } from './iphone-voice.js?v=3.19';
 import { getAIEndpoint, setAIEndpoint, askAI } from './ai.js';
 import { getWeatherBriefing } from './weather.js';
 
@@ -302,8 +302,8 @@ async function toggleIPhoneRecorder() {
   const now=Date.now();
   if(now-aurenLastIPhoneTap<650)return;
   aurenLastIPhoneTap=now;
-  // Prepare speech while the tap's user activation is valid. Never greet on activation.
-  if(capabilities.speak && $('speakReplies').checked){voice.setEnabled(true);voice.primeAudio();}
+  // Recording and voice playback are separate. Do not prime speech during
+  // getUserMedia: on iOS that can steal the audio session and cancel capture.
   if(voice.speaking)voice.stopSpeaking();
   if(iphoneRecorder.recording)await iphoneRecorder.stop();
   else await iphoneRecorder.start();
@@ -397,7 +397,12 @@ const orbButton = $('orbControl');
 orbButton.insertAdjacentElement('afterend',speechPanel);
 speechPanel.insertAdjacentElement('afterend',aurenSpeechFallback);
 function activateOrb(event) {
-  if (aurenIOS) { void toggleIPhoneRecorder(); return; }
+  if (aurenIOS) {
+    // The orb invokes the identical native button path as “Speak to AUREN”.
+    // Keep the button's click handling as the only iPhone recorder entry point.
+    $('micBtn').click();
+    return;
+  }
   const now = Date.now();
   // Use the native click gesture, including on iPhone Safari.
   if (now - lastOrbTap < 300) return;
