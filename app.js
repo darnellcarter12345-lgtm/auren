@@ -1,3 +1,4 @@
+// AUREN v2.41 — Smarter deadlines, overdue tasks and calendar-safe work suggestions.
 // AUREN v2.40 — Confirmed tasks, repeatable routines, and grounded daily task awareness.
 // AUREN v2.39 — Adaptive Daily Intelligence: grounded rankings, briefings, and follow-ups.
 // AUREN v2.38 — Proactive daily readiness, context-grounded preparation, and safe follow-through.
@@ -1119,6 +1120,62 @@ function taskConfirmation(text){
  // A completely different request should not get stuck behind a confirmation.
  pendingTaskChange=null;return null;
 }
+
+// v2.41 — Deadline planning is read-only: a suggestion never creates a calendar event.
+let deadlineContext=null;
+function deadlineOpenTasks(){return aurenTasks.filter(t=>t.repeat==='once'&&!t.done).sort((a,b)=>a.due.localeCompare(b.due)||a.title.localeCompare(b.title));}
+function deadlineDaysAway(date){const a=parseISO(localDate()),b=parseISO(date);return Math.round((b-a)/86400000);}
+function deadlineLabel(task){const days=deadlineDaysAway(task.due);return days<0?`${Math.abs(days)} day${days===-1?'':'s'} overdue`:days===0?'due today':days===1?'due tomorrow':`due ${readableDate(task.due)}`;}
+function deadlineFindTask(phrase){
+ const q=String(phrase||'').toLowerCase().replace(/[?.!]+$/,'').replace(/^(?:my|the|that)\s+/,'').trim();
+ const open=deadlineOpenTasks();
+ if(/^(?:it|that|the task|my task|my project)$/.test(q)&&deadlineContext&&Date.now()-deadlineContext.at<600000)return open.find(t=>t.id===deadlineContext.id)||null;
+ const matches=open.filter(t=>t.title.toLowerCase()===q||t.title.toLowerCase().includes(q)&&q.length>=3);
+ return matches.length===1?matches[0]:null;
+}
+function deadlineAvailableSlot(task){
+ const now=new Date(),today=localDate();
+ if(task.due<today)return null;
+ // Earliest hour-long unoccupied calendar slot, never implying travel or preparation time.
+ for(let day=today;day<=task.due;day=shiftedDate(day,1)){
+   let start=9*60;
+   if(day===today)start=Math.max(start,Math.ceil((now.getHours()*60+now.getMinutes()+15)/15)*15);
+   for(;start+60<=20*60;start+=15){
+     const slot={date:day,time:`${String(Math.floor(start/60)).padStart(2,'0')}:${String(start%60).padStart(2,'0')}`,duration:60};
+     if(!plansFor(day).some(p=>overlaps(slot,p)))return slot;
+   }
+ }
+ return null;
+}
+function deadlineIntent(raw){
+ const q=String(raw||'').trim().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/i,'').replace(/[?.!]+$/,'').trim();
+ if(/^(?:what(?:'s| is) (?:due|overdue|coming due)|what tasks? (?:are|is) (?:due|overdue)|do i have any overdue tasks?|show (?:me )?(?:my )?deadlines|what deadlines? (?:do i have|are coming up)|what needs to be finished (?:soon|this week)|what should i (?:finish|work on) before (?:my )?deadlines?)(?:\s+(?:today|tomorrow|this week|next week))?$/i.test(q))return {kind:'overview',scope:/\bweek\b/i.test(q)?'week':/\btomorrow\b/i.test(q)?'tomorrow':/\btoday\b/i.test(q)?'today':'soon',overdue:/\boverdue\b/i.test(q)};
+ const plan=q.match(/^(?:when (?:can|could|should) i (?:work on|start|finish|make time for)|find (?:me )?time (?:to work on|for)|help me (?:plan|make time for)|suggest (?:a )?(?:time|slot) (?:for|to work on))\s+(.+)$/i);
+ if(plan)return {kind:'slot',subject:plan[1]};
+ if(/^(?:when (?:can|should) i work on (?:it|that)|what time could i work on (?:it|that)|find time for (?:it|that))$/i.test(q))return {kind:'slot',subject:'it'};
+ return null;
+}
+function deadlineReply(intent){
+ if(intent.kind==='overview'){
+  let tasks=deadlineOpenTasks();
+  if(intent.overdue)tasks=tasks.filter(t=>t.due<localDate());
+  else if(intent.scope==='today')tasks=tasks.filter(t=>t.due<=localDate());
+  else if(intent.scope==='tomorrow')tasks=tasks.filter(t=>t.due===shiftedDate(localDate(),1));
+  else if(intent.scope==='week')tasks=tasks.filter(t=>t.due<=shiftedDate(localDate(),7));
+  else tasks=tasks.filter(t=>t.due<=shiftedDate(localDate(),7));
+  if(!tasks.length)return intent.overdue?'You have no overdue unfinished tasks saved in AUREN.':'I do not see any unfinished one-time tasks with deadlines in that period. This only reflects tasks saved in AUREN.';
+  deadlineContext={id:tasks[0].id,at:Date.now()};
+  const listing=tasks.slice(0,4).map(t=>`${t.title} (${deadlineLabel(t)})`).join('; ');
+  return `${tasks.length} unfinished task${tasks.length===1?'':'s'} to review: ${listing}${tasks.length>4?'; and more':''}. These are saved deadlines, not a ranking of personal importance.`;
+ }
+ const task=deadlineFindTask(intent.subject);
+ if(!task)return 'Which unfinished task do you mean? Please tell me its saved name.';
+ deadlineContext={id:task.id,at:Date.now()};
+ const slot=deadlineAvailableSlot(task);
+ if(!slot)return task.due<localDate()?`${task.title} is ${deadlineLabel(task)}. I cannot suggest a slot before a deadline that has passed. You can choose a new deadline.`:`I cannot find a free hour between 9 AM and 8 PM before ${task.title} is due, based on your saved appointments.`;
+ return `${task.title} is ${deadlineLabel(task)}. Your AUREN calendar shows a possible one-hour opening ${readableDate(slot.date)} at ${formatClock(slot.time)}. This is only a suggestion; nothing has been scheduled, and I cannot account for travel or commitments outside AUREN.`;
+}
+
 function adaptivePriority(date,scope='day'){
  const {report,items}=adaptiveItems(date,scope);
  if(!items.length)return 'I have no upcoming appointments or reminders saved for that period. I cannot rank personal goals I do not know.';
@@ -2287,6 +2344,9 @@ async function send(text) {
       const taskRequest=taskIntent(text);
       if(taskRequest){await addMessage('auren',taskResponse(taskRequest));return;}
     }
+    // v2.41: read-only deadline summaries and free calendar openings.
+    const deadlineRequest=deadlineIntent(text);
+    if(deadlineRequest){await addMessage('auren',deadlineReply(deadlineRequest));return;}
     // v2.39: adaptive briefings and follow-ups, grounded in local saved data.
     const adaptiveRequest=adaptiveIntent(text);
     if(adaptiveRequest){
