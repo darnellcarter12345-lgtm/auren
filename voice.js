@@ -1,3 +1,4 @@
+// AUREN voice v2.9.9 — patient sentence endings and intentional interruptions.
 // AUREN v2.9.4: truthful iPhone microphone state and no silent early-exit loops.
 // SpeechRecognition is browser-dependent and may process microphone audio online.
 // The user must explicitly start voice access at least once; no background/locked-screen listening.
@@ -46,7 +47,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
   let userTappedAt = 0;
   // Aggregate recognition fragments until the speaker pauses naturally.
   let phraseParts = [], phraseTimer = null;
-  const PHRASE_PAUSE_MS = mobileWebKit ? 1350 : 1050;
+  const PHRASE_PAUSE_MS = mobileWebKit ? 2550 : 2200; // Let a natural pause finish before responding.
   function clearPhrase() { clearTimeout(phraseTimer); phraseTimer = null; phraseParts = []; }
   function queuePhrase(text) {
     if (!text) return;
@@ -201,7 +202,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
         const cleaned = transcript.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
         const output = spokenText.toLowerCase().replace(/[^a-z0-9 ]/g, '');
         const wake = detectWake(transcript);
-        if (!wake && (cleaned.split(/\s+/).length < 3 || output.includes(cleaned))) return;
+        if (!wake || output.includes(cleaned)) return;
         interruptSpeech();
         onInterim?.('');
         // Continue below through the exact same transcript pipeline as orb mode.
@@ -262,13 +263,10 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       }
       if (interim.length) {
         const preview = interim.join(' ').trim();
-        if (speaking && interruptionsEnabled && looksLikeUser(preview)) {
-          const comparable = preview.toLowerCase().replace(/[^a-z0-9 ]/g, ' ').trim();
-          if (comparable.startsWith(interruptionCandidate) || interruptionCandidate.startsWith(comparable)) interruptionSamples++;
-          else interruptionSamples = 1;
-          interruptionCandidate = comparable;
-          if (interruptionSamples >= 2 || detectWake(preview)) interruptSpeech();
-        }
+        // Do not interrupt AUREN on partial transcripts, background speech, or
+        // the first few words of a sentence. Only a completed intentional
+        // wake phrase is permitted to interrupt when the user opts in.
+        // Tapping the orb remains the immediate manual interruption method.
         if (phraseParts.length) schedulePhrase();
         if (!speaking && (!wakeMode || conversation || detectWake(preview))) onInterim?.(normalizeWakeDisplay([...phraseParts, preview].join(' ')));
       }
