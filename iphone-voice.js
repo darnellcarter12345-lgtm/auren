@@ -1,10 +1,10 @@
-// AUREN iPhone voice v3.19 — one-tap recording with local speech-end detection.
+// AUREN iPhone voice v3.20 — one-tap recording with local speech-end detection.
 // Microphone opens only on tap and is closed before transcription or AI response.
 export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
   let stream=null, recorder=null, recording=false, busy=false;
   let chunks=[], timeout=null, audioContext=null, analyser=null, sourceNode=null, detectionTimer=null;
   let startedAt=0, hasSpeech=false, speechSince=0, lastSpeechAt=0, baseline=0.006, peak=0;
-  let finishing=false, generation=0;
+  let finishing=false, generation=0, stopWatchdog=null;
   const MAX_MS=45000, MAX_BYTES=2*1024*1024, NO_SPEECH_MS=15000, MIN_SPEECH_MS=650, SILENCE_MS=2300;
   const report=(message,state='idle')=>onStatus?.(message,state);
   function releaseAudio(){
@@ -13,6 +13,7 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
     if(audioContext){try{void audioContext.close();}catch{}}audioContext=null;
   }
   function cleanup(){
+    clearTimeout(stopWatchdog);stopWatchdog=null;
     clearTimeout(timeout);timeout=null;releaseAudio();
     if(stream){for(const t of stream.getTracks())try{t.stop();}catch{}}
     stream=null;recorder=null;recording=false;
@@ -37,7 +38,7 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
       if(!text){report('No speech detected. Tap once and try again.','error');return;}
       report('Heard: '+text.slice(0,100),'processing');
       await onText(text);
-      // Do not override speaking/processing UI: the response pipeline owns it.
+      // The recorder is available again on the next turn; playback owns the speaking UI.
       report('Ready for your next question.','idle');
     }catch(error){report('Voice service: '+(error.name==='AbortError'?'Timed out.':error.message),'error');}
     finally{clearTimeout(wait);}
@@ -86,12 +87,14 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
       // Request permission immediately inside user tap, without awaiting anything first.
       const obtained=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true,channelCount:1}});
       if(token!==generation){obtained.getTracks().forEach(t=>t.stop());return;}
+      obtained.getAudioTracks().forEach(t=>{t.onended=()=>{if(token!==generation||finishing)return; ++generation;cleanup();busy=false;finishing=false;report('Microphone disconnected. Tap once to reconnect.','error');};});
       stream=obtained;chunks=[];hasSpeech=false;speechSince=0;lastSpeechAt=0;baseline=.006;peak=0;
       const kind=mime();const r=new MediaRecorder(obtained,kind?{mimeType:kind}:undefined);recorder=r;
       r.ondataavailable=e=>{if(e.data?.size)chunks.push(e.data);};
-      r.onerror=()=>{cleanup();busy=false;report('Recording failed. Tap once to retry.','error');};
+      r.onerror=()=>{if(token!==generation)return; ++generation;cleanup();busy=false;finishing=false;report('Recording failed. Tap once to retry.','error');};
       r.onstop=async()=>{
         if(token!==generation)return;
+        clearTimeout(stopWatchdog);stopWatchdog=null;
         const blob=new Blob(chunks,{type:r.mimeType||kind||'audio/mp4'});
         chunks=[];cleanup();busy=true;
         try{await upload(blob);}finally{busy=false;finishing=false;}
@@ -107,7 +110,16 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
     if(!recording||!recorder||busy||finishing)return;
     finishing=true;busy=true;recording=false;releaseAudio();clearTimeout(timeout);timeout=null;
     report('Processing your message…','processing');
-    try{if(recorder.state==='recording'){try{recorder.requestData();}catch{} recorder.stop();}else{cleanup();busy=false;finishing=false;}}
+    try{if(recorder.state==='recording'){
+      try{recorder.requestData();}catch{}
+      recorder.stop();
+      stopWatchdog=setTimeout(()=>{
+        if(!finishing||!busy)return;
+        // WebKit sometimes fails to dispatch the stop event. Restore the next-turn control.
+        ++generation;cleanup();busy=false;finishing=false;
+        report('Recorder reset. Tap the orb once to speak again.','error');
+      },6500);
+    }else{cleanup();busy=false;finishing=false;}}
     catch(error){cleanup();busy=false;finishing=false;report('Could not finish recording: '+error.message,'error');}
   }
   document.addEventListener('visibilitychange',()=>{
