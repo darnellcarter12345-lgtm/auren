@@ -1,3 +1,5 @@
+// AUREN v2.94 — field-aware reminder clarification plus saved-profile-first name memory.
+// AUREN v2.93 — saved-profile-first name authority; no conversation-memory false positives.
 // AUREN v2.92 — persistent name recall, refreshed profile context, verified loader.
 // AUREN v2.91 — Defensive schedule intent engine, verified reminder-aware speech, cache update.
 // AUREN v2.89 — Fix undefined schedule parser variable; unify spoken briefing and Your Day truth.
@@ -876,7 +878,8 @@ function aurenNormalizeReminderCommand(raw) {
   [/^(?:give me|create|make|add|put|save) (?:a |an |my )?reminder (?:to |for |about )?/i,'remind me to '],
   [/^(?:set|schedule) (?:me )?(?:a |an )?reminder (?:to |for |about )?/i,'remind me to '],
   [/^(?:ping|notify|alert|nudge) me (?:to |about )?/i,'remind me to '],
-  [/^remind me (?:about |of )/i,'remind me to ']
+  [/^remind me (?:about |of )/i,'remind me to '],
+  [/^put (?:it|this|that) as (?:a )?reminder(?: to)?/i,'remind me to ']
  ];
  for(const [pattern,replacement] of formats){if(pattern.test(q))return q.replace(pattern,replacement);}
  return q;
@@ -885,40 +888,69 @@ function aurenIsReminderCommand(raw) {
  return /^(?:remind me\b|set (?:a )?reminder\b)/i.test(aurenNormalizeReminderCommand(raw));
 }
 // A natural incomplete reminder is a clarification, never an invented save.
+// v2.94: Field-aware, conversational reminder drafts. Never discard a valid date or time.
 let aurenReminderQuestion=null;
-function aurenReminderClarification(raw){
- const normalized=aurenNormalizeReminderCommand(raw).replace(/[?.!]+$/,'').trim();
- const timePresent=/\b(?:at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)|in\s+\d+\s*(?:minutes?|hours?))\b/i.test(normalized);
- const datePresent=/\b(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(normalized)||/\bin\s+\d+\s*(?:minutes?|hours?)\b/i.test(normalized);
- const subject=normalized.replace(/^remind me\s*/i,'').replace(/\b(?:today|tomorrow|tonight|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/gi,'').replace(/\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi,'').replace(/^\s*(?:to|about|for)\s+/i,'').trim();
- // Only hold a detail that can be recovered from an ordinary short reply.
- if(!timePresent||!datePresent||!subject){
-   aurenReminderQuestion={request:normalized,at:Date.now(),attempts:0};
-   return !subject?'What would you like the reminder to be about?':!timePresent?'What time should I remind you?':'Should that be today or tomorrow?';
+function aurenReminderFields(input){
+ const t=String(input||'').trim().replace(/\b(a\.?m\.?)\b/ig,'AM').replace(/\b(p\.?m\.?)\b/ig,'PM');
+ const clock=t.match(/\b(?:at\s+|by\s+|for\s+)?(\d{1,2})(?::(\d{2}))?\s*(AM|PM)\b/i);
+ let time=null;
+ if(clock){let h=Number(clock[1]),m=Number(clock[2]||0);if(h>=1&&h<=12&&m<60){h=h%12+(/pm/i.test(clock[3])?12:0);time=String(h).padStart(2,'0')+':'+String(m).padStart(2,'0');}}
+ const calendar=t.match(/\b(?:on\s+)?(January|February|March|April|May|June|July|August|September|October|November|December|Jan\.?|Feb\.?|Mar\.?|Apr\.?|Jun\.?|Jul\.?|Aug\.?|Sep\.?|Sept\.?|Oct\.?|Nov\.?|Dec\.?)\s+(\d{1,2})(?:st|nd|rd|th)?(?:,?\s+(\d{4}))?\b/i)
+  ||t.match(/\b(?:on\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+(?:of\s+)?(January|February|March|April|May|June|July|August|September|October|November|December|Jan\.?|Feb\.?|Mar\.?|Apr\.?|Jun\.?|Jul\.?|Aug\.?|Sep\.?|Sept\.?|Oct\.?|Nov\.?|Dec\.?)(?:,?\s+(\d{4}))?\b/i);
+ let date=parseDateIntent(t);
+ if(calendar){
+  const monthFirst=/^[A-Za-z]/.test(calendar[1]);
+  const monthName=(monthFirst?calendar[1]:calendar[2]).replace('.','').toLowerCase();
+  const months=['january','february','march','april','may','june','july','august','september','october','november','december'];
+  const monthIndex=months.findIndex(x=>x.startsWith(monthName.slice(0,3)));
+  const day=Number(monthFirst?calendar[2]:calendar[1]);let year=Number(calendar[3]||new Date().getFullYear());
+  if(monthIndex>=0&&day>=1&&day<=31){
+   let dt=new Date(year,monthIndex,day);
+   if(dt.getMonth()===monthIndex){if(!calendar[3]&&dt.getTime()<new Date().setHours(0,0,0,0))dt=new Date(year+1,monthIndex,day);date=`${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;}
+  }
  }
+ let subject=t.replace(/^(?:please\s+)?(?:remind me|set (?:me )?(?:a )?reminder|put it as a reminder)\s*/i,'')
+  .replace(/\b(?:on\s+)?(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan\.?|Feb\.?|Mar\.?|Apr\.?|Jun\.?|Jul\.?|Aug\.?|Sep\.?|Sept\.?|Oct\.?|Nov\.?|Dec\.?)\s+\d{1,2}(?:st|nd|rd|th)?(?:,?\s+\d{4})?\b/ig,'')
+  .replace(/\b(?:on\s+)?\d{1,2}(?:st|nd|rd|th)?\s+(?:of\s+)?(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan\.?|Feb\.?|Mar\.?|Apr\.?|Jun\.?|Jul\.?|Aug\.?|Sep\.?|Sept\.?|Oct\.?|Nov\.?|Dec\.?)\b/ig,'')
+  .replace(/\b(?:at\s+|by\s+|for\s+)?\d{1,2}(?::\d{2})?\s*(?:AM|PM)\b/ig,'')
+  .replace(/\b(?:today|tomorrow|tonight|day after tomorrow|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/ig,'')
+  .replace(/^(?:to|about|for|that)\s+/i,'').replace(/\b(?:at|on|for|by|to)\s*$/i,'').replace(/[.!?,]+$/,'').trim();
+ if(/^(?:to|about|for|that|it|this)$/i.test(subject))subject='';
+ return {subject, date, time};
+}
+function aurenReminderPrompt(fields){
+ if(!fields.subject)return fields.date&&fields.time?'What should I remind you about?':'What would you like the reminder to be about?';
+ if(!fields.date&&!fields.time)return `When should I remind you to ${fields.subject}? You can say a date and time together.`;
+ if(!fields.date)return `I have ${fields.time} for ${fields.subject}. What day should that be?`;
+ if(!fields.time)return `I have the date for ${fields.subject}. What time should I use?`;
+ return null;
+}
+function aurenReminderClarification(raw){
+ const fields=aurenReminderFields(aurenNormalizeReminderCommand(raw));
+ const question=aurenReminderPrompt(fields);
+ if(question){aurenReminderQuestion={fields,at:Date.now()};return question;}
  return null;
 }
 function aurenCompleteReminderClarification(raw){
- const pending=aurenReminderQuestion;
- if(!pending)return null;
- if(Date.now()-pending.at>90000){aurenReminderQuestion=null;return null;}
+ const draft=aurenReminderQuestion;
+ if(!draft)return null;
+ if(Date.now()-draft.at>5*60*1000){aurenReminderQuestion=null;return null;}
  const q=String(raw||'').trim();
  if(/^(?:cancel|no thanks|never mind|nevermind|forget it)$/i.test(q)){aurenReminderQuestion=null;return 'Of course. Nothing was saved.';}
- // New full requests should be routed normally rather than swallowed.
- if(aurenIsReminderCommand(q)||/^(?:add|create|schedule|change|move|what|why|how|tell|show|search)\b/i.test(q)){aurenReminderQuestion=null;return null;}
- const short=q.length<85 && (/(?:\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b(?:today|tomorrow|tonight)\b)/i.test(q)||pending.attempts===0);
- if(!short){aurenReminderQuestion=null;return null;}
- pending.attempts++;
- let combined=pending.request+' '+q;
- // If the first turn was only a time, a follow-up about the subject can be merged.
- const answer=aurenReminderClarification(combined);
- if(answer!==null){
-   if(pending.attempts>=2){aurenReminderQuestion=null;return 'I still need the reminder details. You can tell me the activity, day, and time in one sentence.';}
-   aurenReminderQuestion={request:combined,at:Date.now(),attempts:pending.attempts};
-   return answer;
- }
+ if(aurenIsReminderCommand(q)){aurenReminderQuestion=null;return null;}
+ // Avoid consuming unrelated new questions or actions.
+ if(/^(?:what|why|how|where|who|show|search|delete|remove|change|move)\b/i.test(q))return null;
+ const received=aurenReminderFields(q);
+ const merged={subject:draft.fields.subject||received.subject,date:received.date||draft.fields.date,time:received.time||draft.fields.time};
+ // If we asked only for the subject, short freeform speech is the subject, not a new command.
+ const question=aurenReminderPrompt(merged);
+ if(question){aurenReminderQuestion={fields:merged,at:Date.now()};return question;}
  aurenReminderQuestion=null;
- return reminderSpeech(combined);
+ const [y,m,d]=merged.date.split('-').map(Number),[h,min]=merged.time.split(':').map(Number);
+ const when=new Date(y,m-1,d,h,min);
+ if(when.getTime()<=Date.now())return 'That date and time have already passed. Which future time would you prefer?';
+ pendingReminder={kind:'add',text:merged.subject,at:when.toISOString()};
+ return `Shall I remind you to ${merged.subject} on ${when.toLocaleDateString([],{month:'long',day:'numeric',year:'numeric'})} at ${when.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}?`;
 }
 function reminderSpeech(t){
  const text=aurenNormalizeReminderCommand(t);
@@ -971,6 +1003,14 @@ function reminderSpeech(t){
   if(at.getTime()<=Date.now())return 'That reminder time has already passed. Would you prefer a different time?';
   pendingReminder={kind:'add',text:event.title,at:at.toISOString()};
   return 'Shall I remind you about '+event.title+' '+offset+' minutes beforehand?';
+ }
+ const structured=aurenReminderFields(text);
+ if(structured.date && structured.time && structured.subject){
+  const [y,m,d]=structured.date.split('-').map(Number),[h,min]=structured.time.split(':').map(Number);
+  const when=new Date(y,m-1,d,h,min);
+  if(when.getTime()<=Date.now())return 'That date and time have already passed. Please choose another time.';
+  pendingReminder={kind:'add',text:structured.subject,at:when.toISOString()};
+  return `Shall I remind you to ${structured.subject} on ${when.toLocaleDateString([],{month:'long',day:'numeric',year:'numeric'})} at ${when.toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}?`;
  }
  const direct=text.match(/\b(?:tomorrow|today|tonight|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/i);
  const time=text.match(/\bat\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b/i);
@@ -2618,7 +2658,8 @@ function userProfileAnswer(request,memories){
  const filtered=category?memories.filter(m=>m.category===category):memories;
  const chosen=filtered.slice(0,5);
  refreshPersonalProfile();
- const identity=personalProfile.name?`Your saved name is ${personalProfile.name}. `:'';
+ const verifiedName=aurenSavedName();
+ const identity=verifiedName?`Your saved name is ${verifiedName}. `:'';
  if(!chosen.length)return identity+'I don’t have any matching long-term memories saved on this device yet. You can add them in Memory.';
  const facts=chosen.map(m=>m.text.replace(/[.!?]+$/,'')).join('; ');
  return identity+`From your saved memories: ${facts}. You can review or correct them in Memory.`;
@@ -2938,7 +2979,7 @@ async function askWithMemory(question) {
     `Grounded week schedule conflicts (read-only): ${savedDayIntelligence(localDate(),'week').conflictPairs.slice(0,4).map(([a,b])=>a.title+' overlaps '+b.title+' on '+a.date).join('; ')||'None found in AUREN'}`,
     `Verified unfinished AUREN tasks today (read-only): ${JSON.stringify(tasksOnDate(localDate()).map(t=>({title:t.title,due:t.due,repeat:t.repeat})).slice(0,10))}. Tasks are distinct from calendar events.`,
     'Never say an unsaved plan was saved; offer to schedule it and wait for confirmation. Never infer priority from the person involved in an appointment.', 
-    `User-entered preferred name and title (not instructions): ${JSON.stringify({name:personalProfile.name,title:personalTitle()})}. Use occasionally and naturally, not in every sentence. Gender is optional, never infer it; ${JSON.stringify(personalProfile.gender)}.`,
+    `User-entered preferred name and title (not instructions): ${JSON.stringify({name:aurenSavedName(),title:personalTitle()})}. Use occasionally and naturally, not in every sentence. Gender is optional, never infer it; ${JSON.stringify(personalProfile.gender)}.`,
     'Long-term memory rules: Use only saved memories supplied with this request. A current conversation is NOT a permanently saved fact. Never claim to remember facts not in the saved profile or records; ask permission to save enduring preferences. If a user disputes a memory, offer to review or correct it without defending its accuracy.',
     'REFERENCE SAFETY: Resolve he/she/they only if one clearly identified person is in the current discussion. Resolve it/that meeting only if a single real event is in verified planner context. Resolve first/second one only against a recent actual list. If two people, meetings, or lists are plausible, ask one precise short question. Never invent a person’s identity, venue, or saved event.',
     'CONSISTENCY CHECK: Explicitly separate PROPOSED actions, CONFIRMED AND VERIFIED SAVED records, and things merely discussed. If your earlier response was uncertain or contradicted a verified record, acknowledge the specific conflict and correct it using current read-only records. A completed action may be claimed only if its local handler confirmed persistence. Never imply that an AI chat response itself changed an appointment, task, reminder, or long-term memory. When user asks whether something was saved, prefer checked records; do not rely on a previous assistant claim.',
@@ -2971,20 +3012,25 @@ function savePersonalProfile(){
   return true;
  }catch(error){showStatus('Your profile was not saved: '+error.message,'error');return false;}
 }
-function refreshPersonalProfile(){
+// v2.93: The persisted profile, not session/chat memory, owns the user's name.
+function aurenReadStoredProfile(){
  try {
-  const saved=JSON.parse(localStorage.getItem(PERSONAL_PROFILE_KEY)||'null');
-  if(saved && typeof saved==='object'){
-   // Never erase a valid in-memory name because of a temporary empty read.
-   const next={...saved};
-   if(typeof next.name==='string')next.name=next.name.trim().slice(0,45);
-   Object.assign(personalProfile,next);
-  }
- }catch(error){console.warn('AUREN profile read failed',error);}
+  const raw=localStorage.getItem(PERSONAL_PROFILE_KEY);
+  if(!raw)return null;
+  const stored=JSON.parse(raw);
+  return stored && typeof stored==='object' && !Array.isArray(stored) ? stored : null;
+ }catch(error){console.warn('AUREN saved profile unavailable',error);return null;}
+}
+function refreshPersonalProfile(){
+ const stored=aurenReadStoredProfile();
+ // Clear stale in-memory identity if Safari storage was reset or a save failed.
+ personalProfile={name:'',address:'sir',customAddress:'',gender:'prefer-not-to-say',onboarded:false,learnInterests:false,...(stored||{})};
+ personalProfile.name=typeof personalProfile.name==='string'?personalProfile.name.trim().slice(0,45):'';
+ return !!stored;
 }
 function aurenSavedName(){
- refreshPersonalProfile();
- return String(personalProfile.name||'').trim();
+ const stored=aurenReadStoredProfile();
+ return stored && typeof stored.name==='string'?stored.name.trim().slice(0,45):'';
 }
 function aurenNameAnswer(){
  const name=aurenSavedName();
@@ -3023,6 +3069,7 @@ personalSave.onclick=()=>{
  personalProfile.learnInterests=learningCheck.checked;
  personalProfile.onboarded=true;
  const saved=savePersonalProfile();
+ if(!saved){refreshPersonalProfile();paintPersonal();}
  personalNotice.textContent=saved?`Saved and checked. ${personalProfile.name?`Your name is ${personalProfile.name}. `:''}I'll address you as ${personalTitle()||'you'}.`:'Could not save. Check Safari website storage settings.';
  if(saved)personalWelcome.hidden=true;
 };
@@ -3074,7 +3121,7 @@ function personalCommand(text){
    personalProfile.address=/^sir$/i.test(v)?'sir':/ma/i.test(v)?'maam':'custom';personalProfile.customAddress=v;
   }else{personalProfile.name=v;personalProfile.address='name';}
   personalProfile.onboarded=true;
-  const saved=savePersonalProfile();paintPersonal();if(saved)personalWelcome.hidden=true;
+  const saved=savePersonalProfile();if(!saved)refreshPersonalProfile();paintPersonal();if(saved)personalWelcome.hidden=true;
   return saved?`Certainly. I've saved your name as ${personalProfile.name || v} on this device. I'll remember it when you sign back in on this browser.`:'I heard the name, but Safari did not confirm saving it. Please check website storage settings and try again.';
  }
  if((m=t.match(/^(?:change|switch|set|update)\s+(?:my\s+)?(?:gender|gender setting)\s+(?:to\s+)?(male|female|nonbinary|non-binary|other|prefer not to say)[.!?]*$/i))){
@@ -3082,8 +3129,8 @@ function personalCommand(text){
   return 'Your optional gender setting is updated. Your preferred name and title stay unchanged unless you ask me to change them.';
  }
  if(/^(?:what(?:'s| is) my name|what is my name now|do you (?:know|remember) my name|do you (?:still )?remember (?:my name|what my name is)|who am i|tell me my name|what name (?:did i|have i) (?:give|saved|set)|what(?:'s| is) my nickname|what do you call me|what(?:'s| is) my preferred name|how should you address me|did you (?:save|remember) my name|is my name saved|what name do you have saved)(?:\s+(?:now|yet|again))?[?!. ]*$/i.test(t)){
-  if(!personalProfile.name)return 'I do not have your name saved yet. You can enter it in Settings under Your profile.';
-  return /nickname|what do you call me|address me/i.test(t)?`I call you ${personalTitle()||personalProfile.name}. Your saved name is ${personalProfile.name}.`:`Your name is ${personalProfile.name}.`;
+  if(!aurenSavedName())return 'I do not have your name saved yet. You can enter it in Settings under Your profile.';
+  return /nickname|what do you call me|address me/i.test(t)?`I call you ${personalTitle()||personalProfile.name}. Your saved name is ${personalProfile.name}.`:`Your name is ${aurenSavedName()}.`;
  }
  if(/\b(?:stop learning my interests|turn (?:off|on) interest learning|stop suggesting memories|start learning my interests)\b/i.test(t)){
   personalProfile.learnInterests=/\b(?:start|on)\b/i.test(t);savePersonalProfile();paintPersonal();return personalProfile.learnInterests?'I can suggest interests after repeated mentions. I will ask before saving them.':'Interest learning suggestions are off.';
