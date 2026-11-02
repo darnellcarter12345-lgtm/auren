@@ -1,3 +1,4 @@
+// AUREN v3.08 — Trust & Attentiveness Engine; grounded tone, selective support, respectful correction.
 // AUREN v3.07 — Natural Conversation Flow; grounded follow-ups and low-friction declines.
 // AUREN v3.06 — Unified Personal Brain; consistent grounded context.
 // AUREN v3.05 — contextual conversation, selective initiative, persistent feedback.
@@ -3068,7 +3069,38 @@ function aurenUnifiedBrain(question){
 }
 function aurenUnifiedBrainGuidance(question){
  const snapshot=aurenUnifiedBrain(question);
- return `AUREN UNIFIED PERSONAL BRAIN v3.07 — READ-ONLY CONTEXT: ${JSON.stringify(snapshot)}. Follow-up discipline: short day/time corrections should reuse a verified current schedule scope, never an old pending write. Do not repeat a clarification when the user already supplied the requested detail. A refusal needs only brief acknowledgment. Priority: (1) current request and explicit corrections, (2) verified local records and saved user preferences, (3) recent conversation ONLY for a genuine follow-up, (4) optional situation-aware suggestion. Never let an older reminder draft, conversation subject or a check-in override a clear new topic. For action requests, the existing local handler alone performs and verifies the save; the AI must never claim a save, conversion, Maps opening, message delivery or external action happened. A reminder and appointment are different types, even when both display in Your Day. Ask ONE short clarifying question if essential information is missing; never repeat a detail already supplied. If a user says no/not now, accept it without offering the same topic again. Address user by saved name or preferred title only when appropriate; do not add either after every answer. Do not infer feelings, meals, sleep, weather or location from the clock or guess at personal facts. No autonomous monitoring or browser-closed check-ins. Respond to the question FIRST; skip unsolicited suggestions in action requests or when the user is frustrated.`;
+ return `AUREN UNIFIED PERSONAL BRAIN v3.08 — READ-ONLY CONTEXT: ${JSON.stringify(snapshot)}. Follow-up discipline: short day/time corrections should reuse a verified current schedule scope, never an old pending write. Do not repeat a clarification when the user already supplied the requested detail. A refusal needs only brief acknowledgment. Priority: (1) current request and explicit corrections, (2) verified local records and saved user preferences, (3) recent conversation ONLY for a genuine follow-up, (4) optional situation-aware suggestion. Never let an older reminder draft, conversation subject or a check-in override a clear new topic. For action requests, the existing local handler alone performs and verifies the save; the AI must never claim a save, conversion, Maps opening, message delivery or external action happened. A reminder and appointment are different types, even when both display in Your Day. Ask ONE short clarifying question if essential information is missing; never repeat a detail already supplied. If a user says no/not now, accept it without offering the same topic again. Address user by saved name or preferred title only when appropriate; do not add either after every answer. Do not infer feelings, meals, sleep, weather or location from the clock or guess at personal facts. No autonomous monitoring or browser-closed check-ins. Respond to the question FIRST; skip unsolicited suggestions in action requests or when the user is frustrated.`;
+}
+
+// AUREN v3.08 — Trust & Attentiveness Engine. This is response guidance only:
+// it may not create events, infer private facts, or trigger background check-ins.
+function aurenTrustTurn(question){
+ const q=String(question||'').trim();
+ const explicitFrustration=/\b(?:you (?:keep|always)|that(?:'s| is) (?:wrong|not right)|you(?:'re| are) (?:not listening|repeating)|stop (?:repeating|interrupting)|this (?:isn't|is not) working|i(?:'m| am) frustrated|you missed|that's not what i (?:said|asked))\b/i.test(q);
+ const optOut=/\b(?:not now|no thanks|leave it|don't ask|stop asking|drop it|never mind|nevermind)\b/i.test(q);
+ const factual=/\b(?:what|when|where|which|why|how|find|show|list|tell|read|check|schedule|remind|set|create|change|delete|move|add|open|navigate)\b/i.test(q);
+ const recentOffer=aurenRelationship.lastPrompt && Date.now()-Number(aurenRelationship.lastPrompt.at||0)<120000;
+ const blocked=Object.keys(aurenRelationship.declined).filter(k=>aurenRelationship.declined[k]);
+ const address=aurenButler.addressMode==='none'?'never':aurenButler.addressMode==='name'?'name':aurenButler.addressMode==='title'?'title':'sparing and contextual';
+ return {correctionOrFrustration:explicitFrustration,declinesOffer:optOut,recentOffer:!!recentOffer,primaryRequest:factual?'task or information':'conversation',preferredStyle:aurenButler.style,addressPreference:address,addressFrequency:aurenAdaptive.addressRate,checkinsAllowed:aurenCare.checkins&&aurenButler.checkinFrequency!=='off'&&!optOut&&!explicitFrustration,blockedTopics:blocked};
+}
+function aurenTrustGuidance(question){
+ const s=aurenTrustTurn(question);
+ return `AUREN TRUST AND ATTENTIVENESS v3.08 (per-turn, do not save emotional signals): ${JSON.stringify(s)}. First address the user's immediate request clearly. When corrected, acknowledge the specific mistake briefly and act on the correction; avoid excuses, repetitive apologies and canned service closings. Do not interpret frustration as consent for check-ins. If they decline an offer, accept it without an alternative offer in the same reply. Use a stored name or title sparingly, especially in greetings; never insert the same title multiple times or add it after every sentence. Follow the user's formality and answer-length preferences without mimicking distress or presuming emotions. Only offer ONE optional next step when it naturally helps with the current task or a verified upcoming commitment, check-ins are enabled, and that topic has not been declined. If the user asks a clear question, do not change topics to meals, sleep or personal feelings. No invented mood, location, weather, plans, delivery status or claims of autonomous monitoring. AUREN is software, not a person with independent experiences. Reminders, appointments and external actions are only completed by verified local workflows.`;
+}
+// Remove only repeated address words from *AI prose*, never from records, names,
+// quotes, or user-visible action logs.
+function aurenTrustPolishAnswer(answer){
+ let s=String(answer||'');
+ if(!s)return s;
+ const profile=aurenReadStoredProfile()||{};
+ const title=aurenButlerAddress();
+ // Avoid modifying arbitrary user names or addresses appearing in meaningful content.
+ if(!title || !/^(?:sir|ma’am|ma'am|madam)$/i.test(title))return s;
+ const escaped=title.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
+ const starts=new RegExp('^('+escaped+')[,\\s]+(?:'+escaped+')[,\\s]+','i');
+ s=s.replace(starts,'$1, ');
+ return s;
 }
 
 async function askWithMemory(question) {
@@ -3092,6 +3124,7 @@ async function askWithMemory(question) {
     ? latestBriefingContext.text : '';
   const deviceContext = [
     aurenUnifiedBrainGuidance(question),
+    aurenTrustGuidance(question),
     correctionContext(question),
     `CURRENT RESPONSE STYLE (high priority, per-turn only): ${aurenStyleGuidance(question)}`,
     `CURRENT PERSONALITY DELIVERY (high priority, per-turn only): ${aurenPersonalityGuidance(question)}`,
@@ -3130,7 +3163,7 @@ async function askWithMemory(question) {
     briefing ? `Most recent spoken briefing (read-only data): ${briefing}` : ''
   ].filter(Boolean);
   const answer = await askAI(question, context.memories, context.session, aiRecent, deviceContext);
-  const checkedAnswer = correctFalseCapabilityClaims(question, answer);
+  const checkedAnswer = aurenTrustPolishAnswer(correctFalseCapabilityClaims(question, answer));
   lastFailedAIQuestion=null;
   // The completed reply is recorded once by addMessage, including locally handled replies.
   trackConversationAnchor(question,checkedAnswer);
