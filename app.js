@@ -1,3 +1,4 @@
+// AUREN v2.87 — Flexible reminder phrasing and non-repeating clarification.
 // AUREN v2.86 — Patient listening, reduced accidental interruptions.
 // AUREN v2.85 — Context-aware schedule clarification and corrected Safari loader.
 // AUREN v2.84 — Natural Your Day language and context-aware suggestions.
@@ -844,15 +845,62 @@ function respectfulUncertainty(text) {
  ]);
 }
 
+// Convert common natural requests into the existing verified reminder writer.
+// No reminder is saved by this function; the regular confirmation remains required.
 function aurenNormalizeReminderCommand(raw) {
- const q=String(raw||'').trim();
- if(/^(?:can|could|would|will) you (?:please )?remind me\b/i.test(q))return q.replace(/^(?:can|could|would|will) you (?:please )?/i,'');
- if(/^please (?:remind me|set (?:a )?reminder)\b/i.test(q))return q.replace(/^please\s+/i,'');
- if(/^set (?:me )?(?:a )?reminder to\b/i.test(q))return q.replace(/^set (?:me )?(?:a )?reminder to\b/i,'remind me to');
+ let q=String(raw||'').trim();
+ q=q.replace(/^(?:hey\s+)?auren[,! ]+/i,'').replace(/^(?:(?:hey|hi)[, ]+)?(?:please\s+)?/i,'');
+ q=q.replace(/^(?:can|could|would|will) you (?:please )?/i,'');
+ const formats=[
+  [/^(?:don't|do not) let me forget (?:to |about )?/i,'remind me to '],
+  [/^(?:make sure|help) (?:i|that i) (?:remember|don't forget) (?:to |about )?/i,'remind me to '],
+  [/^i (?:need|want|have) (?:to )?(?:remember|be reminded) (?:to |about )?/i,'remind me to '],
+  [/^(?:give me|create|make|add|put|save) (?:a |an |my )?reminder (?:to |for |about )?/i,'remind me to '],
+  [/^(?:set|schedule) (?:me )?(?:a |an )?reminder (?:to |for |about )?/i,'remind me to '],
+  [/^(?:ping|notify|alert|nudge) me (?:to |about )?/i,'remind me to '],
+  [/^remind me (?:about |of )/i,'remind me to ']
+ ];
+ for(const [pattern,replacement] of formats){if(pattern.test(q))return q.replace(pattern,replacement);}
  return q;
 }
 function aurenIsReminderCommand(raw) {
- return /^(?:remind me\b|set (?:a )?reminder\b|set (?:me )?(?:a )?reminder to\b)/i.test(aurenNormalizeReminderCommand(raw));
+ return /^(?:remind me\b|set (?:a )?reminder\b)/i.test(aurenNormalizeReminderCommand(raw));
+}
+// A natural incomplete reminder is a clarification, never an invented save.
+let aurenReminderQuestion=null;
+function aurenReminderClarification(raw){
+ const normalized=aurenNormalizeReminderCommand(raw).replace(/[?.!]+$/,'').trim();
+ const timePresent=/\b(?:at\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)|in\s+\d+\s*(?:minutes?|hours?))\b/i.test(normalized);
+ const datePresent=/\b(?:today|tomorrow|tonight|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\b/i.test(normalized)||/\bin\s+\d+\s*(?:minutes?|hours?)\b/i.test(normalized);
+ const subject=normalized.replace(/^remind me\s*/i,'').replace(/\b(?:today|tomorrow|tonight|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/gi,'').replace(/\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi,'').replace(/^\s*(?:to|about|for)\s+/i,'').trim();
+ // Only hold a detail that can be recovered from an ordinary short reply.
+ if(!timePresent||!datePresent||!subject){
+   aurenReminderQuestion={request:normalized,at:Date.now(),attempts:0};
+   return !subject?'What would you like the reminder to be about?':!timePresent?'What time should I remind you?':'Should that be today or tomorrow?';
+ }
+ return null;
+}
+function aurenCompleteReminderClarification(raw){
+ const pending=aurenReminderQuestion;
+ if(!pending)return null;
+ if(Date.now()-pending.at>90000){aurenReminderQuestion=null;return null;}
+ const q=String(raw||'').trim();
+ if(/^(?:cancel|no thanks|never mind|nevermind|forget it)$/i.test(q)){aurenReminderQuestion=null;return 'Of course. Nothing was saved.';}
+ // New full requests should be routed normally rather than swallowed.
+ if(aurenIsReminderCommand(q)||/^(?:add|create|schedule|change|move|what|why|how|tell|show|search)\b/i.test(q)){aurenReminderQuestion=null;return null;}
+ const short=q.length<85 && (/(?:\b(?:at\s+)?\d{1,2}(?::\d{2})?\s*(?:am|pm)\b|\b(?:today|tomorrow|tonight)\b)/i.test(q)||pending.attempts===0);
+ if(!short){aurenReminderQuestion=null;return null;}
+ pending.attempts++;
+ let combined=pending.request+' '+q;
+ // If the first turn was only a time, a follow-up about the subject can be merged.
+ const answer=aurenReminderClarification(combined);
+ if(answer!==null){
+   if(pending.attempts>=2){aurenReminderQuestion=null;return 'I still need the reminder details. You can tell me the activity, day, and time in one sentence.';}
+   aurenReminderQuestion={request:combined,at:Date.now(),attempts:pending.attempts};
+   return answer;
+ }
+ aurenReminderQuestion=null;
+ return reminderSpeech(combined);
 }
 function reminderSpeech(t){
  const text=aurenNormalizeReminderCommand(t);
@@ -3456,7 +3504,7 @@ function aurenYourDayFollowup(raw) {
   }
   // 'yes' alone is not permission to invent or save a record.
   if (/^(?:yes|yeah|yep|okay|ok|sure|do it|go ahead|please)$/.test(q))
-    return 'I can do that. Is it a reminder or an appointment? Nothing has been saved yet.';
+    return varyButler('clarifyYourDayYes',['Is this something to attend or something to remember?','Do you want a scheduled appointment or a reminder? Both appear in Your Day.','Which fits better: a reminder or an appointment? Nothing has been saved.']);
   // A new substantive request is independent; don't hijack it.
   pendingYourDayChoice=null;
   return null;
@@ -3504,11 +3552,15 @@ async function send(text) {
   // v2.83: Verify reminders in the same Your Day section as appointments.
   const placement=aurenReminderPlacementReply(text);
   if(placement){await addMessage('user',text);await addMessage('auren',placement);return;}
+  // v2.87: A brief answer completes only a recent reminder clarification.
+  const reminderAnswer=aurenCompleteReminderClarification(text);
+  if(reminderAnswer!==null){await addMessage('user',text);await addMessage('auren',reminderAnswer);return;}
   // v2.81: AUREN's own reminder writer owns direct reminder commands.
   // Never send 'remind me to text someone' to the external messaging boundary/AI.
   if(aurenIsReminderCommand(text)) {
     await addMessage('user',text);
-    await addMessage('auren',reminderSpeech(text));
+    const question=aurenReminderClarification(text);
+    await addMessage('auren',question??reminderSpeech(text));
     return;
   }
   if(/^(?:ok(?:ay)?(?: do it)?|do it|yes(?: please)?|confirm|go ahead)[.!? ]*$/i.test(text.trim()) && !pendingReminder && !pendingPlan && !pendingTaskChange && !butler.pending){
