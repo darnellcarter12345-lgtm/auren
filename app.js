@@ -1,3 +1,4 @@
+// AUREN v2.33 — focused nearby popup: results or directions and close.
 // AUREN v2.32 — reliable actions, contextual place follow-ups, honest recommendations.
 // AUREN v2.31 — conversation-first directions, no navigation loops or repetitive location questions.
 // AUREN v2.30 — persistent destination context and chat-to-directions handoff
@@ -2338,44 +2339,50 @@ aurenPlaces = (() => {
   const noticeText=document.createElement('p');noticeText.style.cssText='margin:0 0 10px;line-height:1.4';
   const noticeClose=document.createElement('button');noticeClose.type='button';noticeClose.textContent='Dismiss';noticeClose.onclick=()=>{returnNotice.style.display='none';};
   const noticeAgain=document.createElement('button');noticeAgain.type='button';noticeAgain.textContent='More options';noticeAgain.style.marginLeft='8px';noticeAgain.onclick=()=>{returnNotice.style.display='none';displayResults(false);};
-  returnNotice.append(noticeText,noticeClose,noticeAgain);document.body.append(returnNotice);
+  returnNotice.append(noticeText,noticeClose);document.body.append(returnNotice);
   let greetingCount=0;const greetings=['Welcome back. Did you find what you needed?','Back from Maps. Would you like another option?','Good to have you back. How did the search go?','Welcome back. Need more places to choose from?','How was the map search? I can help you find something else.'];
   const popupButton=(label,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.style.cssText='border-radius:10px;padding:12px;cursor:pointer;';b.onclick=fn;mapChoices.append(b);return b;};
   function closePopup(){mapOverlay.style.display='none';mapChoices.replaceChildren();}
   mapOverlay.addEventListener('click',e=>{if(e.target===mapOverlay)closePopup();});
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&mapOverlay.style.display!=='none')closePopup();});
   function showPopup(message,places=[]){
+    const hasResults=places.length>0;
+    const busy=phase==='searching'||phase==='locating';
     mapTitle.textContent='AUREN · '+(pending||'Nearby places');
-    mapText.textContent=message;mapChoices.replaceChildren();mapOverlay.style.display='flex';
-    if(places.length){
+    mapText.textContent=hasResults?message:(lookupFailed||phase==='results'&&!hasResults
+      ? 'No verified nearby listings available. You can open Google Maps instead.'
+      : message);
+    mapChoices.replaceChildren();mapOverlay.style.display='flex';
+    if(hasResults){
       const list=document.createElement('div');list.style.cssText='display:grid;gap:9px;margin:8px 0 12px';
       for(const place of places.slice(0,8)){
         const card=document.createElement('div');card.style.cssText='padding:11px;border:1px solid rgba(199,168,104,.35);border-radius:12px;background:#292b31';
         const name=document.createElement('strong');name.textContent=place.name;
         const detail=document.createElement('p');detail.textContent=place.km.toFixed(1)+' km away (straight line)'+(place.cuisine?' · '+place.cuisine:'')+(place.address?' · '+place.address:'')+(place.hours?' · Hours listed: '+place.hours:'');detail.style.cssText='font-size:12px;opacity:.85;margin:4px 0 8px';
-        const directions=document.createElement('button');directions.type='button';directions.textContent='Directions';directions.onclick=()=>openMap(mapLink(place));
+        const directions=document.createElement('button');directions.type='button';directions.textContent='Get directions';directions.onclick=()=>openMap(mapLink(place));
         card.append(name,detail,directions);list.append(card);
       }
       mapChoices.append(list);
-      const note=document.createElement('small');note.textContent='Names and details come from OpenStreetMap. Hours may be outdated; ratings are not included. Results are not ranked by reviews.';mapChoices.append(note);
-    }else if(phase==='searching'||phase==='locating'){
+      const note=document.createElement('small');note.textContent='Places are from OpenStreetMap, not ranked by customer reviews.';mapChoices.append(note);
+    } else if(busy){
       const loading=document.createElement('div');loading.setAttribute('role','status');loading.textContent=phase==='locating'?'Waiting for your location permission…':'Finding nearby suggestions…';loading.style.cssText='padding:16px;text-align:center;opacity:.85';mapChoices.append(loading);
     }
-    if(navigationTarget && phase!=='searching'&&phase!=='locating'){
-      popupButton('Get directions to '+navigationTarget,()=>openDirections(navigationTarget));
+    if(!busy&&!hasResults){
+      // No misleading retry loop or repeated options when there are no usable results.
+      // For general categories, Maps searches that category; for a named destination it opens directions.
+      const destination=navigationTarget||pending||'places nearby';
+      popupButton('Get directions',()=>navigationTarget
+        ? openDirections(destination)
+        : openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(destination+' near me')));
+      // One optional discovery action only BEFORE the first lookup, never after failure.
+      if(phase==='consent'&&!lookupFailed){
+        popupButton('Find nearby suggestions',()=>{
+          if(coords){void lookup();return;}
+          if(locationApproved&&aurenLocation){coords={lat:aurenLocation.latitude,lon:aurenLocation.longitude};void lookup();return;}
+          enable();
+        });
+      }
     }
-    if(lookupFailed && !places.length){
-      popupButton('Browse places & genuine reviews in Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
-    }
-    if(phase!=='searching'&&phase!=='locating'){
-      popupButton(lookupFailed?'Retry nearby lookup':places.length?'Search again':'Find nearby suggestions',()=>{
-        if(coords){void lookup();return;}
-        if(locationApproved&&aurenLocation){coords={lat:aurenLocation.latitude,lon:aurenLocation.longitude};void lookup();return;}
-        enable();
-      });
-    }
-    if(phase!=='searching'&&phase!=='locating')popupButton('See ratings and reviews in Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
-    if(navigationTarget)popupButton('Find other '+navigationTarget+' locations in Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
     const x=document.createElement('button');x.type='button';x.textContent='Close';x.className='ghost';x.style.cssText='align-self:center;padding:6px 12px';x.onclick=closePopup;mapChoices.append(x);
   }
   const distanceKm=(a,b,c,d)=>{const R=6371,rad=x=>x*Math.PI/180,dl=rad(c-a),dn=rad(d-b),v=Math.sin(dl/2)**2+Math.cos(rad(a))*Math.cos(rad(c))*Math.sin(dn/2)**2;return 2*R*Math.atan2(Math.sqrt(v),Math.sqrt(1-v));};
@@ -2457,7 +2464,7 @@ aurenPlaces = (() => {
         :better?'I cannot verify which is best from these listings. Choose Compare reviews in Maps for genuine ratings.'
         :'You can explore more results in Google Maps, or ask about one of the places already listed.');
       showPopup('Your earlier nearby places are still available.',results);
-      popupButton(cheaper?'Check affordable options in Google Maps':better?'Compare reviews in Google Maps':'See more places in Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(search+' near me')));
+      // Keep the popup minimal; the standard directions button and place cards remain available.
       return true;
     }
     const wantsDirections=/\b(?:directions|navigate|take me|go there|route|open maps|how (?:do i|can i) get)\b/i.test(t);
@@ -2473,7 +2480,7 @@ aurenPlaces = (() => {
     if(closest){const r=results[0];await addMessage('auren',`${r.name} is the closest of the places I found, about ${r.km.toFixed(1)} kilometres away in a straight line. Driving distance may differ.`);return true;}
     if(ref){
       await addMessage('auren',wantsDirections?`I’ve prepared directions to ${ref.name}. Select Open directions on screen.`:`${ref.name} is about ${ref.km.toFixed(1)} kilometres away in a straight line${ref.cuisine?'. Cuisine: '+ref.cuisine:''}${ref.address?', at '+ref.address:''}${ref.hours?'. Listed hours: '+ref.hours+' (unverified)':''}. Would you like directions?`);
-      if(wantsDirections){navigationTarget=ref.name;lastNavigationAt=Date.now();showPopup(`Directions to ${ref.name} are ready.`,results);popupButton('Open directions to '+ref.name,()=>openDirections(ref.name));}
+      if(wantsDirections){navigationTarget=ref.name;lastNavigationAt=Date.now();showPopup(`Directions to ${ref.name} are ready.`,results);}
       return true;
     }
     return false;
@@ -2523,7 +2530,7 @@ aurenPlaces = (() => {
     }
     if(seq!==requestId)return;
     phase='results';results=[];lookupFailed=true;
-    showPopup(`The free nearby listings service isn't responding. Use Google Maps for real places and reviews, or retry the lookup.`);
+    showPopup(`I couldn't load verified nearby listings.`);
     await addMessage('auren',`I couldn't verify local ${pending} listings. Google Maps is ready if you'd like to browse.`);
   }
   function enable(){if(!navigator.geolocation){phase='results';showPopup('This browser cannot share a location. Google Maps is still available.');return;}const seq=++requestId;phase='locating';showPopup('Allow location in Safari to see nearby '+pending+'.');
