@@ -1,3 +1,4 @@
+// AUREN v2.89 — Fix undefined schedule parser variable; unify spoken briefing and Your Day truth.
 // AUREN v2.88 — Unified Your Day schedule reading and saved-record truth.
 // AUREN v2.87 — Flexible reminder phrasing and non-repeating clarification.
 // AUREN v2.86 — Patient listening, reduced accidental interruptions.
@@ -1950,11 +1951,14 @@ function aurenScheduleRead(date=localDate(),scope='day') {
 }
 function aurenScheduleQuery(raw){
  const q=String(raw||'').trim().toLowerCase().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/,'').replace(/[.!?]+$/,'').trim();
+ // Real actions are always handled by the existing save/confirmation engine.
  if(/^(?:add|save|put|create|schedule|book|move|change|cancel|delete|remove|set|remind|mark|complete)\b/.test(q))return null;
- const direct=/^(?:(?:can|could|would) you (?:please )?)?(?:go over|review|read|check|show|list|tell me about|give me|walk me through|pull up)\s+(?:(?:what(?:'s| is) )?(?:on|in) )?(?:my |the |your )?(?:schedule|calendar|planner|your day|day section|appointments|plans|reminders)(?:\s+(?:for|on|today|tomorrow|this week|next week|tonight).*)?$/.test(q);
- const general=/^(?:what(?:'s| is| do i have| have i got)|do i have|is there|are there|have i got|anything)\b.*\b(?:on my (?:schedule|calendar|planner)|in (?:your day|my day)|scheduled|planned|coming up|appointments|reminders|my (?:schedule|calendar|planner))\b/.test(q);
- const bare=/^(?:my )?(?:schedule|calendar|planner|your day|day section|appointments|plans|reminders)(?:\s+(?:today|tomorrow|this week|next week))?$/.test(q);
- if(!direct&&!general&&!bare&&!simple)return null;
+ const asks=/\b(?:what do i have|what have i got|what's on|what is on|anything (?:on|for|planned|scheduled)|do i have anything|what (?:is|are) my plans|what do i have planned|what's planned|what is planned|what am i doing|go over|review|read|check|show|list|walk me through|tell me about|give me|pull up|brief me|briefing|overview|recap)\b/.test(q);
+ const subject=/\b(?:schedule|calendar|planner|your day|my day|today|tomorrow|tonight|this week|next week|appointments|plans|reminders|briefing|agenda|day)\b/.test(q);
+ const bare=/^(?:(?:my|the|your)\s+)?(?:schedule|calendar|planner|your day|day section|appointments|plans|reminders|briefing|agenda)(?:\s+(?:today|tomorrow|this week|next week))?$/.test(q);
+ // General conversation and explanations about schedules should still reach AI.
+ const readOnly=(asks&&subject)||bare||/^(?:what do i have planned|what do i have today|what do i have tomorrow|anything planned|anything on today|are you sure about my (?:schedule|day)|are you sure (?:nothing|there is nothing) (?:scheduled|planned))$/.test(q);
+ if(!readOnly)return null;
  const scope=/\b(?:this week|next week|weekly|week)\b/.test(q)?'week':'day';
  const date=/\bnext week\b/.test(q)?shiftedDate(weekStart(localDate()),7):parseDateIntent(q)||localDate();
  return {date,scope};
@@ -2142,7 +2146,7 @@ function groundedBriefingFollowup(raw){
   const q=String(raw||'').trim().toLowerCase().replace(/[.!?]+$/,'');
   const referencesBriefing=/\b(?:briefing|you (?:just )?(?:said|mentioned|told me)|what did you say|your summary|earlier summary|that overview)\b/.test(q);
   const briefFollow=/^(?:what (?:did you (?:just )?(?:say|mention)|was (?:in|on) (?:my |the |that )?briefing)|(?:repeat|summarize|recap) (?:my |the |that |your )?briefing|can you (?:repeat|summarize) (?:that|the briefing)|what did (?:that|your) briefing (?:say|cover)|tell me more about (?:the|my|that) briefing|what about (?:the|my) briefing)$/.test(q);
-  if(briefFollow)return `Your most recent briefing was: ${context.text}`;
+  if(briefFollow)return `Here is your updated saved schedule: ${aurenScheduleRead(context.date||localDate(),context.scope||'day').text}`;
   if(!referencesBriefing)return null;
   const date=/\btomorrow\b/.test(q)?shiftedDate(localDate(),1):(context.date&&/^\d{4}-\d{2}-\d{2}$/.test(context.date)?context.date:localDate());
   const scope=context.scope==='week'?'week':'day';
@@ -2154,7 +2158,7 @@ function groundedBriefingFollowup(raw){
   if(/\b(?:reminder|reminders)\b/.test(q))return report.due.length?`For that period, your saved reminders include ${report.due.slice(0,3).map(r=>r.text+' at '+new Date(r.at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})).join('; ')}.`:'There are no reminders saved for that period in AUREN.';
   if(/\b(?:conflict|overlap)\b/.test(q))return report.conflictPairs.length?`Your saved schedule has overlapping appointments: ${report.conflictPairs.slice(0,3).map(([a,b])=>a.title+' and '+b.title).join('; ')}.`:'I found no overlapping saved appointments in that period.';
   if(/\b(?:task|tasks|routine|routines)\b/.test(q))return taskBrief(date,scope,true)||'There are no unfinished tasks saved for that period.';
-  if(/\b(?:what|which|details|more)\b/.test(q))return `That briefing was based on the appointments and reminders saved in AUREN. ${report.spoken} ${taskBrief(date,scope,false)}`.trim();
+  if(/\b(?:what|which|details|more)\b/.test(q))return aurenScheduleRead(date,scope).text;
   return null;
 }
 
@@ -2193,8 +2197,8 @@ $('playBriefing').onclick=async()=>{
   catch(error) { console.warn('Weather briefing unavailable:',error); result={success:false}; }
   if(weatherStatus)weatherStatus.textContent=result?.success?'Weather: '+result.display:'Weather unavailable — schedule still works.';
   const weather=result?.success?' '+result.spoken:'';
-  const intelligence=savedDayIntelligence(date,briefingScope);
-  const briefingText = `${butlerGreeting()}. ${intelligence.spoken}${weather}`.replace(/(?:Would you like|Shall I|Do you want)[^.!?]*[?]/gi,'').trim();
+  const intelligence=aurenScheduleRead(date,briefingScope);
+  const briefingText = `${butlerGreeting()}. ${intelligence.text}${weather}`.replace(/(?:Would you like|Shall I|Do you want)[^.!?]*[?]/gi,'').trim();
   rememberBriefingResult(briefingText,date,briefingScope);
   await addMessage('auren', briefingText, {silent:true});
   briefingPlayer.start(briefingText);
@@ -3560,6 +3564,12 @@ async function send(text) {
     noteDayConversation(scheduleReadIntent.date,scheduleReadIntent.scope);
     rememberScheduleFocus(scheduleReadIntent.date);
     await addMessage('auren',aurenScheduleRead(scheduleReadIntent.date,scheduleReadIntent.scope).text);
+    return;
+  }
+  // Follow-up to a recent schedule review: verify saved records again, never guess.
+  if(dayConversation && Date.now()-dayConversation.at<5*60000 && /^(?:are you sure|really|but i have something|there is something|you missed something|check again|that's wrong|that isn't right)[?.! ]*$/i.test(text.trim())){
+    await addMessage('user',text);
+    await addMessage('auren','I checked Your Day again. '+aurenScheduleRead(dayConversation.date,dayConversation.scope).text);
     return;
   }
   // Handle the direct response to a recent Your Day clarification first.
