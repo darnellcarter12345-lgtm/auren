@@ -1,3 +1,4 @@
+// AUREN v2.66 — Grounded workload and calendar-gap analysis.
 // AUREN v2.65 — Grounded competing-priority comparison and decision support.
 // AUREN v2.64 — Grounded schedule follow-ups and routine-fit guidance.
 // AUREN v2.63 — Unified grounded tasks, routines, appointments and reminder recommendations.
@@ -1417,6 +1418,38 @@ function unifiedDayReply(intent){
  if(appointments.length>1){const conflicts=savedDayIntelligence(date,'day').conflictPairs;if(conflicts.length)parts.push(`There ${conflicts.length===1?'is':'are'} ${conflicts.length} overlapping saved appointment pair${conflicts.length===1?'':'s'} to review.`);}
  parts.push('This is a suggested order based on saved dates, not a judgment of your personal priorities. No tasks or appointments were changed.');
  return parts.join(' ');
+}
+// v2.66: Read-only time and workload estimates based strictly on recorded appointments.
+function workloadWindowIntent(raw){
+ const q=String(raw||'').trim().toLowerCase().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/,'').replace(/[.!?]+$/,'').trim();
+ if(/^(?:how much (?:time|free time) (?:do i have|is there) (?:before|until) (?:my |the )?next (?:meeting|appointment)|how much time (?:do i have|is there) between (?:my )?appointments|where (?:are|is) (?:my |the )?(?:free time|open time|gaps?) (?:today|tomorrow)?|find (?:my |the )?(?:free time|schedule gaps?) (?:today|tomorrow)?|what (?:can|could) i (?:realistically )?(?:get done|finish|fit in) (?:today|tomorrow)?|can i fit (?:a |my )?(?:task|work|homework|study session) (?:in )?before (?:my |the )?next (?:meeting|appointment)|how busy (?:am i|is my schedule) (?:today|tomorrow)|check my workload (?:today|tomorrow)?|give me (?:a |my )?workload (?:check|overview|summary) (?:today|tomorrow)?)$/.test(q)) return {date:parseDateIntent(q)||localDate(),question:q};
+ return null;
+}
+function workloadWindowReply(intent){
+ const date=intent.date,today=localDate(),now=Date.now();
+ const events=plans.filter(p=>p.date===date&&Number.isFinite(eventTimestamp(p))).sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+ const remaining=events.filter(p=>date!==today||eventTimestamp(p)+(Number(p.duration)||60)*60000>now);
+ const openTasks=tasksOnDate(date).filter(t=>!isTaskComplete(t,date));
+ const oldTasks=aurenTasks.filter(t=>t.repeat==='once'&&t.due<date&&!isTaskComplete(t,date));
+ const output=[`For ${date===today?'today':readableDate(date)}, I found ${remaining.length} relevant saved appointment${remaining.length===1?'':'s'} and ${openTasks.length} unfinished scheduled task or routine${openTasks.length===1?'':'s'}${oldTasks.length?', plus '+oldTasks.length+' overdue one-off task'+(oldTasks.length===1?'':'s'):''}.`];
+ const startOfDay=new Date(date+'T00:00:00').getTime();
+ const windowStart=date===today?Math.max(now,startOfDay):startOfDay;
+ const fmt=m=>new Date(m).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'});
+ if(remaining.length){
+  const first=remaining[0],firstStart=eventTimestamp(first);
+  if(firstStart>windowStart){const mins=Math.floor((firstStart-windowStart)/60000);output.push(`There are approximately ${mins} minutes until ${first.title} at ${fmt(firstStart)}. That is a calendar opening, not guaranteed free time.`);}
+  else output.push(`${first.title} is already in progress according to its recorded time and duration.`);
+  let best=null;
+  for(let i=0;i<remaining.length-1;i++){
+   const p=remaining[i],next=remaining[i+1];const end=eventTimestamp(p)+Math.max(1,Number(p.duration)||60)*60000;const gap=Math.floor((eventTimestamp(next)-end)/60000);
+   if(gap>0&&(!best||gap>best.minutes))best={minutes:gap,start:end,end:eventTimestamp(next)};
+  }
+  if(best)output.push(`The largest recorded gap between upcoming appointments is ${best.minutes} minutes, from ${fmt(best.start)} to ${fmt(best.end)}.`);
+  else if(remaining.length>1)output.push('I do not see a positive gap between the upcoming saved appointments.');
+ }else output.push('I do not have any upcoming saved appointments for that date; that does not mean your day is entirely free.');
+ if(openTasks.length)output.push(`For possible work, you have ${openTasks.slice(0,2).map(t=>t.title).join(' and ')}${openTasks.length>2?' and other tasks':''} recorded.`);
+ output.push('Your tasks do not have verified work durations. I cannot promise what will fit; include preparation, breaks and travel as needed. No appointments or tasks were changed.');
+ return output.join(' ');
 }
 // v2.65: Compare saved obligations without inventing importance, duration or availability.
 function planningDecisionIntent(raw){
@@ -3116,6 +3149,14 @@ async function send(text) {
     if(/^(?:how much time (?:do i have|is left) (?:before|until) (?:my )?next (?:meeting|appointment|plan)|do i have time before my next (?:meeting|appointment|plan)|how long (?:until|before) my next (?:meeting|appointment|plan))[.!? ]*$/i.test(String(text).trim())){
       noteDayConversation(localDate(),'day');
       await addMessage('auren',nextOpeningIntelligence());
+      return;
+    }
+    // v2.66: Grounded workload questions before generic planning and priority handlers.
+    const workloadRequest=workloadWindowIntent(text);
+    if(workloadRequest){
+      noteDayConversation(workloadRequest.date,'day');
+      rememberScheduleFocus(workloadRequest.date);
+      await addMessage('auren',workloadWindowReply(workloadRequest));
       return;
     }
     // v2.65: Compare competing saved tasks and events before generic AI planning.
