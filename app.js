@@ -1,4 +1,4 @@
-// AUREN v2.95 — field-aware reminder clarification plus saved-profile-first name memory.
+// AUREN v2.96 — field-aware reminder clarification plus saved-profile-first name memory.
 // AUREN v2.93 — saved-profile-first name authority; no conversation-memory false positives.
 // AUREN v2.92 — persistent name recall, refreshed profile context, verified loader.
 // AUREN v2.91 — Defensive schedule intent engine, verified reminder-aware speech, cache update.
@@ -3644,6 +3644,81 @@ function aurenYourDayFollowup(raw) {
   pendingYourDayChoice=null;
   return null;
 }
+// v2.96: Semantic intent bridge. The connected free AI interprets ambiguous
+// planning language; it is NEVER authorized to save data or claim success.
+// Existing verified local workflows remain the only writers of appointments/reminders.
+let aurenIntentLastPrompt=null;
+function aurenIntentCandidate(raw){
+ const s=String(raw||'').trim().toLowerCase();
+ if(!s||s.length>350)return false;
+ if(/^(?:yes|no|sure|okay|ok|confirm|do it|go ahead|cancel|never mind)[.!? ]*$/.test(s))return false;
+ // Short, semantically ambiguous requests are where a classifier adds value.
+ // Clear requests continue using the faster, existing local routes.
+ if(/^(?:remind me|set (?:a|me a) reminder|schedule |book |find |show |where |what |who |why |how )/.test(s))return false;
+ return /\b(?:need to|have to|gotta|ought to|supposed to|make sure|don't forget|keep track|write down|note down|put down|put it|add that|fit in|free up|save some time|make a plan|meet up|seeing|getting together|catch up|hang out|appointment|reminder|schedule|calendar|your day|tomorrow|tonight|next week|later today|monday|tuesday|wednesday|thursday|friday|saturday|sunday|got a|got an|upcoming|plan for|set up)\b/i.test(s);
+}
+function aurenParseIntentJSON(answer){
+ const raw=String(answer||'');const match=raw.match(/\{[\s\S]*?\}/);
+ if(!match)return null;
+ try{
+  const x=JSON.parse(match[0]);
+  if(!x||!['reminder','appointment','schedule_read','places','other'].includes(x.intent))return null;
+  if(x.confidence!=='high')return null;
+  return {intent:x.intent,subject:typeof x.subject==='string'?x.subject.slice(0,110).trim():'',date:typeof x.date==='string'?x.date.slice(0,50).trim():'',time:typeof x.time==='string'?x.time.slice(0,30).trim():''};
+ }catch{return null;}
+}
+async function aurenInterpretAmbiguousRequest(raw){
+ if(!getAIEndpoint()||!aurenIntentCandidate(raw))return null;
+ const prompt=[
+  'You are a STRICT intent classifier for a personal scheduling assistant, NOT a chat assistant.',
+  'Return ONLY a one-line JSON object: {"intent":"reminder|appointment|schedule_read|places|other","confidence":"high|low","subject":"","date":"","time":""}.',
+  'REMINDER means notify/remember later; APPOINTMENT means reserve time, meeting, event; SCHEDULE_READ means review existing day/calendar; PLACES means find destinations or businesses; OTHER means general conversation.',
+  'Interpret meaning and context rather than matching trigger words. A casual statement about tomorrow is OTHER unless the user actually requests an action.',
+  'If the request is uncertain, hypothetical, or contains competing intents, confidence MUST be low.',
+  'Never pretend an action was saved. Never invent dates, times or subjects. Preserve explicit details exactly. No prose or markdown.',
+  'User message: '+JSON.stringify(String(raw))
+ ].join('\\n');
+ try{
+  // The Worker already used by general AUREN conversation; no new paid API.
+  const result=await askAI(prompt,[],[],[],['Output strict JSON only. This is classification; do not execute actions.']);
+  return aurenParseIntentJSON(result);
+ }catch(e){console.warn('AUREN semantic intent unavailable; using local handlers',e);return null;}
+}
+async function aurenHandleInterpretedIntent(raw){
+ const intent=await aurenInterpretAmbiguousRequest(raw);
+ if(!intent||intent.intent==='other')return false;
+ if(intent.intent==='schedule_read'){
+  const scope=requestedScope(raw);const date=parseDateIntent(raw)||localDate();
+  await addMessage('user',raw);noteDayConversation(date,scope);rememberScheduleFocus(date);
+  await addMessage('auren',aurenScheduleRead(date,scope).text);return true;
+ }
+ if(intent.intent==='places'){
+  aurenReminderQuestion=null;pendingReminder=null;pendingYourDayChoice=null;
+  if(await aurenPlaces.handle(raw))return true;
+  const url='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent((intent.subject||raw).slice(0,120));
+  await addMessage('user',raw);await addMessage('auren','I can help you explore places in Google Maps.');
+  const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';link.textContent='Search Google Maps';link.style.cssText='color:#e6c581;font-weight:700;text-decoration:underline;display:block;margin:8px';$('log')?.append(link);
+  return true;
+ }
+ if(intent.intent==='reminder'){
+  // Normalize into an existing local reminder draft. Missing parts are requested
+  // in follow-up turns; a save is NEVER performed by model output.
+  const sentence='remind me to '+(intent.subject||'')+' '+(intent.date||'')+' '+(intent.time||'');
+  await addMessage('user',raw);
+  const question=aurenReminderClarification(sentence);
+  await addMessage('auren',question??reminderSpeech(sentence));
+  return true;
+ }
+ if(intent.intent==='appointment'){
+  const detail=[intent.subject,intent.date,intent.time].filter(Boolean).join(' ');
+  await addMessage('user',raw);
+  const answer=await planSpeech('schedule '+detail);
+  await addMessage('auren',answer||'What would you like to put on your calendar, and when?');
+  return true;
+ }
+ return false;
+}
+
 async function send(text) {
   refreshPersonalProfile();
   const addressed = aurenAddressCommand(text);
@@ -3730,6 +3805,9 @@ async function send(text) {
   // v2.83: Verify reminders in the same Your Day section as appointments.
   const placement=aurenReminderPlacementReply(text);
   if(placement){await addMessage('user',text);await addMessage('auren',placement);return;}
+  // v2.96: Let the connected model reason about ambiguous user intent.
+  // Confirmed writes are delegated to existing local tools; the AI never saves.
+  if(await aurenHandleInterpretedIntent(text))return;
   // v2.87: A brief answer completes only a recent reminder clarification.
   const reminderAnswer=aurenCompleteReminderClarification(text);
   if(reminderAnswer!==null){await addMessage('user',text);await addMessage('auren',reminderAnswer);return;}
