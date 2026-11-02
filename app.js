@@ -1,3 +1,4 @@
+// AUREN v2.32 — reliable actions, contextual place follow-ups, honest recommendations.
 // AUREN v2.31 — conversation-first directions, no navigation loops or repetitive location questions.
 // AUREN v2.30 — persistent destination context and chat-to-directions handoff
 // AUREN v2.29 — clean voice destinations, device-current-location navigation, useful best-places fallback
@@ -2406,7 +2407,7 @@ aurenPlaces = (() => {
     q=q.replace(/^(?:find|locate|look for|search for|show|suggest|recommend|take|navigate|go|get|give)\s+(?:me\s+)?(?:directions\s+to\s+|to\s+)?/i,'').replace(/^(?:a|an|the|some|nearby|closest|nearest|good|best)\s+/i,'').replace(/\b(?:near me|nearby|around me|in my area|closest to me)\b/gi,'').trim();
     return q || 'places to visit';
   }
-  function mapsQuery(){return pending+(coords?' near '+coords.lat.toFixed(5)+','+coords.lon.toFixed(5):' near me');}
+  function mapsQuery(){return pending+' near me';}
   function classifyQuery(input){
     const q=input.toLowerCase();
     const categories=[[/mcdonald|chick.fil|starbucks|walmart|target|costco|whole foods|kroger|walgreens|cvs|best buy|home depot|lowe.s|dunkin|burger king|taco bell/, 'brand'],[/restaurant|eat|dinner|lunch|breakfast|food|pizza|burger|sushi|taco/, 'eat'],[/coffee|cafe|latte|espresso/, 'coffee'],[/park|nature|trail|hike|outdoor/, 'park'],[/gym|fitness|workout/, 'gym'],[/movie|cinema|theater/, 'cinema'],[/museum|gallery|art/, 'museum'],[/library|book/, 'library'],[/bowling|arcade|entertainment|fun|things to do|where should i go|where can i go|places to go/, 'activity'],[/gas|fuel|petrol/, 'gas'],[/pharmacy|drugstore/, 'pharmacy'],[/hotel|lodging/, 'hotel'],[/car wash|detail/, 'carwash'],[/mechanic|auto repair/, 'mechanic'],[/store|shop|mall|buy|grocery|supermarket/, 'shop'],[/barber|haircut|salon/, 'salon']];
@@ -2421,7 +2422,7 @@ aurenPlaces = (() => {
   function spokenNearbySummary(){
     if(!results.length)return 'I couldn’t verify nearby listings. Google Maps is available on screen.';
     const named=results.slice(0,3).map((r,i)=>`${i===0?'First':i===1?'Second':'Third'}, ${r.name}, about ${r.km.toFixed(1)} kilometres away`);
-    return `I found ${results.length} nearby ${pending} options. ${named.join('. ')}. Ask about one or choose directions.`;
+    return `I found ${results.length} nearby ${pending} options. ${named.join('. ')}. You can ask which is closest or request directions.`;
   }
   function displayResults(announce=false){
     phase='results';
@@ -2445,6 +2446,20 @@ aurenPlaces = (() => {
     const closest=/\b(?:which (?:one|place) is (?:the )?(?:closest|nearest)|closest (?:one|place)|nearest (?:one|place))\b/i.test(t);
     const best=/\b(?:best rated|highest rated|top rated|best reviews|highest reviews|ratings|reviews)\b/i.test(t);
     const ref=resultByReference(t);
+    const cheaper=/\b(?:cheaper|less expensive|more affordable|lower priced|budget|inexpensive)\b/i.test(t);
+    const better=/\b(?:better|best|highest rated|top rated|reviews|ratings|recommended)\b/i.test(t);
+    const more=/\b(?:more options|other places|something else|different options|any others)\b/i.test(t);
+    if(cheaper || (better && !/\b(?:best rated|highest rated|top rated|best reviews|highest reviews|ratings|reviews)\b/i.test(t)) || more){
+      await addMessage('user',t);
+      const search=cheaper?'affordable '+pending:better?'top rated '+pending:pending;
+      await addMessage('auren',cheaper
+        ? 'I can compare nearby options, but these listings do not contain verified prices. Choose Check affordable options in Maps to compare actual prices and reviews.'
+        :better?'I cannot verify which is best from these listings. Choose Compare reviews in Maps for genuine ratings.'
+        :'You can explore more results in Google Maps, or ask about one of the places already listed.');
+      showPopup('Your earlier nearby places are still available.',results);
+      popupButton(cheaper?'Check affordable options in Google Maps':better?'Compare reviews in Google Maps':'See more places in Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(search+' near me')));
+      return true;
+    }
     const wantsDirections=/\b(?:directions|navigate|take me|go there|route|open maps|how (?:do i|can i) get)\b/i.test(t);
     const asksDetail=/\b(?:tell me|about|how far|distance|where is|what is|which is|the first|the second|the third|number [1-8])\b/i.test(t);
     if(!(list||closest||best||(ref&&(wantsDirections||asksDetail))))return false;
@@ -2458,7 +2473,7 @@ aurenPlaces = (() => {
     if(closest){const r=results[0];await addMessage('auren',`${r.name} is the closest of the places I found, about ${r.km.toFixed(1)} kilometres away in a straight line. Driving distance may differ.`);return true;}
     if(ref){
       await addMessage('auren',wantsDirections?`I’ve prepared directions to ${ref.name}. Select Open directions on screen.`:`${ref.name} is about ${ref.km.toFixed(1)} kilometres away in a straight line${ref.cuisine?'. Cuisine: '+ref.cuisine:''}${ref.address?', at '+ref.address:''}${ref.hours?'. Listed hours: '+ref.hours+' (unverified)':''}. Would you like directions?`);
-      if(wantsDirections){showPopup(`Directions to ${ref.name} are ready.`,results);popupButton('Open directions to '+ref.name,()=>openMap(mapLink(ref)));}
+      if(wantsDirections){navigationTarget=ref.name;lastNavigationAt=Date.now();showPopup(`Directions to ${ref.name} are ready.`,results);popupButton('Open directions to '+ref.name,()=>openDirections(ref.name));}
       return true;
     }
     return false;
@@ -2525,7 +2540,7 @@ aurenPlaces = (() => {
   }
   function isNavigationFollowup(t){
     const c=String(t||'').trim().replace(/^(?:(?:and|then|also|yes|yeah|okay|ok|alright|so)\s*[,.:]?\s+)+/i,'');
-    return /^(?:(?:please|can you|could you|would you)\s+)?(?:take me (?:there|to (?:it|there|that place|the place))|go there|navigate (?:there|to it)|get me there|bring me there|drive me there|show me (?:the )?directions|give me (?:the )?directions|open (?:the )?(?:maps|directions)|send me (?:the |their |its )?(?:address|location|directions)|how do i get there|how can i get there|where is it)[.!? ]*$/i.test(c);
+    return /^(?:(?:please|can you|could you|would you)\s+)?(?:take me (?:there|to (?:it|there|that place|the place))|yes take me there|go there|navigate (?:there|to it)|get me there|bring me there|drive me there|show me (?:the )?directions|give me (?:the )?directions|open (?:the )?(?:maps|directions)|send me (?:the |their |its )?(?:address|location|directions)|show me (?:their|its) address|how do i get there|how can i get there|where is it)[.!? ]*$/i.test(c);
   }
   function isNavigationOnly(t){
     return /^(?:(?:and|then|also|yes|okay|please)\s+)?(?:(?:take|drive|bring|guide)\s+me\s+to|(?:navigate|directions?)\s+to|(?:give|show|send)\s+(?:me\s+)?(?:the\s+)?directions?\s+to)[.!?, ]*$/i.test(t);
@@ -2554,7 +2569,8 @@ aurenPlaces = (() => {
     if(navigation && meaningfulSearchTerm(navigation)){
       await addMessage('user',t);
       request(t);
-      await addMessage('auren','Directions to '+navigation+' are ready. Tap Get directions.');
+      replyWithDirections(navigation);
+      await addMessage('auren','Directions to '+navigation+' are ready. Select Get directions.');
       return true;
     }
     if(isNavigationOnly(t)||incompletePlaceRequest(t)){
@@ -2565,11 +2581,12 @@ aurenPlaces = (() => {
       return true;
     }
     // A short answer to our own destination question must become a Maps action.
-    if(awaitingPlace && /^(?:[a-z][a-z0-9&’'. -]{1,65})$/i.test(t) && !/^(?:yes|no|cancel|never mind|stop|and|then|also)$/i.test(t)){
+    if(awaitingPlace && /^(?:[a-z][a-z0-9&’'. -]{1,65})$/i.test(t) && !/^(?:yes|no|cancel|never mind|stop|and|then|also)$/i.test(t) && !/\b(?:what|why|how|can you|could you|would you|my name|schedule|weather|remind|remember|forget|settings|projects)\b/i.test(t)){
       awaitingPlace=false;
       await addMessage('user',t);
       request('take me to '+t);
-      await addMessage('auren','Directions to '+t+' are ready. Tap Get directions.');
+      replyWithDirections(t);
+      await addMessage('auren','Directions to '+t+' are ready. Select Get directions.');
       return true;
     }
     if(awaitingPlace && /^(?:cancel|no|never mind|stop)$/i.test(t)){awaitingPlace=false;return false;}
@@ -2605,7 +2622,7 @@ aurenPlaces = (() => {
   }
   function onReturn(){if(!mapPending||returned||Date.now()-lastMapClick<1000||Date.now()-lastMapClick>20*60*1000||document.hidden)return;returned=true;mapPending=false;
     if(phase==='results'||phase==='searching'||phase==='consent'){
-      closePopup();const greeting=greetings[greetingCount++%greetings.length];noticeText.textContent=greeting;returnNotice.style.display='block';
+      closePopup();noticeText.textContent='Back from Maps. Your previous search is still available.';returnNotice.style.display='block';
       // Return notice stays on screen; do not add another chat turn.
     }}
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)setTimeout(onReturn,450);});window.addEventListener('focus',()=>setTimeout(onReturn,450));
