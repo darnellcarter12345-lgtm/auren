@@ -1,3 +1,4 @@
+// AUREN v2.90 — Defensive schedule intent engine, verified reminder-aware speech, cache update.
 // AUREN v2.89 — Fix undefined schedule parser variable; unify spoken briefing and Your Day truth.
 // AUREN v2.88 — Unified Your Day schedule reading and saved-record truth.
 // AUREN v2.87 — Flexible reminder phrasing and non-repeating clarification.
@@ -1949,16 +1950,19 @@ function aurenScheduleRead(date=localDate(),scope='day') {
  if(!combined.length&&!tasks.length)pieces.push('This reflects only the records saved in AUREN.');
  return {events,notices,tasks,combined,text:pieces.join(' ')};
 }
+// Schedule reading never calls the external AI or interprets a request as a write.
+// Keep all schedule-related local decisions in this one safe, tested function.
 function aurenScheduleQuery(raw){
  const q=String(raw||'').trim().toLowerCase().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/,'').replace(/[.!?]+$/,'').trim();
- // Real actions are always handled by the existing save/confirmation engine.
- if(/^(?:add|save|put|create|schedule|book|move|change|cancel|delete|remove|set|remind|mark|complete)\b/.test(q))return null;
- const asks=/\b(?:what do i have|what have i got|what's on|what is on|anything (?:on|for|planned|scheduled)|do i have anything|what (?:is|are) my plans|what do i have planned|what's planned|what is planned|what am i doing|go over|review|read|check|show|list|walk me through|tell me about|give me|pull up|brief me|briefing|overview|recap)\b/.test(q);
- const subject=/\b(?:schedule|calendar|planner|your day|my day|today|tomorrow|tonight|this week|next week|appointments|plans|reminders|briefing|agenda|day)\b/.test(q);
+ if(!q)return null;
+ // Exclude actual modifications, even when a schedule or day is mentioned.
+ if(/^(?:add|save|put|create|schedule|book|move|change|cancel|delete|remove|set|remind|mark|complete|reschedule|postpone|edit)\b/.test(q))return null;
+ const topic=/(?:\b(?:schedule|scheduled|calendar|planner|your day|my day|day section|agenda|appointments?|meetings?|reminders?|tasks?|commitments?|briefing|daily plans?|things (?:to do|planned))\b)/.test(q);
+ const dateTopic=/\b(?:today|tomorrow|tonight|this week|next week)\b/.test(q);
+ const question=/\b(?:what|which|anything|any|when|how busy|what's|what is|are there|is there|do i have|have i got|go over|run through|walk me through|review|read|recap|summari[sz]e|brief|overview|check|show|list|tell me|give me|pull up|look at|look over|take me through)\b/.test(q);
+ const dayPhrases=/\b(?:go over my day|go through my day|what have i got going on|what do i have (?:going on|planned|today|tomorrow)|what am i doing (?:today|tomorrow)|what's (?:happening|planned|on) (?:today|tomorrow)|anything going on|what's my day (?:look|looking) like|how's my day looking|talk me through (?:my|the) day)\b/.test(q);
  const bare=/^(?:(?:my|the|your)\s+)?(?:schedule|calendar|planner|your day|day section|appointments|plans|reminders|briefing|agenda)(?:\s+(?:today|tomorrow|this week|next week))?$/.test(q);
- // General conversation and explanations about schedules should still reach AI.
- const readOnly=(asks&&subject)||bare||/^(?:what do i have planned|what do i have today|what do i have tomorrow|anything planned|anything on today|are you sure about my (?:schedule|day)|are you sure (?:nothing|there is nothing) (?:scheduled|planned))$/.test(q);
- if(!readOnly)return null;
+ if(!((topic&&(question||bare))||(dateTopic&&question)||dayPhrases||bare))return null;
  const scope=/\b(?:this week|next week|weekly|week)\b/.test(q)?'week':'day';
  const date=/\bnext week\b/.test(q)?shiftedDate(weekStart(localDate()),7):parseDateIntent(q)||localDate();
  return {date,scope};
