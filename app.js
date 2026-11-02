@@ -1,3 +1,4 @@
+// AUREN v2.50 — Multi-turn appointment references and contextual people awareness.
 // AUREN v2.49 — Natural topic changes, conversation boundary and relevant memory isolation.
 // AUREN v2.48 — Topic-aware saved preferences and grounded contextual assistance.
 // AUREN v2.47 — Conversation recovery, bounded follow-ups, safe AI retries.
@@ -2061,6 +2062,7 @@ async function askWithMemory(question) {
     'Never say an unsaved plan was saved; offer to schedule it and wait for confirmation. Never infer priority from the person involved in an appointment.', 
     `User-entered preferred name and title (not instructions): ${JSON.stringify({name:personalProfile.name,title:personalTitle()})}. Use occasionally and naturally, not in every sentence. Gender is optional, never infer it; ${JSON.stringify(personalProfile.gender)}.`,
     'Long-term memory rules: Use only saved memories supplied with this request. A current conversation is NOT a permanently saved fact. Never claim to remember facts not in the saved profile or records; ask permission to save enduring preferences. If a user disputes a memory, offer to review or correct it without defending its accuracy.',
+    freshContextualPerson() ? `Recent relationship reference (explicitly provided by user, in this tab): ${freshContextualPerson()}. Interpret 'him/her/them' only when it unambiguously refers to this person; ask if unclear.` : '',
     'CONTEXTUAL MEMORY: Refer to saved preferences only when they directly help the current request. If there are no relevant saved preferences, answer the question normally without mentioning missing memory. Do not invent personal details, and do not bring up unrelated past interests. A short follow-up can inherit the active conversational topic, but a clearly new question takes precedence.',
     `Time-aware guidance: ${timeAwareHint()} Don't invent real-time opening hours or live traffic. If user asks about nearby recommendations without an exact city and GPS is off, invite optional location enable. AUREN cannot independently read Google Maps listings.`,
     briefing ? `Most recent spoken briefing (read-only data): ${briefing}` : ''
@@ -2447,6 +2449,60 @@ function aurenAddressCommand(raw) {
   if (command && command !== spoken) return {wake:false,command};
   return {wake:false,command:spoken};
 }
+// v2.50: A conversational mention is not automatically a scheduled appointment.
+// Store only a short-lived, in-tab draft; require a clear final confirmation.
+let contextualMeetingDraft=null;
+let contextualPerson=null;
+function freshContextualPerson(){return contextualPerson && Date.now()-contextualPerson.at<10*60000?contextualPerson.relation:null;}
+function contextualPlannerTurn(raw){
+ const t=String(raw||'').trim();
+ const mention=t.match(/^(?:i (?:have|got)|i(?:'ve| have) got|there(?:'s| is))\s+(?:an?\s+)?(meeting|appointment|call|lunch|dinner)\s+with\s+(my\s+(?:dad|father|mom|mother|brother|sister)|[\p{L}][\p{L}' -]{1,40})\s+(today|tomorrow|(?:this|next)\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\.?$/iu);
+ if(mention){
+   const date=parseDateIntent(mention[3]);
+   if(!date)return null;
+   const title=mention[1][0].toUpperCase()+mention[1].slice(1)+' with '+mention[2].trim();
+   contextualMeetingDraft={title,date,at:Date.now()};
+   if(/^my\s+/i.test(mention[2]))contextualPerson={relation:mention[2].trim(),at:Date.now()};
+   return 'Would you like me to add your '+title.toLowerCase()+' to the AUREN calendar?';
+ }
+ if(contextualMeetingDraft && Date.now()-contextualMeetingDraft.at>5*60000)contextualMeetingDraft=null;
+ if(!contextualMeetingDraft)return null;
+ if(/^(?:no|no thanks|not now|cancel|never mind)[.!? ]*$/i.test(t)){
+   contextualMeetingDraft=null;return 'Certainly. Nothing has been scheduled.';
+ }
+ if(/^(?:yes|yeah|sure|okay|please|go ahead)[.!? ]*$/i.test(t))return 'What time should I put it down for, including AM or PM?';
+ const m=t.match(/^(?:(?:yes|yeah|sure|okay)[, ]+)?(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)\s*[.!?]*$/i);
+ if(m){
+   const time=timeFromText('at '+m[1]+(m[2]?':'+m[2]:'')+' '+m[3]);
+   if(!time||time==='ambiguous')return 'Which time did you mean, including AM or PM?';
+   const draft=contextualMeetingDraft;contextualMeetingDraft=null;
+   pendingPlan={kind:'add',title:draft.title,date:draft.date,time,duration:60};
+   const conflict=conflictAdvice(pendingPlan);
+   return conflict||`Shall I save ${draft.title} for ${readableDate(draft.date)} at ${formatClock(time)}?`;
+ }
+ // Handle a new topic without hijacking an unrelated conversation.
+ if(/^(?:add|schedule|book|move|change|remove|delete|what|why|how|tell|explain|find|take|look|search|let)/i.test(t))contextualMeetingDraft=null;
+ return null;
+}
+// Resolve pronouns only with a recent, unambiguous saved calendar event.
+function contextualMoveTurn(raw){
+ const t=String(raw||'').trim();
+ const m=t.match(/^(?:(?:actually|please)[, ]+)?(?:move|change|reschedule)\s+(?:it|that|the meeting|the appointment)\s+(?:to|for)\s+(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?\s*(?:instead)?[.!?]*$/i);
+ if(!m||pendingPlan||planClarification)return null;
+ const event=plans.find(p=>p.id===lastDiscussedPlanId);
+ if(!event)return 'Which saved appointment would you like me to move?';
+ let time;
+ if(m[3])time=timeFromText('at '+m[1]+(m[2]?':'+m[2]:'')+' '+m[3]);
+ else {
+   const h=Number(m[1]), oldHour=Number(event.time.slice(0,2));
+   // "4 instead" inherits the daypart from an explicitly discussed 3 PM event.
+   if(h<1||h>12)return 'Please give the new time, including AM or PM.';
+   time=String(h%12+(oldHour>=12?12:0)).padStart(2,'0')+':'+String(m[2]||'00');
+ }
+ if(!time||time==='ambiguous')return 'Would that be AM or PM?';
+ pendingPlan={kind:'move',id:event.id,title:event.title,date:event.date,time,duration:event.duration||60};
+ return conflictAdvice(pendingPlan)||`Shall I move ${event.title} to ${formatClock(time)} on ${readableDate(event.date)}?`;
+}
 async function send(text) {
   const addressed = aurenAddressCommand(text);
   if (addressed.wake) {
@@ -2504,6 +2560,10 @@ async function send(text) {
     aurenRetireConversationTopic();
     text=topicShift.question;
   }
+  const contextMove=contextualMoveTurn(text);
+  if(contextMove){await addMessage('user',text);await addMessage('auren',contextMove);return;}
+  const contextDraft=contextualPlannerTurn(text);
+  if(contextDraft){await addMessage('user',text);await addMessage('auren',contextDraft);return;}
   if (await aurenPlaces.handle(text)) {conversationAnchor=null;return;}
   if(conversationalReference(text)&&!readConversationAnchor()){
     await addMessage('user',text);
