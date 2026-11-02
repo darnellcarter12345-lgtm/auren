@@ -1,3 +1,6 @@
+// AUREN v3.15 — Fix unbound record-edit pending state during voice and text requests.
+// AUREN v3.14 — Spoken, opt-in check-ins independent of microphone listening.
+// AUREN v3.13 — Quiet check-ins without microphone; restored original v3.11 voice selection.
 // AUREN v3.11 — Optional Wellness Care and Time-Aware Greetings.
 // AUREN v3.10 — Advanced Alfred-Style Attentiveness, grounded voluntary context.
 // AUREN v3.09 — Adaptive Learning Over Time; transparent suggestion scores and user controls.
@@ -477,21 +480,61 @@ const CHECKIN_PREF='auren_opt_in_checkins_v211';
 const checkRow=document.createElement('label');checkRow.className='check';checkRow.style.marginTop='14px';
 const checkToggle=document.createElement('input');checkToggle.type='checkbox';
 checkToggle.checked=localStorage.getItem(CHECKIN_PREF)==='true';
-const checkLabel=document.createElement('span');checkLabel.textContent='Occasional spoken calendar and reminder check-ins';
+const checkLabel=document.createElement('span');checkLabel.textContent='Spoken check-ins (microphone stays off)';
 checkRow.append(checkToggle,checkLabel);
 const checkHelp=document.createElement('p');checkHelp.className='hint';
-checkHelp.textContent='Off by default. When on, AUREN may ask whether you want a check-in while this page is open and voice is active. Never speaks over a reply.';
-checkToggle.addEventListener('change',()=>{try{localStorage.setItem(CHECKIN_PREF,String(checkToggle.checked));}catch{};showStatus(checkToggle.checked?'Optional check-ins enabled.':'Optional check-ins disabled.','info');});
+checkHelp.textContent='Off by default. When enabled, AUREN may speak a brief check-in aloud while this tab is visible and recently in use. Microphone listening is never switched on. Safari may block automatic audio; the message is always shown in chat.';
+checkToggle.addEventListener('change',()=>{try{localStorage.setItem(CHECKIN_PREF,String(checkToggle.checked));}catch{};lastCheckin=Date.now();showStatus(checkToggle.checked?'Spoken check-ins enabled; microphone stays off.':'Spoken check-ins disabled.','info');});
 voiceCard.append(checkRow,checkHelp);
 let lastCheckin=Date.now();let lastActivity=Date.now();
-for(const event of ['click','keydown'])document.addEventListener(event,()=>{lastActivity=Date.now();},{passive:true});
+let aurenCheckinUtterance=null;
+let aurenCheckinAudioUnlocked=false;
+let aurenCheckinSpeaking=false;
+// AUREN speech output is separate from its speech-recognition microphone.
+// Browsers may still block unsolicited TTS: the in-app message is always the fallback.
+const aurenCheckinMute=document.createElement('button');
+aurenCheckinMute.type='button';aurenCheckinMute.textContent='Mute check-in voice';
+aurenCheckinMute.setAttribute('aria-label','Mute spoken check-ins');
+aurenCheckinMute.addEventListener('click',()=>{
+ checkToggle.checked=false;
+ try{localStorage.setItem(CHECKIN_PREF,'false');}catch{}
+ if(aurenCheckinUtterance){try{speechSynthesis.cancel();}catch{}aurenCheckinUtterance=null;}
+ aurenCheckinSpeaking=false;
+ showStatus('Spoken check-ins muted. Listening remains off.','info');
+});
+voiceCard.append(aurenCheckinMute);
+function aurenSpeakCheckin(message){
+ if(!checkToggle.checked||document.hidden||!document.hasFocus()||!aurenCheckinAudioUnlocked)return false;
+ if(!('speechSynthesis' in window)||!('SpeechSynthesisUtterance' in window)||voice.speaking||aurenCheckinSpeaking)return false;
+ try{
+  const speech=new SpeechSynthesisUtterance(String(message).slice(0,280));
+  speech.lang='en-GB';speech.rate=.94;speech.pitch=1;
+  const voices=speechSynthesis.getVoices();
+  const preferred=voices.find(v=>/^en-GB$/i.test(v.lang)&&/daniel|oliver|arthur/i.test(v.name))||voices.find(v=>/^en-GB$/i.test(v.lang))||voices.find(v=>/^en/i.test(v.lang));
+  if(preferred){speech.voice=preferred;speech.lang=preferred.lang;}
+  aurenCheckinUtterance=speech;aurenCheckinSpeaking=true;
+  const clear=()=>{if(aurenCheckinUtterance===speech)aurenCheckinUtterance=null;aurenCheckinSpeaking=false;};
+  speech.onend=clear;speech.onerror=clear;
+  speechSynthesis.speak(speech);return true;
+ }catch(error){aurenCheckinUtterance=null;aurenCheckinSpeaking=false;console.info('Spoken check-in unavailable',error);return false;}
+}
+for(const event of ['click','keydown'])document.addEventListener(event,()=>{
+ lastActivity=Date.now();
+ // A click or keypress shows the page was deliberately used; it does not turn the mic on.
+ aurenCheckinAudioUnlocked=true;
+},{passive:true});
+checkToggle.addEventListener('change',()=>{
+ if(!checkToggle.checked&&aurenCheckinUtterance){try{speechSynthesis.cancel();}catch{}aurenCheckinUtterance=null;aurenCheckinSpeaking=false;}
+});
 setInterval(()=>{
  const now=Date.now();
- if(!checkToggle.checked||document.hidden||!voice.enabled||!voice.awake||voice.speaking||briefingPlayer.active)return;
+ if(!checkToggle.checked||document.hidden||!document.hasFocus()||voice.speaking||aurenCheckinSpeaking||briefingPlayer.active)return;
  if(now-lastCheckin<90*60000||now-lastActivity>15*60000||now-lastActivity<90*1000)return;
  if(!upcomingItems().length)return;
  lastCheckin=now;
- void addMessage('auren','Would you like a quick check-in on your upcoming appointments and reminders?');
+ const message='You have some plans coming up. Would you like a quick overview?';
+ // Silent add avoids double speech when voice is enabled. Separate output works when mic is disabled.
+ void addMessage('auren',message,{silent:true}).then(()=>aurenSpeakCheckin(message));
 },60000);
 
 $('wakeBtn').textContent = 'Enable “Hey Auren”';
@@ -4437,7 +4480,7 @@ const AUREN_FLOW_WINDOW=6*60*1000;
 function aurenFlowInterpret(raw){
  const q=String(raw||'').trim();
  const plain=q.toLowerCase().replace(/[.!?]+$/,'').trim();
- const hasWrite=!!(pendingPlan||pendingReminder||planClarification||pendingTaskChange||butler.pending||contextualMeetingDraft||pendingYourDayChoice||pendingRecordEdit);
+ const hasWrite=!!(pendingPlan||pendingReminder||planClarification||pendingTaskChange||butler.pending||contextualMeetingDraft||pendingYourDayChoice||aurenPendingRecordEdit);
  if(!plain||hasWrite)return null;
  // Never seize explicit commands or a completely new subject.
  if(/^(?:remind|set |schedule|book |add |delete|remove|change|move |convert|find |search |navigate|directions|open |turn |enable |disable |remember |forget |save |call me |send )\b/i.test(plain))return null;
