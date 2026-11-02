@@ -1,3 +1,4 @@
+// AUREN v3.21 — account-specific local data and prior voice fixes preserved.
 // AUREN v3.19 — stable one-tap iPhone, silence-finish microphone experience.
 // AUREN v3.17 — iPhone speech output recovery and audible reply fallback.
 // AUREN v3.16 — contextual replies and iPhone Safari speech playback.
@@ -110,8 +111,8 @@ import { NeedsConfirmationError, historySafe, classify } from './sensitive.js';
 import { Butler, isSessionNote } from './butler.js';
 import { buildBackup, encryptBackup, decryptBackup, validateBackup, applyPlan, describeReport, LIMITS } from './backup.js';
 import { loadSettings, saveSettings } from './settings.js';
-import { createVoice } from './voice.js?v=3.20';
-import { createIPhoneRecorder } from './iphone-voice.js?v=3.20';
+import { createVoice } from './voice.js?v=3.21';
+import { createIPhoneRecorder } from './iphone-voice.js?v=3.21';
 import { getAIEndpoint, setAIEndpoint, askAI } from './ai.js';
 import { getWeatherBriefing } from './weather.js';
 
