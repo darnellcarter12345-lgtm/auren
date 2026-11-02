@@ -1,3 +1,4 @@
+// AUREN v2.75 — Verified personal meeting context, preserves v2.74 continuity.
 // AUREN v2.74 — Unified briefing continuity and grounded follow-ups.
 // AUREN v2.73 — Verified capabilities and grounded AI response correction.
 // AUREN v2.72.7 — Fix deployed Safari syntax error in reference-safety string.
@@ -3039,6 +3040,41 @@ function personalizeMeetingText(text) {
        .replace(/\bmeeting\s+(?:with\s+)?my\s+(father|mother)\b/gi, (_, relation)=>'meeting with your '+relation.toLowerCase());
   return t;
 }
+// v2.75 — Grounded relationship and meeting context integration.
+// Only explicit names/relationships in saved event titles are recognized.
+// This is read-only and does not create inferred personal memories.
+function meetingContextLookup(raw){
+  const q=String(raw||'').trim().toLowerCase().replace(/[?.!]+$/,'');
+  const asks= /^(?:who (?:am i|are we) (?:meeting|seeing|calling)(?: with)?|who is (?:my|the|that) (?:meeting|appointment|call) with|(?:when|what time|what day) (?:am i|are we) (?:meeting|seeing|calling)|(?:when|what time|what day) is (?:my|the|that) (?:meeting|appointment|call)|what (?:meeting|appointment|call|plans?) (?:do i have|is scheduled|have i got)|do i have (?:a |any )?(?:meeting|appointment|call|plans?)|what do i have (?:planned|scheduled)?(?: with)?|what(?:'s| is) (?:my |the )?plan with)\b/.test(q);
+  if(!asks)return null;
+  if(/\b(?:add|book|schedule|move|reschedule|delete|remove|cancel|create|save|change|set up)\b/.test(q))return null;
+  const names={dad:['dad','father'],father:['dad','father'],mom:['mom','mother'],mother:['mom','mother'],brother:['brother'],sister:['sister']};
+  const explicit=q.match(/\b(?:with|seeing|meeting|calling)\s+(?:(?:my|your)\s+)?(dad|father|mom|mother|brother|sister)\b/);
+  const relation=explicit?.[1]||null;
+  const date=/\b(?:today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday|next week|this week)\b/.test(q)?parseDateIntent(q):null;
+  const isWeek=/\b(?:this week|next week)\b/.test(q);
+  const now=Date.now();
+  let matches=plans.filter(p=>p && p.title && /\b(?:meeting|appointment|call|lunch|dinner)\b/i.test(p.title) && Number.isFinite(eventTimestamp(p)) && eventTimestamp(p)>=now);
+  if(date){
+    if(isWeek){const first=weekStart(date),last=shiftedDate(first,6);matches=matches.filter(p=>p.date>=first&&p.date<=last);}
+    else matches=matches.filter(p=>p.date===date);
+  }
+  if(relation){
+    const aliases=names[relation];
+    matches=matches.filter(p=>aliases.some(alias=>new RegExp('\\b'+alias+'\\b','i').test(p.title)));
+  }else if(/\b(?:that|the) (?:meeting|appointment|call)\b/.test(q)&&lastDiscussedPlanId){
+    const focus=matches.find(p=>p.id===lastDiscussedPlanId);
+    if(focus)matches=[focus];
+  }
+  matches.sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+  if(!matches.length)return relation?`I cannot find an upcoming meeting with your ${relation} in your saved AUREN calendar${date?' for that period':''}. I cannot check commitments outside AUREN.`:'I cannot find a matching upcoming meeting saved in AUREN for that period. I cannot see outside calendars.';
+  const list=matches.slice(0,3).map(p=>{
+    const title=String(p.title).replace(/\bmy\s+(dad|father|mom|mother|brother|sister)\b/gi,(_,r)=>'your '+r.toLowerCase());
+    return `${title} on ${readableDate(p.date)} at ${spokenClock(p.time)}`;
+  });
+  lastDiscussedPlanId=matches[0].id;
+  return matches.length===1?`Your saved appointment is ${list[0]}.`:`I found ${matches.length} matching saved appointments: ${list.join('; ')}${matches.length>list.length?'; and more':''}. Which one did you mean?`;
+}
 function isReassuranceRequest(text){return /^(?:are you sure|you sure|really|is that (?:right|correct|true)|can you confirm (?:that|it)|double.check that)[?.! ]*$/i.test(String(text).trim());}
 function mapsSuggestionLink(query) {
   const params=new URLSearchParams({api:'1',query});
@@ -3379,6 +3415,9 @@ async function send(text) {
   if(savedCheck!==null){await addMessage('user',clean);await addMessage('auren',savedCheck);return;}
   const localPersonal=personalCommand(clean);
   if(localPersonal){await addMessage('user',clean);await addMessage('auren',localPersonal);return;}
+  // Resolve explicit person-and-meeting questions against actual saved appointments.
+  const meetingLookup=meetingContextLookup(clean);
+  if(meetingLookup!==null){await addMessage('user',clean);await addMessage('auren',meetingLookup);return;}
   const recalled=await directPersonalRecall(clean);
   if(recalled!==null){await addMessage('user',clean);await addMessage('auren',recalled);return;}
   if(personalPendingInterest && /^(?:yes|yeah|sure|save it|remember it|please do|go ahead|no|no thanks|not now|nah|skip)[.! ]*$/i.test(clean)){await addMessage('user',clean);if(await personalInterestConfirmation(clean))return;}
