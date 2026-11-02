@@ -1,3 +1,5 @@
+// AUREN v2.83 — Verified reminder storage and real Your Day reminder entries.
+// AUREN v2.82 — Persistent local profile identity and priority name recall.
 // AUREN v2.81 — Reliable direct reminder routing, tonight support, and honest saves.
 // AUREN v2.80.1 — Internal planner only; email drafting without unverified Gmail access.
 // AUREN v2.80 — Verified action boundaries and useful AI handoffs.
@@ -625,7 +627,44 @@ function readableDate(date){return parseISO(date).toLocaleDateString([], {weekda
 const REMINDER_KEY='auren_reminders_v24';
 let reminders=[];
 try {const saved=JSON.parse(localStorage.getItem(REMINDER_KEY)||'[]');if(Array.isArray(saved)) reminders=saved.filter(r=>r&&typeof r.id==='string'&&typeof r.at==='string'&&typeof r.text==='string').slice(0,500);}catch{}
-function saveReminders(){localStorage.setItem(REMINDER_KEY,JSON.stringify(reminders));}
+// v2.83: A confirmed save requires a successful read-back. Your Day displays these records.
+let aurenLastReminderFocus=null;
+function aurenFocusReminder(item){if(item)aurenLastReminderFocus={id:item.id,at:Date.now()};}
+function saveReminders(){
+ const payload=JSON.stringify(reminders);
+ localStorage.setItem(REMINDER_KEY,payload);
+ if(localStorage.getItem(REMINDER_KEY)!==payload)throw new Error('Reminder storage verification failed');
+ refreshUpNext();
+ if(typeof renderDay==='function')renderDay();
+}
+function aurenRemindersForView(date,scope='day'){
+ const begin=scope==='week'?weekStart(date):date;
+ const end=scope==='week'?shiftedDate(begin,6):date;
+ return reminders.filter(r=>{const ms=Date.parse(r.at);return Number.isFinite(ms)&&localDate(new Date(ms))>=begin&&localDate(new Date(ms))<=end;})
+  .sort((a,b)=>a.at.localeCompare(b.at));
+}
+function aurenSavedReminder(id){
+ try{const stored=JSON.parse(localStorage.getItem(REMINDER_KEY)||'[]');return Array.isArray(stored)?stored.find(r=>r.id===id):null;}catch{return null;}
+}
+// A user may call the same built-in view 'my schedule', 'planner', or 'Your Day'.
+// Never tell them a change occurred unless the record really exists in browser storage.
+function aurenReminderPlacementReply(raw){
+ const q=String(raw||'').trim().toLowerCase().replace(/[?.!]+$/,'');
+ const place=/\b(?:put|add|save|send|move|show|display)\b.*\b(?:my|the|your)\s+(?:planner|schedule|calendar|your day|day section)\b|\b(?:put|add|save|send|move|show|display)\b.*\b(?:your day|day section)\b/.test(q);
+ const check=/\b(?:is|did|was|can you see|where is|where's|show me|check)\b.*\b(?:reminder|planner|schedule|your day|day section)\b/.test(q);
+ const referring=/\b(?:that|it|this|the reminder|my reminder)\b/.test(q);
+ if(!((place||check)&&referring))return null;
+ const focused=aurenLastReminderFocus&&Date.now()-aurenLastReminderFocus.at<30*60000?aurenSavedReminder(aurenLastReminderFocus.id):null;
+ if(!focused)return 'I cannot verify which reminder you mean. Please tell me its subject and time; I will not claim it was added without checking.';
+ const when=new Date(focused.at);
+ const viewDate=localDate(when);
+ const displayed=aurenRemindersForView(viewDate).some(x=>x.id===focused.id);
+ if(!displayed)return 'I could not verify that reminder in Your Day. Nothing new has been added.';
+ $('planDate').value=viewDate;
+ setPlannerScope('day');
+ return `Your saved reminder to ${focused.text} is already in Your Day for ${readableDate(viewDate)} at ${formatClock(String(when.getHours()).padStart(2,'0')+':'+String(when.getMinutes()).padStart(2,'0'))}. I checked the saved record. It is a reminder, not a separate appointment, so I have not created a duplicate.`;
+}
+
 function eventTimestamp(p){const [y,m,d]=p.date.split('-').map(Number);const [h,min]=p.time.split(':').map(Number);return new Date(y,m-1,d,h,min).getTime();}
 function upcomingItems(){
  const now=Date.now();const all=[];
@@ -760,7 +799,7 @@ function saveRelativeReminder(subject, at) {
  const item={id:uid(),text:subject.slice(0,200),at:new Date(at).toISOString(),fired:false};
  reminders.push(item);
  try {saveReminders();} catch(error) {reminders=reminders.filter(r=>r.id!==item.id);return 'I could not save that reminder. Please try again.';}
- refreshUpNext();
+ refreshUpNext();aurenFocusReminder(item);
  prepareCalendarOffer('reminder',item);
  return `Reminder set for ${new Date(at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}.`+calendarOfferPrompt();
 }
@@ -820,7 +859,7 @@ function reminderSpeech(t){
    const p=pendingReminder;pendingReminder=null;
    if(p.kind==='linked'){const event=plans.find(e=>e.id===p.eventId);return event?eventReminder(event,p.minutes):'That appointment no longer exists. No reminder was saved.';}
    if(p.kind==='remove'){const existing=reminders.find(r=>r.id===p.id);reminders=reminders.filter(r=>r.id!==p.id);try{saveReminders();}catch(e){if(existing)reminders.push(existing);return 'I could not save that change.';}refreshUpNext();return 'Certainly. That reminder has been removed.';}
-   const item={id:uid(),text:p.text,at:p.at,fired:false};reminders.push(item);try{saveReminders();}catch(e){reminders=reminders.filter(r=>r.id!==item.id);return 'I could not save that reminder.';}refreshUpNext();prepareCalendarOffer('reminder',item);return 'Certainly. I will remind you '+new Date(item.at).toLocaleString([],{weekday:'long',hour:'numeric',minute:'2-digit'})+'.'+calendarOfferPrompt();
+   const item={id:uid(),text:p.text,at:p.at,fired:false};reminders.push(item);try{saveReminders();}catch(e){reminders=reminders.filter(r=>r.id!==item.id);return 'I could not save that reminder.';}refreshUpNext();aurenFocusReminder(item);prepareCalendarOffer('reminder',item);return 'Certainly. I will remind you '+new Date(item.at).toLocaleString([],{weekday:'long',hour:'numeric',minute:'2-digit'})+'.'+calendarOfferPrompt();
   }
   if(/^(?:no|nope|cancel|never mind|not now)\b/i.test(text)){pendingReminder=null;return 'Very well. No reminder has been changed.';}
   // A new request cancels the old pending draft instead of hijacking it.
@@ -861,7 +900,7 @@ function reminderSpeech(t){
  if(!day||!clock||clock==='ambiguous')return 'Which day and time would you prefer?';
  const [y,m,d]=day.split('-').map(Number),[h,min]=clock.split(':').map(Number);const when=new Date(y,m-1,d,h,min);
  if(when.getTime()<=Date.now())return 'That time has already passed. Please choose a future time.';
- const subject=text.replace(/^(?:please\s+)?(?:remind me|set (?:a )?reminder)\s*/i,'').replace(/\b(?:today|tomorrow|tonight|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/gi,'').replace(/\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi,'').replace(/^(?:to|about)\s+/i,'').trim().replace(/[.!?]+$/,'').trim();
+ const subject=text.replace(/^(?:please\s+)?(?:remind me|set (?:a )?reminder)\s*/i,'').replace(/\b(?:today|tomorrow|tonight|on\s+(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday))\b/gi,'').replace(/\bat\s+\d{1,2}(?::\d{2})?\s*(?:am|pm)\b/gi,'').replace(/^(?:to|about)\s+/i,'').replace(/\s+(?:to)\s+/i,' to ').trim().replace(/[.!?]+$/,'').trim();
  if(!subject)return 'What would you like me to remind you about?';
  pendingReminder={kind:'add',text:subject,at:when.toISOString()};
  return 'Shall I remind you to '+subject+' '+when.toLocaleString([],{weekday:'long',hour:'numeric',minute:'2-digit'})+'?';
@@ -1837,8 +1876,9 @@ function renderDay(){
  const node=$('dayTimeline');
  node.replaceChildren();
  const items=plannerScope==='week'?weekItems($('planDate').value):plansFor($('planDate').value);
- // Voice-first: show only appointments saved for this date, never empty clock rows.
- if(!items.length){
+ const savedReminders=aurenRemindersForView($('planDate').value,plannerScope);
+ // Display actual saved reminders alongside appointments; do not create fake events.
+ if(!items.length&&!savedReminders.length){
   node.append(el('div','day-empty',plannerScope==='week'?'Nothing scheduled this week.':'Nothing scheduled.'));
   return;
  }
@@ -1873,6 +1913,24 @@ function renderDay(){
   };
   card.append(label,content,remove);
   node.append(card);
+ }
+ for(const r of savedReminders){
+  const when=new Date(r.at);
+  const time=String(when.getHours()).padStart(2,'0')+':'+String(when.getMinutes()).padStart(2,'0');
+  const card=el('div','day-event');card.dataset.aurenReminderId=r.id;
+  const clock=el('div','day-event-clock',(plannerScope==='week'?weekdayNames[when.getDay()].slice(0,3)+' · ':'')+formatClock(time));
+  const content=el('div','day-event-content');
+  content.append(el('div','day-event-title','Reminder: '+r.text));
+  const state=el('small','hint',r.fired?'Reminder time passed':'Saved reminder · Alerts while AUREN is open');
+  content.append(state);
+  const remove=el('button','remove-plan','×');remove.type='button';
+  remove.setAttribute('aria-label','Remove reminder: '+r.text);
+  remove.onclick=()=>{
+   const previous=reminders.slice();reminders=reminders.filter(x=>x.id!==r.id);
+   try{saveReminders();showStatus('Reminder removed from Your Day.','ok');}
+   catch(error){reminders=previous;renderDay();showStatus('Could not remove reminder: '+error.message,'error');}
+  };
+  card.append(clock,content,remove);node.append(card);
  }
 }
 function openScreen(screen){ void activateScreen(screen); }
@@ -2857,22 +2915,27 @@ const welcomeText=document.createElement('p');welcomeText.textContent='Welcome t
 const welcomeSetup=document.createElement('button');welcomeSetup.type='button';welcomeSetup.textContent='Set my name and preferences';welcomeSetup.onclick=()=>{void activateScreen('settings');nameField.focus();};
 const welcomeLater=document.createElement('button');welcomeLater.type='button';welcomeLater.className='ghost';welcomeLater.textContent='Maybe later';welcomeLater.onclick=()=>{personalProfile.onboarded=true;savePersonalProfile();personalWelcome.hidden=true;};
 personalWelcome.append(welcomeText,welcomeSetup,welcomeLater);orbButton.insertAdjacentElement('afterend',personalWelcome);personalWelcome.hidden=!!personalProfile.onboarded;
+function aurenIsPersonalIdentityRequest(raw) {
+ const t=String(raw||'').trim().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/i,'').trim();
+ return /^(?:(?:please\s+)?(?:call me|start calling me|you can call me|my name is)\s+.{1,60}|(?:what(?:'s| is) my name|what is my name now|do you (?:know|remember) my name|do you (?:still )?remember (?:my name|what my name is)|who am i|tell me my name|what name (?:did i|have i) (?:give|saved|set)|what(?:'s| is) my nickname|what do you call me|what(?:'s| is) my preferred name|how should you address me|did you (?:save|remember) my name|is my name saved|what name do you have saved)(?:\s+(?:now|yet|again))?)[?!. ]*$/i.test(t);
+}
 function personalCommand(text){
  refreshPersonalProfile();
- const t=String(text||'').trim();let m;
+ const t=String(text||'').trim().replace(/^(?:(?:hey|hi)\s+)?auren[,! ]*/i,'').trim();let m;
  if((m=t.match(/^(?:please\s+)?(?:call me|start calling me|you can call me|my name is)\s+([A-Za-zÀ-ÖØ-öø-ÿ0-9 .'_-]{1,45})[.!?]*$/i))){
   const v=m[1].trim().replace(/[.!?]+$/,'');
   if(/^(?:sir|ma'am|ma’am|madam|mister|mr\.?|miss)$/i.test(v)){
    personalProfile.address=/^sir$/i.test(v)?'sir':/ma/i.test(v)?'maam':'custom';personalProfile.customAddress=v;
   }else{personalProfile.name=v;personalProfile.address='name';}
-  personalProfile.onboarded=true;savePersonalProfile();paintPersonal();personalWelcome.hidden=true;
-  return `Certainly. I'll call you ${v}. You can change this whenever you wish.`;
+  personalProfile.onboarded=true;
+  const saved=savePersonalProfile();paintPersonal();if(saved)personalWelcome.hidden=true;
+  return saved?`Certainly. I've saved your name as ${personalProfile.name || v} on this device. I'll remember it when you sign back in on this browser.`:'I heard the name, but Safari did not confirm saving it. Please check website storage settings and try again.';
  }
  if((m=t.match(/^(?:change|switch|set|update)\s+(?:my\s+)?(?:gender|gender setting)\s+(?:to\s+)?(male|female|nonbinary|non-binary|other|prefer not to say)[.!?]*$/i))){
   personalProfile.gender=/prefer/i.test(m[1])?'prefer-not-to-say':/^non/i.test(m[1])?'nonbinary':m[1].toLowerCase();savePersonalProfile();paintPersonal();
   return 'Your optional gender setting is updated. Your preferred name and title stay unchanged unless you ask me to change them.';
  }
- if(/^(?:what(?:'s| is) my name|do you (?:know|remember) my name|who am i|tell me my name|what name (?:did i|have i) (?:give|saved|set)|what(?:'s| is) my nickname|what do you call me|what(?:'s| is) my preferred name|how should you address me)[?!. ]*$/i.test(t)){
+ if(/^(?:what(?:'s| is) my name|what is my name now|do you (?:know|remember) my name|do you (?:still )?remember (?:my name|what my name is)|who am i|tell me my name|what name (?:did i|have i) (?:give|saved|set)|what(?:'s| is) my nickname|what do you call me|what(?:'s| is) my preferred name|how should you address me|did you (?:save|remember) my name|is my name saved|what name do you have saved)(?:\s+(?:now|yet|again))?[?!. ]*$/i.test(t)){
   if(!personalProfile.name)return 'I do not have your name saved yet. You can enter it in Settings under Your profile.';
   return /nickname|what do you call me|address me/i.test(t)?`I call you ${personalTitle()||personalProfile.name}. Your saved name is ${personalProfile.name}.`:`Your name is ${personalProfile.name}.`;
  }
@@ -3359,11 +3422,28 @@ async function send(text) {
     return;
   }
   text=addressed.command;
+  // v2.82: Profile ownership takes precedence over conversational AI fallbacks.
+  // A saved profile is authoritative and is re-read on every name question.
+  if(aurenIsPersonalIdentityRequest(text)) {
+    await addMessage('user',text);
+    const answer=personalCommand(text);
+    await addMessage('auren',answer || 'I could not read your saved name. Please check Your profile in Settings.');
+    return;
+  }
+  // v2.83: Verify reminders in the same Your Day section as appointments.
+  const placement=aurenReminderPlacementReply(text);
+  if(placement){await addMessage('user',text);await addMessage('auren',placement);return;}
   // v2.81: AUREN's own reminder writer owns direct reminder commands.
   // Never send 'remind me to text someone' to the external messaging boundary/AI.
   if(aurenIsReminderCommand(text)) {
     await addMessage('user',text);
     await addMessage('auren',reminderSpeech(text));
+    return;
+  }
+  if(/^(?:ok(?:ay)?(?: do it)?|do it|yes(?: please)?|confirm|go ahead)[.!? ]*$/i.test(text.trim()) && !pendingReminder && !pendingPlan && !pendingTaskChange && !butler.pending){
+    // Do not allow external AI to fabricate a save confirmation.
+    await addMessage('user',text);
+    await addMessage('auren','There is no pending change for me to save. If you mean a reminder, tell me its subject and time. I will confirm it was saved only after checking.');
     return;
   }
   const verifiedCapability=aurenVerifiedCapabilities(text);
