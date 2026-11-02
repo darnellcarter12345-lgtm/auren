@@ -1,3 +1,4 @@
+// AUREN v2.31 — conversation-first directions, no navigation loops or repetitive location questions.
 // AUREN v2.30 — persistent destination context and chat-to-directions handoff
 // AUREN v2.29 — clean voice destinations, device-current-location navigation, useful best-places fallback
 // AUREN v2.28 — reliable Maps directions and no failed-search retry loop
@@ -2243,7 +2244,7 @@ async function renderStorageInfo() {
 
 // AUREN v2.15 SMART PLACES: opt-in, any-category place search, safe Maps return flow.
 aurenPlaces = (() => {
-  let phase='idle', pending='', coords=null, results=[], requestId=0, lastMapClick=0, mapPending=false, returned=false, lookupFailed=false, navigationTarget='', awaitingPlace=false;
+  let phase='idle', pending='', coords=null, results=[], requestId=0, lastMapClick=0, mapPending=false, returned=false, lookupFailed=false, navigationTarget='', awaitingPlace=false, lastNavigationAt=0, lastPlacePromptAt=0;
   const yes=/^(?:yes|yep|yeah|sure|okay|ok|go ahead|please do|use my location|enable it)[.!? ]*$/i;
   const no=/^(?:no|nope|no thanks|not now|cancel)[.!? ]*$/i;
   const done=/^(?:done|finished|i(?:'m| am) done|that's all|end search|close results|stop searching)[.!? ]*$/i;
@@ -2260,6 +2261,8 @@ aurenPlaces = (() => {
     t=t.replace(/^(?:(?:hey|hi|okay|ok)\s+)?auren\s*[,!:.]?\s*/i,'')
        .replace(/^(?:(?:can|could|would|will)\s+you\s+|please\s+|i\s+(?:want|need)\s+(?:you\s+)?to\s+)/i,'')
        .replace(/[.!?]+$/,'').trim();
+    // Ignore leading conversational connectors in follow-up turns.
+    t=t.replace(/^(?:and|then|also|yes|yeah|okay|ok|alright|well|so)\s*[,.:]?\s+/i,'');
     // Handle Safari duplicate transcripts where a business name precedes the command.
     // e.g. 'McDonald's take me to McDonald's'.
     const echoed=t.match(/^(.{2,70}?)\s+(?:take|bring|drive|guide|lead)\s+me\s+to\s+(.+)$/i);
@@ -2271,7 +2274,8 @@ aurenPlaces = (() => {
       /^(?:(?:find|show|get|give)\s+(?:me\s+)?(?:the\s+)?(?:directions?|route|way)\s+(?:to|for)\s+)(.+)$/i,
       /^(?:(?:how\s+(?:do|can|would)\s+i\s+(?:get|drive|go)\s+to)|(?:where\s+is\s+the\s+(?:nearest|closest))|(?:open|pull\s+up|bring\s+up)\s+(?:google\s+)?maps\s+(?:for|to))\s+(.+)$/i,
       /^(?:go|head|drive)\s+to\s+(.+)$/i,
-      /^(?:directions?\s+(?:to|for))\s+(.+)$/i
+      /^(?:directions?\s+(?:to|for))\s+(.+)$/i,
+      /^(?:get|show|give|send|open)\s+(?:me\s+)?(?:the\s+)?(?:directions?|route|map)\s+(?:to|for)\s+(.+)$/i
     ];
     let m=null;
     for(const pattern of starters){m=t.match(pattern);if(m)break;}
@@ -2283,7 +2287,7 @@ aurenPlaces = (() => {
     // 'McDonald's take me to McDonald's' -> 'McDonald's'.
     dest=dest.replace(/^(.{2,65}?)\s+(?:take|bring|drive|guide|lead)\s+me\s+to\s+(.+)$/i,(_all,first,second)=>second.trim());
     dest=dest.replace(/^(.{2,65}?)\s+(?:navigate|directions?)\s+to\s+(.+)$/i,(_all,first,second)=>second.trim());
-    if(!dest||dest.length<2||dest.length>110)return '';
+    if(!dest||dest.length<2||dest.length>110||/^(?:me|there|somewhere|a place|places|the place|a restaurant|a store|it|that)$/i.test(dest))return '';
     // Avoid routing application commands or abstract requests to Google Maps.
     if(/^(?:settings?|text chat|history|the home screen|my (?:schedule|calendar|memories)|sleep|bed|the next sentence|the previous page)$/i.test(dest))return '';
     if(/^(?:do|be|have|feel|know|say|tell|help|see|find out|remember|understand)\b/i.test(dest))return '';
@@ -2319,7 +2323,7 @@ aurenPlaces = (() => {
   const action=(label,fn)=>{const b=document.createElement('button');b.type='button';b.textContent=label;b.onclick=fn;actions.append(b);return b;};
   const show=(title,message)=>{heading.textContent=title;content.replaceChildren();if(message){const p=document.createElement('p');p.textContent=message;content.append(p);}actions.replaceChildren();panel.style.display='block';};
   const hide=()=>{panel.style.display='none';content.replaceChildren();actions.replaceChildren();};
-  const clear=()=>{requestId++;phase='idle';pending='';coords=null;results=[];lookupFailed=false;navigationTarget='';awaitingPlace=false;mapPending=false;returned=false;hide();closePopup();const n=document.getElementById('aurenMapsReturnNotice');if(n)n.style.display='none';};
+  const clear=()=>{requestId++;phase='idle';pending='';coords=null;results=[];lookupFailed=false;navigationTarget='';awaitingPlace=false;lastNavigationAt=0;mapPending=false;returned=false;hide();closePopup();const n=document.getElementById('aurenMapsReturnNotice');if(n)n.style.display='none';};
   // Temporary, request-only Maps overlay. No persistent location card on Home.
   const mapOverlay=document.createElement('div');mapOverlay.id='aurenMapsTemporaryOverlay';
   mapOverlay.style.cssText='position:fixed;inset:0;z-index:11000;background:rgba(0,0,0,.65);display:none;align-items:center;justify-content:center;padding:18px;box-sizing:border-box;';
@@ -2357,7 +2361,7 @@ aurenPlaces = (() => {
       const loading=document.createElement('div');loading.setAttribute('role','status');loading.textContent=phase==='locating'?'Waiting for your location permission…':'Finding nearby suggestions…';loading.style.cssText='padding:16px;text-align:center;opacity:.85';mapChoices.append(loading);
     }
     if(navigationTarget && phase!=='searching'&&phase!=='locating'){
-      popupButton('Directions from my current location to '+navigationTarget,()=>openDirections(navigationTarget));
+      popupButton('Get directions to '+navigationTarget,()=>openDirections(navigationTarget));
     }
     if(lookupFailed && !places.length){
       popupButton('Browse places & genuine reviews in Google Maps',()=>openMap('https://www.google.com/maps/search/?api=1&query='+encodeURIComponent(mapsQuery())));
@@ -2510,7 +2514,7 @@ aurenPlaces = (() => {
   function enable(){if(!navigator.geolocation){phase='results';showPopup('This browser cannot share a location. Google Maps is still available.');return;}const seq=++requestId;phase='locating';showPopup('Allow location in Safari to see nearby '+pending+'.');
     navigator.geolocation.getCurrentPosition(pos=>{if(seq!==requestId)return;coords={lat:pos.coords.latitude,lon:pos.coords.longitude};void lookup();},()=>{if(seq!==requestId)return;phase='results';showPopup('Location was not available. Try again or use Google Maps.');},{enableHighAccuracy:false,maximumAge:0,timeout:12000});}
   function request(text){
-    awaitingPlace=false;requestId++;navigationTarget=destinationFrom(text);pending=normalizePlaceQuery(navigationTarget||namedPlaceSearch(text)||text);coords=null;results=[];lookupFailed=false;
+    awaitingPlace=false;requestId++;navigationTarget=destinationFrom(text);if(navigationTarget)lastNavigationAt=Date.now();pending=normalizePlaceQuery(navigationTarget||namedPlaceSearch(text)||text);coords=null;results=[];lookupFailed=false;
     // An optional working Maps search should exist even if the free lookup fails.
     // The popup provides the primary Maps action; no unsolicited chat link.
     if(locationApproved&&aurenLocation){
@@ -2520,11 +2524,18 @@ aurenPlaces = (() => {
     phase='consent';showPopup(navigationTarget?'Directions use your current device location in Google Maps if location permission is enabled there. No saved home address is used.':'Choose Nearby places to look up local options, or Google Maps to open a map search.');show('Find places near you?','Would you like to use your location for this search? The search service receives coordinates only if you approve.');action('Allow location & search',enable);action('Not now',clear);
   }
   function isNavigationFollowup(t){
-    return /^(?:(?:yes|yeah|yep|sure|okay|ok|please|can you|could you|would you)\s+)?(?:take me there|take me to (?:it|that place|the place)|go there|navigate (?:there|to it)|get me there|bring me there|drive me there|show me (?:the )?directions|give me (?:the )?directions|open (?:the )?(?:maps|directions)|send me (?:the |their |its )?(?:address|location|directions)|yes send me (?:their |the )?address|yes take me there|how do i get there|how can i get there)[.!? ]*$/i.test(t);
+    const c=String(t||'').trim().replace(/^(?:(?:and|then|also|yes|yeah|okay|ok|alright|so)\s*[,.:]?\s+)+/i,'');
+    return /^(?:(?:please|can you|could you|would you)\s+)?(?:take me (?:there|to (?:it|there|that place|the place))|go there|navigate (?:there|to it)|get me there|bring me there|drive me there|show me (?:the )?directions|give me (?:the )?directions|open (?:the )?(?:maps|directions)|send me (?:the |their |its )?(?:address|location|directions)|how do i get there|how can i get there|where is it)[.!? ]*$/i.test(c);
+  }
+  function isNavigationOnly(t){
+    return /^(?:(?:and|then|also|yes|okay|please)\s+)?(?:(?:take|drive|bring|guide)\s+me\s+to|(?:navigate|directions?)\s+to|(?:give|show|send)\s+(?:me\s+)?(?:the\s+)?directions?\s+to)[.!?, ]*$/i.test(t);
+  }
+  function isAddressReply(t){
+    return /^(?:(?:yes|yeah|okay|ok|please|and|then)\s*[,.:]?\s+)*(?:send (?:me )?(?:their |its |the )?address|send me directions|take me there|open directions|directions please|go there)[.!? ]*$/i.test(t);
   }
   function replyWithDirections(target){
     // The chat link is persistent and works even if a modal was closed.
-    phase='consent';navigationTarget=target;pending=target;
+    phase='consent';navigationTarget=target;pending=target;lastNavigationAt=Date.now();awaitingPlace=false;
     showPopup('Directions are ready for '+target+'. Google Maps will choose your current location when permitted.');
     const url=directionsURL(target);
     const wrap=document.createElement('div');wrap.className='msg auren';
@@ -2536,23 +2547,39 @@ aurenPlaces = (() => {
     if($('log'))$('log').scrollTop=$('log').scrollHeight;
   }
   async function handle(text){const t=String(text||'').trim();
-    if(incompletePlaceRequest(t)){
+    if(!t)return true;
+    const navigation=destinationFrom(t);
+    // New explicit intent wins over old follow-ups, including an accidental
+    // incomplete voice transcript and ordinary conversation topic switches.
+    if(navigation && meaningfulSearchTerm(navigation)){
+      await addMessage('user',t);
+      request(t);
+      await addMessage('auren','Directions to '+navigation+' are ready. Tap Get directions.');
+      return true;
+    }
+    if(isNavigationOnly(t)||incompletePlaceRequest(t)){
       awaitingPlace=true;
-      await addMessage('user',t);await addMessage('auren','What kind of place would you like me to find?');return true;
+      await addMessage('user',t);
+      // Do not speak repeated questions for every partial Safari transcript.
+      if(Date.now()-lastPlacePromptAt>12000){lastPlacePromptAt=Date.now();await addMessage('auren','Where would you like to go?');}
+      return true;
     }
-    // A one-word answer to AUREN's place clarification is a destination, not AI small talk.
-    if(awaitingPlace && /^(?:[a-z][a-z0-9&’'. -]{1,65})$/i.test(t) && !/^(?:yes|no|cancel|never mind|stop)$/i.test(t)){
-      awaitingPlace=false;await addMessage('user',t);request('find '+t);
-      await addMessage('auren','I found the destination you mean. Choose directions or nearby locations.');return true;
+    // A short answer to our own destination question must become a Maps action.
+    if(awaitingPlace && /^(?:[a-z][a-z0-9&’'. -]{1,65})$/i.test(t) && !/^(?:yes|no|cancel|never mind|stop|and|then|also)$/i.test(t)){
+      awaitingPlace=false;
+      await addMessage('user',t);
+      request('take me to '+t);
+      await addMessage('auren','Directions to '+t+' are ready. Tap Get directions.');
+      return true;
     }
-    if(awaitingPlace && /^(?:cancel|no|never mind|stop)$/i.test(t))awaitingPlace=false;
-    // Crucial: retain destination across "Yes, take me there" and "send the address".
-    // Do this before the generic AI gets a chance to hallucinate a lack of map access.
-    if((navigationTarget||pending) && isNavigationFollowup(t)){
-      const target=navigationTarget||pending;
+    if(awaitingPlace && /^(?:cancel|no|never mind|stop)$/i.test(t)){awaitingPlace=false;return false;}
+    // Short-lived navigation follow-ups always take priority over generic AI.
+    // Do not reinterpret unrelated later conversations as requests for directions.
+    if(navigationTarget && Date.now()-lastNavigationAt<12*60*1000 && (isNavigationFollowup(t)||isAddressReply(t))){
+      const target=navigationTarget;
       await addMessage('user',t);
       replyWithDirections(target);
-      await addMessage('auren','Certainly. Directions to '+target+' are ready. Select Open directions in the chat or popup.');
+      await addMessage('auren','Directions to '+target+' are ready. Tap Open directions.');
       return true;
     }
     if(/\b(?:turn|switch|disable|stop|clear|forget)\b.*\blocation\b/i.test(t)&&/off|disable|stop|clear|forget/i.test(t)){clear();return false;}
@@ -2564,14 +2591,14 @@ aurenPlaces = (() => {
     if(phase==='consent'&&yes.test(t)){
       await addMessage('user',t);
       if(locationApproved&&aurenLocation){coords={lat:aurenLocation.latitude,lon:aurenLocation.longitude};await lookup();}
-      else {show('Ready to search','Click Allow location & search in Settings to approve Safari location access.');action('Allow location & search',enable);action('Not now',clear);showPopup('Tap Open Google Maps to see your requested destination, or allow location for nearby listings.');await addMessage('auren','The Maps button is available on your screen. You may also allow location for nearby results.');}
+      else {show('Ready to search','Click Allow location & search in Settings to approve Safari location access.');action('Allow location & search',enable);action('Not now',clear);showPopup('Tap Open Google Maps to see your requested destination, or allow location for nearby listings.');await addMessage('auren','Open Maps on screen. Location access is optional.');}
       return true;
     }
     if(phase==='consent'&&no.test(t)){await addMessage('user',t);clear();await addMessage('auren','Of course. I will not use your location.');return true;}
     const destination=destinationFrom(t),named=namedPlaceSearch(t);
     if((destination&&meaningfulSearchTerm(destination))||(named&&meaningfulSearchTerm(named))||placeIntent.test(t)||broadPlaceIntent.test(t)){
       await addMessage('user',t);request(t);
-      await addMessage('auren',destination?'Select directions to open Google Maps from your current location, or browse nearby options.':'Choose nearby suggestions or view actual reviews in Google Maps.');
+      await addMessage('auren',destination?'Directions are ready. Tap Get directions.':'Choose nearby suggestions or Google Maps reviews.');
       return true;
     }
     return false;
@@ -2579,7 +2606,7 @@ aurenPlaces = (() => {
   function onReturn(){if(!mapPending||returned||Date.now()-lastMapClick<1000||Date.now()-lastMapClick>20*60*1000||document.hidden)return;returned=true;mapPending=false;
     if(phase==='results'||phase==='searching'||phase==='consent'){
       closePopup();const greeting=greetings[greetingCount++%greetings.length];noticeText.textContent=greeting;returnNotice.style.display='block';
-      void addMessage('auren',greeting,{silent:true});
+      // Return notice stays on screen; do not add another chat turn.
     }}
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)setTimeout(onReturn,450);});window.addEventListener('focus',()=>setTimeout(onReturn,450));
   // Location permissions and standing status stay in Settings; results are temporary and belong by the chat.
