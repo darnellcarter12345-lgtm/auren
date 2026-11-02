@@ -1,3 +1,4 @@
+// AUREN v2.79 — Grounded capability routing and accurate external-app boundaries.
 // AUREN v2.78 — Safe continuity bridge for local and AI responses.
 // AUREN v2.77 — Stable integration release; unchanged v2.76 planning features.
 // AUREN v2.76 — Integrated planning intelligence; builds on v2.75.
@@ -2669,20 +2670,39 @@ function aurenVerifiedCapabilities(question) {
   if (/^(?:what (?:can|do) you do|what are your (?:capabilities|features|functions)|what (?:features|capabilities) (?:do you have|are available)|how can you help me|tell me (?:what you can do|about your capabilities)|what can auren do|what are you able to do|are you limited|what are your limitations)$/.test(q)) {
     return 'I can manage appointments in my built-in AUREN planner after your confirmation, set reminders while AUREN is open, track tasks and routines, save approved memories and projects, provide daily briefings, check weather, and help with questions through the connected AI service. I cannot directly edit Apple or Google Calendar, and reminders do not run when this page is closed.';
   }
-  if (/^(?:can you|are you able to|do you (?:have the ability to|know how to))\s+(?:actually\s+)?(?:manage|edit|change|save|create|add|move|delete|reschedule|schedule|verify|check|view)\s+(?:my\s+|an?\s+|the\s+)?(?:calendar|appointments?|events?|schedule|plans?)(?:\s+in auren)?$/.test(q)) {
-    return 'Yes. I can view and change appointments in AUREN’s built-in planner, with confirmation before changes. I can verify what is saved there, but I cannot directly modify an external calendar app.';
-  }
+  // Only answer capability questions here. Actual requests to add, remove or
+  // change records must continue to their existing confirmation handlers.
+  const capabilityQuestion=/^(?:can you|could you|are you able to|do you (?:have the ability to|know how to)|is it possible for you to)\s+/.test(q);
+  if(!capabilityQuestion)return null;
+  const target=q.replace(/^(?:can you|could you|are you able to|do you (?:have the ability to|know how to)|is it possible for you to)\s+/,'');
+  const action=/\b(?:manage|edit|change|save|create|add|move|delete|remove|reschedule|schedule|verify|check|view|read|track|remember|set|show|list|remind|organize|update)\b/.test(target);
+  if(!action)return null;
+  if(/\b(?:apple calendar|google calendar|outlook|external calendar|icloud calendar)\b/.test(target))
+    return 'I can work with appointments in the built-in AUREN planner, but I cannot directly read or edit Apple Calendar, Google Calendar or Outlook. Those need a separate authorized integration.';
+  if(/\b(?:calendar|appointments?|meetings?|events?|schedule|plans?|planner)\b/.test(target))
+    return 'Yes. I can check, add, move and remove appointments in AUREN’s own planner, with confirmation before changes. I can verify the records saved there, but not appointments in external calendar apps.';
+  if(/\b(?:reminders?|alerts?|notifications?)\b/.test(target))
+    return 'Yes. I can save and check reminders in AUREN. Reminder alerts work while AUREN is open; I cannot guarantee a notification after the browser is closed.';
+  if(/\b(?:tasks?|to.do lists?|routines?|deadlines?)\b/.test(target))
+    return 'Yes. I can add, list and update tasks, repeating routines and deadlines in AUREN, with confirmation when changing saved records. Tasks are separate from calendar appointments.';
+  if(/\b(?:projects?)\b/.test(target))
+    return 'Yes. I can help track projects saved in AUREN and discuss their progress. I cannot make changes inside unrelated external project apps without a connection.';
+  if(/\b(?:memories?|preferences?|remember facts|remember things)\b/.test(target))
+    return 'Yes. I can use saved AUREN memories to personalize replies, and ask before saving durable personal facts. I will not assume an unsaved conversation is a verified long-term memory.';
   return null;
 }
 function correctFalseCapabilityClaims(question, answer) {
   const claim=String(answer||'');
-  if (/\b(?:i (?:do not|don't(?: have the ability to)?|cannot|can't|lack the ability to)|i have no (?:ability|access)|not able to)\b[^.!?]{0,240}\b(?:calendar|schedule|appointments?|plans?|reminders?|tasks?)\b/i.test(claim) &&
-      /\b(?:auren|you|your|calendar|schedule|appointments?|reminders?|tasks?|capabilit|features?|help)\b/i.test(String(question))) {
-    return 'To clarify my actual abilities: I can manage appointments in AUREN’s own planner after confirmation, check saved plans, manage local tasks, and set reminders while the page is open. I cannot change external calendar apps without a separate integration.';
+  const q=String(question||'').toLowerCase();
+  // Don't overwrite a correct refusal about external integrations.
+  if(/\b(?:apple calendar|google calendar|outlook|external calendar|icloud calendar)\b/i.test(q))return claim;
+  const negative=/\b(?:i (?:do not|don't(?: have the ability to)?|cannot|can't|lack the ability to)|i have no (?:ability|access)|not able to)\b[^.!?]{0,240}\b(?:calendar|schedule|appointments?|plans?|reminders?|tasks?)\b/i;
+  const local=/\b(?:auren|my planner|your planner|your calendar|my calendar|my schedule|my appointments|your capabilities|your features|what can you do)\b/i;
+  if(negative.test(claim)&&local.test(q)) {
+    return 'To clarify my actual abilities: I can manage appointments in AUREN’s own planner after confirmation, check saved plans, track local tasks and set reminders while AUREN is open. I cannot change external calendar apps without a separate integration.';
   }
   return claim;
 }
-
 async function askWithMemory(question) {
   refreshPersonalProfile();
   const context = await contextForAI(question);
