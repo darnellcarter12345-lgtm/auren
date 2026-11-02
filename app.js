@@ -1,3 +1,4 @@
+// AUREN v2.60 — Grounded smart daily planning, preparation and next-step suggestions.
 // AUREN v2.59 — safe new-question handoff and correction recovery.
 // AUREN v2.58 — conversation repair, bounded clarifications, safe context recovery.
 // AUREN v2.57 — end-to-end action handoff and regression guards.
@@ -1295,6 +1296,46 @@ function adaptiveFollowup(raw){
   return `After that, your next saved ${next.kind} is ${next.text} at ${new Date(next.when).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})}.`;
  }
  return null;
+}
+// v2.60: Advice is computed from actual device-local items, not fabricated
+// commitments, live traffic, travel durations, or unsaved user preferences.
+function smartDayPlanIntent(raw){
+ const q=String(raw||'').trim().toLowerCase().replace(/^(?:hey\s+)?auren[, ]+/,'').replace(/[.!?]+$/,'').trim();
+ if(/^(?:give me|make me|create|build|show me|help me (?:make|build|organize)) (?:a |my )?(?:smart |personalized |realistic )?(?:plan|game plan|action plan|schedule) (?:for )?(?:today|tomorrow|this week)$/.test(q))return {date:parseDateIntent(q)||localDate(),scope:/this week$/.test(q)?'week':'day'};
+ if(/^(?:help me (?:organize|plan) (?:the )?(?:next few hours|rest of (?:my |the )?day)|what can i (?:do|work on) before my next (?:meeting|appointment)|suggest (?:my |a )?next (?:few )?steps|give me (?:a |my )?(?:smart |personalized )?daily plan|plan my day|organize my day)$/.test(q))return {date:localDate(),scope:'day'};
+ return null;
+}
+function smartDayPlanReply(intent){
+ const today=localDate(),now=Date.now();
+ const start=intent.scope==='week'?weekStart(intent.date):intent.date;
+ const dates=intent.scope==='week'?Array.from({length:7},(_,i)=>shiftedDate(start,i)):[intent.date];
+ const validDates=dates.filter(d=>d>=today);
+ const scheduled=plans.filter(p=>validDates.includes(p.date)&&eventTimestamp(p)>=now)
+  .sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+ const unfinished=validDates.flatMap(day=>tasksOnDate(day).map(task=>({task,day})))
+  .filter(x=>!x.task.done).sort((a,b)=>a.day.localeCompare(b.day)||a.task.title.localeCompare(b.task.title));
+ const due=reminders.filter(r=>!r.fired&&Number.isFinite(Date.parse(r.at))&&Date.parse(r.at)>=now&&validDates.includes(localDate(new Date(r.at))))
+  .sort((a,b)=>Date.parse(a.at)-Date.parse(b.at));
+ const label=intent.scope==='week'?'this week':intent.date===today?'today':readableDate(intent.date);
+ const parts=[`Here is a practical plan based only on what's saved in AUREN for ${label}.`];
+ if(!scheduled.length&&!unfinished.length&&!due.length){
+  parts.push('I have no upcoming appointments, unfinished scheduled tasks, or reminders saved for that period. That does not mean your calendar is genuinely free.');
+  parts.push('Tell me one thing you want to accomplish, and I can help break it into steps.');
+  return parts.join(' ');
+ }
+ if(scheduled.length){const p=scheduled[0];parts.push(`Protect your next saved appointment: ${p.title}, ${readableDate(p.date)} at ${spokenClock(p.time)}.`);}
+ if(unfinished.length){const top=unfinished.slice(0,3).map(x=>`${x.task.title}${intent.scope==='week'?' ('+readableDate(x.day)+')':''}`);parts.push(`Consider working on ${top.join('; ')}${unfinished.length>3?'; and other saved tasks':''}. These are suggestions, not automatic priorities.`);}
+ if(due.length){const next=due[0];parts.push(`Keep in mind your saved reminder: ${next.text}, ${new Date(next.at).toLocaleString([],{weekday:'short',hour:'numeric',minute:'2-digit'})}.`);}
+ if(scheduled.length>1){const first=scheduled[0],second=scheduled[1];if(first.date===second.date&&eventTimestamp(second)>eventTimestamp(first))parts.push(`Another appointment afterward: ${second.title} at ${spokenClock(second.time)}.`);}
+ const conflicts=savedDayIntelligence(intent.date,intent.scope).conflictPairs;
+ if(conflicts.length)parts.push(`Heads-up: ${conflicts.length} overlapping pair${conflicts.length===1?'':'s'} of saved appointments; review their times before committing to anything else.`);
+ if(scheduled.length && scheduled[0].date===today){
+  const mins=Math.max(0,Math.floor((eventTimestamp(scheduled[0])-now)/60000));
+  if(mins<=60)parts.push(`Your next appointment starts in about ${mins} minutes. Allow for preparation and travel as needed; I cannot estimate either from this calendar.`);
+  else parts.push('If you have time before that appointment, choose a manageable saved task; check preparation and travel requirements yourself.');
+ }
+ parts.push('Nothing has been created, moved, or marked complete.');
+ return parts.join(' ');
 }
 function priorityIntelligenceIntent(raw){
   const q=String(raw||'').trim().toLowerCase().replace(/[.!?]+$/,'');
@@ -2884,6 +2925,13 @@ async function send(text) {
     if(/^(?:how much time (?:do i have|is left) (?:before|until) (?:my )?next (?:meeting|appointment|plan)|do i have time before my next (?:meeting|appointment|plan)|how long (?:until|before) my next (?:meeting|appointment|plan))[.!? ]*$/i.test(String(text).trim())){
       noteDayConversation(localDate(),'day');
       await addMessage('auren',nextOpeningIntelligence());
+      return;
+    }
+    // v2.60: explicitly requested daily coaching; no changes to saved data.
+    const smartPlanRequest=smartDayPlanIntent(text);
+    if(smartPlanRequest){
+      noteDayConversation(smartPlanRequest.date,smartPlanRequest.scope);
+      await addMessage('auren',smartDayPlanReply(smartPlanRequest));
       return;
     }
     // v2.40: explicit task operations are separate from calendar events.
