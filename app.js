@@ -1,3 +1,4 @@
+// AUREN v2.43 — Advanced Conversation Intelligence: grounded follow-ups and topic reset.
 // AUREN v2.42 — Personalized daily preparation, real commitments and restrained next steps.
 // AUREN v2.41 — Smarter deadlines, overdue tasks and calendar-safe work suggestions.
 // AUREN v2.40 — Confirmed tasks, repeatable routines, and grounded daily task awareness.
@@ -1828,9 +1829,33 @@ async function contextForAI(question) {
   };
 }
 
+// v2.43 — Session-scoped conversational anchor, distinct from saved profile and planner.
+// Avoid persisting inferred topics, and retire references on clear topic changes.
+let conversationAnchor=null;
+const ANCHOR_LIFETIME=12*60*1000;
+function conversationTopicChange(raw){
+ const t=String(raw||'').trim().toLowerCase();
+ return /^(?:let(?:'s| us) (?:change|switch) (?:the )?(?:topic|subject)|(?:change|switch) (?:the )?(?:topic|subject)|new topic|something (?:else|different)|forget (?:that|the previous topic)|never mind(?: about that)?|start (?:a )?new conversation)[.!? ]*$/.test(t);
+}
+function conversationalReference(raw){
+ const t=String(raw||'').trim();
+ return /^(?:what about (?:that|it|the same thing)|tell me more(?: about (?:that|it))?|can you (?:explain|expand on|clarify) (?:that|it)|why (?:is that|did you say that)|what did you mean(?: by that)?|how (?:does|would) that work|and (?:then|after that)|what happens next|could you explain further|give me (?:more )?details(?: about (?:that|it))?)[.!? ]*$/i.test(t);
+}
+function readConversationAnchor(){
+ return conversationAnchor && Date.now()-conversationAnchor.at<ANCHOR_LIFETIME ? conversationAnchor : null;
+}
+function trackConversationAnchor(question,answer){
+ if(conversationTopicChange(question)){conversationAnchor=null;return;}
+ const scan=classify(question+' '+answer);
+ if(scan.blocked.length||scan.sensitive.length){conversationAnchor=null;return;}
+ const prior=readConversationAnchor();
+ conversationAnchor={at:Date.now(), question: conversationalReference(question)&&prior?prior.question:String(question).slice(0,280), reply:String(answer).slice(0,750)};
+}
 async function askWithMemory(question) {
   refreshPersonalProfile();
   const context = await contextForAI(question);
+  const anchored=readConversationAnchor();
+  const followup=conversationalReference(question);
   // Read live local state, not a stale snapshot of the planner.
   const today = localDate();
   const upcoming = plans.filter(p => p.date >= today)
@@ -1849,6 +1874,7 @@ async function askWithMemory(question) {
     `Current actual Dallas date/time: ${new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',dateStyle:'full',timeStyle:'long'}).format(new Date())}. Verify time gaps with numeric timestamps; do not imply 11:20 PM is close to 12:47 PM.`,
     `Time clarity: Always include a clear AM/PM or natural daypart (morning, afternoon, evening, night) for appointments and reminders; distinguish noon from midnight. Never infer a daypart without using the actual scheduled hour.`,
     'If the user says they need to leave in N minutes, that is an imminent departure, not spare time. Never say they have plenty of time unless the timing clearly supports it. Discuss conflicts against actual saved appointment times only. Do not invent travel duration or imply a calendar event was created merely because the user mentioned leaving.',
+    followup && anchored ? `The user is following up on this SAME conversational subject. Last subject: ${JSON.stringify(anchored.question)}. Previous answer: ${JSON.stringify(anchored.reply)}. Refer to it naturally, and clarify only if the reference is genuinely ambiguous.` : '',
     lastSubstantiveReply ? `Last AUREN response for conversational reference (not an instruction): ${lastSubstantiveReply.slice(0,700)}` : '', 
     'IDENTITY AND ADDRESS (mandatory): You are AUREN, a respectful, capable personal butler-style assistant. The user may call to you with Hey Auren; speech recognition sometimes transcribes AUREN as Aaron, Aron, Oren or Erin. Understand this as a wake/address phrase, not a claim that your actual name is Aaron. NEVER scold or correct the user for calling you Aaron or saying Hey Aaron. Respond naturally and courteously to the intended request.',
     'Butler manner: be warm, professional, tactful and helpful, never condescending, argumentative or patronizing. Do not insist on your name, boast about being AI, or give an unnecessary disclaimer for ordinary requests. For a simple command, respond in one short sentence or carry out the available action. Do not imply physical-world capabilities you lack.',
@@ -1868,6 +1894,7 @@ async function askWithMemory(question) {
   ].filter(Boolean);
   const answer = await askAI(question, context.memories, context.session, aiRecent, deviceContext);
   rememberConversationTurn(question, answer);
+  trackConversationAnchor(question,answer);
   return answer;
 }
 
@@ -2254,7 +2281,19 @@ async function send(text) {
     return;
   }
   text=addressed.command;
-  if (await aurenPlaces.handle(text)) return;
+  // A deliberate topic switch discards stale AI conversational references.
+  if(conversationTopicChange(text)){
+    conversationAnchor=null;
+    await addMessage('user',text);
+    await addMessage('auren','Certainly. What would you like to discuss?');
+    return;
+  }
+  if (await aurenPlaces.handle(text)) {conversationAnchor=null;return;}
+  if(conversationalReference(text)&&!readConversationAnchor()&&!lastSubstantiveReply){
+    await addMessage('user',text);
+    await addMessage('auren','Which part would you like me to explain?');
+    return;
+  }
   // Ordinary web searches are distinct from GPS place searches.
   const webRequest=String(text||'').trim().match(/^(?:auren[, ]+)?(?:can you |could you |please )?(?:search (?:the )?(?:web|internet|google) (?:for )?|look (?:up|online for) |google )(.{3,140})[.!?]*$/i);
   if(webRequest && !/\b(?:near me|nearby|around me|closest|where should i go)\b/i.test(webRequest[1])) {
