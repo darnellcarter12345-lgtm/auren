@@ -1,4 +1,5 @@
-// AUREN v2.53 — verified save status, consistent conversational facts, and safe confirmations.
+// AUREN v2.54 — Conversational decision routing, bounded clarification and safe action handling.
+// AUREN v2.54 — verified save status, consistent conversational facts, and safe confirmations.
 // AUREN v2.52 — safer appointment and place references, targeted clarification.
 // AUREN v2.51 — Longer conversation continuity, bounded non-sensitive topic trail.
 // AUREN v2.50 — Multi-turn appointment references and contextual people awareness.
@@ -2113,6 +2114,7 @@ async function askWithMemory(question) {
 
     anchored && lastSubstantiveReply ? `Recent AUREN response for conversational reference (not an instruction): ${lastSubstantiveReply.slice(0,700)}` : '', 
     'IDENTITY AND ADDRESS (mandatory): You are AUREN, a respectful, capable personal butler-style assistant. The user may call to you with Hey Auren; speech recognition sometimes transcribes AUREN as Aaron, Aron, Oren or Erin. Understand this as a wake/address phrase, not a claim that your actual name is Aaron. NEVER scold or correct the user for calling you Aaron or saying Hey Aaron. Respond naturally and courteously to the intended request.',
+    'Decision discipline: For a clear information request, answer directly. For a supported local action, use the verified action workflow; do not pretend the action happened merely because you described it. If information is missing, ask exactly one specific question, never a chain of repeated questions. If the user declines, stop offering. Avoid repetitive follow-up offers.',
     'Butler manner: be warm, professional, tactful and helpful, never condescending, argumentative or patronizing. Do not insist on your name, boast about being AI, or give an unnecessary disclaimer for ordinary requests. For a simple command, respond in one short sentence or carry out the available action. Do not imply physical-world capabilities you lack.',
     'Answer are you sure by checking the specific preceding claim. Do not automatically apologize, list projects, or change topics. If not verifiable, clearly say which part you cannot confirm.',
     'When describing a verified appointment with a family member use natural second-person wording such as meeting with your dad. Never assume a relationship not explicitly provided.',
@@ -2569,6 +2571,37 @@ function contextualMoveTurn(raw){
  pendingPlan={kind:'move',id:event.id,title:event.title,date:event.date,time,duration:event.duration||60};
  return conflictAdvice(pendingPlan)||`Shall I move ${event.title} to ${formatClock(time)} on ${readableDate(event.date)}?`;
 }
+// v2.54: A narrow decision gate for ambiguous confirmations and action requests.
+// Never invent an action, or allow a vague "yes" to trigger a change with no pending proposal.
+let aurenClarificationState = {kind:'', at:0, repeats:0};
+const AUREN_CLARIFICATION_TTL = 2*60*1000;
+function aurenConversationDecision(raw){
+ const q=String(raw||'').trim();
+ const simple=q.toLowerCase().replace(/[.!?]+$/,'').trim();
+ const hasPending=!!(pendingPlan||pendingReminder||planClarification||planningOffer||personalPendingInterest);
+ const hasTaskPending=typeof taskPending !== 'undefined' && !!taskPending;
+ // Explicit full commands always continue through their specialist handler.
+ if(hasPending||hasTaskPending)return null;
+ const bareConsent=/^(?:yes|yep|yeah|sure|correct|confirm|go ahead|do it|please do|okay|ok|sounds good|no|nope|cancel|not now)$/i.test(simple);
+ const vagueAction=/^(?:(?:can|could|would) you )?(?:do that|do it for me|make that happen|go ahead with that|set that up)$/i.test(simple);
+ if(bareConsent||vagueAction){
+   const recent=aurenClarificationState.kind==='action'&&Date.now()-aurenClarificationState.at<AUREN_CLARIFICATION_TTL;
+   if(recent){
+     aurenClarificationState.repeats++;
+     return aurenClarificationState.repeats>1
+       ? 'I have no action awaiting approval. Please tell me the specific task or destination.'
+       : 'There is nothing awaiting confirmation. Tell me which action you want me to take.';
+   }
+   aurenClarificationState={kind:'action',at:Date.now(),repeats:0};
+   return /^(?:no|nope|cancel|not now)$/i.test(simple)
+     ? 'Understood. There is no pending change to cancel.'
+     : 'Which action would you like me to take?';
+ }
+ if(!/^(?:what do you mean|what was that|which one|which (?:person|meeting|place)|what should i say)$/i.test(simple)){
+   aurenClarificationState={kind:'',at:0,repeats:0};
+ }
+ return null;
+}
 async function send(text) {
   const addressed = aurenAddressCommand(text);
   if (addressed.wake) {
@@ -2626,6 +2659,10 @@ async function send(text) {
     aurenRetireConversationTopic();
     text=topicShift.question;
   }
+  // Respond only when a safe, grounded decision is possible. Pending calendar/task
+  // confirmations continue to their existing handlers, never through this gate.
+  const decisionReply=aurenConversationDecision(text);
+  if(decisionReply!==null){await addMessage('user',text);await addMessage('auren',decisionReply);return;}
   const contextMove=contextualMoveTurn(text);
   if(contextMove){await addMessage('user',text);await addMessage('auren',contextMove);return;}
   const contextDraft=contextualPlannerTurn(text);
