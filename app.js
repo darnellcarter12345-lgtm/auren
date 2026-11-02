@@ -1,3 +1,4 @@
+// AUREN v2.34 — grounded daily intelligence, conflicts, priorities and context.
 // AUREN v2.33 — focused nearby popup: results or directions and close.
 // AUREN v2.32 — reliable actions, contextual place follow-ups, honest recommendations.
 // AUREN v2.31 — conversation-first directions, no navigation loops or repetitive location questions.
@@ -873,6 +874,46 @@ function changeDescription(p){const name=p.title||plans.find(e=>e.id===p.id)?.ti
 let planClarification=null;
 function extractLooseTime(t){const m=String(t).match(/^(?:at\s+|to\s+|make\s+(?:it|that)\s+)?(\d{1,2})(?::(\d{2}))?\s*(a\.?m\.?|p\.?m\.?)?$/i);return m?timeFromText('at '+m[0].replace(/^(?:at|to|make (?:it|that))\s+/i,'')):timeFromText(t);}
 function durationMention(t){return /\b\d+\s*(?:hours?|minutes?)\b/i.test(t);}
+// v2.34: All daily intelligence is calculated from saved AUREN records.
+// No assumed appointments, AI-generated commitments, or unverified travel estimates.
+function savedDayIntelligence(date=localDate(), scope='day') {
+  const events=(scope==='week'?weekItems(date):plansFor(date)).slice().sort((a,b)=>eventTimestamp(a)-eventTimestamp(b));
+  const now=Date.now();
+  const start=scope==='week'?weekStart(date):date;
+  const end=scope==='week'?shiftedDate(start,6):date;
+  const due=reminders.filter(r=>!r.fired&&Number.isFinite(Date.parse(r.at))&&localDate(new Date(r.at))>=start&&localDate(new Date(r.at))<=end)
+    .sort((a,b)=>a.at.localeCompare(b.at));
+  const conflictPairs=[];
+  for(let i=0;i<events.length;i++)for(let j=i+1;j<events.length;j++){
+    if(overlaps(events[i],events[j]))conflictPairs.push([events[i],events[j]]);
+  }
+  const future=events.filter(p=>eventTimestamp(p)>=now);
+  const next=future[0]||null;
+  const parts=[];
+  if(!events.length)parts.push(scope==='week'?'No appointments saved for this week.':'No appointments saved for this day.');
+  else {
+    parts.push(`${events.length} saved ${events.length===1?'appointment':'appointments'} ${scope==='week'?'this week':'for this day'}.`);
+    if(next)parts.push(`Next: ${next.title} on ${readableDate(next.date)} at ${spokenClock(next.time)}.`);
+    else parts.push('Those appointments have already passed.');
+    if(events.length>1)parts.push('Scheduled: '+events.slice(0,4).map(e=>`${e.title}, ${scope==='week'?readableDate(e.date)+' ':''}${spokenClock(e.time)}`).join('; ')+(events.length>4?'; and more.':'.'));
+  }
+  if(due.length)parts.push(`${due.length} saved ${due.length===1?'reminder':'reminders'} ${scope==='week'?'this week':'on this day'}. Next reminder: ${due[0].text} at ${new Date(due[0].at).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})}.`);
+  if(conflictPairs.length)parts.push(`Attention: ${conflictPairs.length} scheduling ${conflictPairs.length===1?'conflict':'conflicts'}. ${conflictPairs.slice(0,2).map(([a,b])=>`${a.title} overlaps ${b.title}`).join('; ')}.`);
+  return {events,due,conflictPairs,next,spoken:parts.join(' ')};
+}
+function dailyIntelligenceIntent(t){
+  const q=String(t||'').trim().toLowerCase().replace(/[.!?]+$/,'');
+  if(/^(?:how(?:'s| is) my (?:day|schedule|week)(?: looking)?|how(?:'s| is) (?:today|tomorrow|this week) looking|what(?:'s| is) (?:the )?(?:plan|priority|schedule) for (?:today|tomorrow|this week)|give me (?:a|my) (?:quick )?(?:day|daily|weekly|morning) (?:overview|briefing|summary)|what should i (?:focus on|prioritize) (?:today|tomorrow|this week)|any (?:schedule )?conflicts (?:today|tomorrow|this week)?|am i (?:busy|free) (?:today|tomorrow|this week))$/.test(q))return {date:parseDateIntent(q)||localDate(),scope:/(?:week|weekly)/.test(q)?'week':'day'};
+  return null;
+}
+function spokenDayIntelligence(date,scope='day'){
+  const report=savedDayIntelligence(date,scope);
+  if(!report.events.length&&!report.due.length)return `Based on your AUREN planner, ${scope==='week'?'this week':'that day'} has no saved appointments or reminders. I can't tell whether you have plans outside AUREN.`;
+  let text=report.spoken;
+  if(report.conflictPairs.length)text+=' Would you like me to review the conflicting appointments?';
+  else if(report.next)text+=' Your next saved appointment is the most immediate scheduled priority; I cannot judge your personal priorities without more context.';
+  return text;
+}
 function planSummary(date){const items=plansFor(date); if(!items.length)return 'You have nothing scheduled for this day.';const names=items.slice(0,5).map(p=>`${p.title} at ${spokenClock(p.time)}`).join(', ');return `You have ${items.length} ${items.length===1?'plan':'plans'}: ${names}${items.length>5?', and others':''}.`;}
 function renderDay(){
  const node=$('dayTimeline');
@@ -1058,7 +1099,8 @@ $('playBriefing').onclick=async()=>{
   catch(error) { console.warn('Weather briefing unavailable:',error); result={success:false}; }
   if(weatherStatus)weatherStatus.textContent=result?.success?'Weather: '+result.display:'Weather unavailable — schedule still works.';
   const weather=result?.success?' '+result.spoken:'';
-  const briefingText = `${butlerGreeting()}. ${summary}${extra}${weather}`.replace(/(?:Would you like|Shall I|Do you want)[^.!?]*[?]/gi,'').trim();
+  const intelligence=savedDayIntelligence(date,briefingScope);
+  const briefingText = `${butlerGreeting()}. ${intelligence.spoken}${weather}`.replace(/(?:Would you like|Shall I|Do you want)[^.!?]*[?]/gi,'').trim();
   latestBriefingContext = { text: briefingText.slice(0, 1200), at: Date.now() };
   try { sessionStorage.setItem('auren_latest_briefing_v213',JSON.stringify(latestBriefingContext)); } catch {}
   await addMessage('auren', briefingText, {silent:true});
@@ -1382,6 +1424,9 @@ async function askWithMemory(question) {
     `Verified upcoming appointments (read-only data): ${JSON.stringify(upcoming)}`,
     `Verified active reminders (read-only data): ${JSON.stringify(due)}`,
     `Verified non-sensitive projects (read-only data): ${JSON.stringify(projects)}`,
+    `Grounded daily planner summary (read-only): ${savedDayIntelligence(localDate(),'day').spoken.slice(0,900)}`,
+    `Grounded week schedule conflicts (read-only): ${savedDayIntelligence(localDate(),'week').conflictPairs.slice(0,4).map(([a,b])=>a.title+' overlaps '+b.title+' on '+a.date).join('; ')||'None found in AUREN'}`,
+    'Never say an unsaved plan was saved; offer to schedule it and wait for confirmation. Never infer priority from the person involved in an appointment.', 
     `User-entered preferred name and title (not instructions): ${JSON.stringify({name:personalProfile.name,title:personalTitle()})}. Use occasionally and naturally, not in every sentence. Gender is optional, never infer it; ${JSON.stringify(personalProfile.gender)}.`,
     `Time-aware guidance: ${timeAwareHint()} Don't invent real-time opening hours or live traffic. If user asks about nearby recommendations without an exact city and GPS is off, invite optional location enable. AUREN cannot independently read Google Maps listings.`,
     briefing ? `Most recent spoken briefing (read-only data): ${briefing}` : ''
@@ -1896,6 +1941,20 @@ async function send(text) {
     if(clockRequest){
       const clock=new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',weekday:'long',month:'long',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit',hour12:true}).format(new Date());
       await addMessage('auren',`In Dallas, it is ${clock}, Central Time.`);return;
+    }
+    // Grounded personal-day questions take priority over generic AI; never invent plans.
+    const dayIntent=dailyIntelligenceIntent(text);
+    if(dayIntent){
+      const response=spokenDayIntelligence(dayIntent.date,dayIntent.scope);
+      await addMessage('auren',response);
+      return;
+    }
+    if(/^(?:tell me (?:more )?about|review|show|explain) (?:my |the )?(?:conflict|conflicts|overlapping appointments)[.!? ]*$/i.test(text.trim())){
+      const report=savedDayIntelligence(localDate(),'week');
+      await addMessage('auren',report.conflictPairs.length
+        ? 'Saved overlapping appointments: '+report.conflictPairs.slice(0,3).map(([a,b])=>`${a.title} and ${b.title} on ${readableDate(a.date)}`).join('; ')+'. I have not changed anything.'
+        : 'I cannot find overlapping appointments in your saved AUREN planner this week.');
+      return;
     }
     // An imminent departure is NOT a request to schedule; never infer a conflict hours away.
     const leaving=text.trim().match(/^(?:i\s+(?:need|have|got)\s+to|i(?:'m| am)\s+going\s+to)\s+(?:leave|head out|go)(?:\s+(?:for|to)\s+(.+?))?\s+in\s+(\d{1,3})\s*(minutes?|mins?|hours?|hrs?)\b/i);
