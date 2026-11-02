@@ -1,3 +1,4 @@
+// AUREN v2.58 — conversation repair, bounded clarifications, safe context recovery.
 // AUREN v2.57 — end-to-end action handoff and regression guards.
 // AUREN v2.56 — Regression safeguards for pending actions and topic changes.
 // AUREN v2.55 — Verified intent handoffs and safe confirmation routing.
@@ -2055,7 +2056,7 @@ function parseConversationCorrection(raw){
  const t=String(raw||'').trim();
  const m=t.match(/^(?:(?:no[,! ]+)?(?:i (?:actually )?meant|what i meant (?:was|is)|i was (?:talking|asking) about|rather|instead|sorry[, ]+i meant)|(?:no[,! ]+)?(?:not that|that's not what i meant)[,.:; ]+(?:i meant|i mean|i was asking about)?)\s+(.{2,240})[.!?]*$/i);
  if(m)return m[1].trim();
- if(/^(?:no[,! ]+)?(?:that's not what i meant|you misunderstood(?: me)?|not what i asked|that's not what i was asking)(?:[.!? ]*)$/i.test(t))return '';
+ if(/^(?:no[,! ]+)?(?:that's not what i meant|that isn't what i meant|that's not right|you misunderstood(?: me)?|not what i asked|that's not what i was asking|you got the wrong idea)(?:[.!? ]*)$/i.test(t))return '';
  return null;
 }
 function freshConversationReference(){
@@ -2648,6 +2649,26 @@ async function send(text) {
     }
     return;
   }
+  // v2.58: Let the user recover the current conversational subject without
+  // invoking AI or mistaking the request for a command to alter saved information.
+  // Do not expose a sensitive or stale topic; the existing anchor enforces both.
+  if(/^(?:what (?:were|are) we (?:talking|speaking|discussing) about|where (?:were|did) we leave off|remind me what we were discussing)[?.! ]*$/i.test(text.trim())){
+    await addMessage('user',text);
+    const anchor=readConversationAnchor();
+    await addMessage('auren',anchor
+      ? `We were discussing ${anchor.question.replace(/[?.!]+$/,'').slice(0,170)}.`
+      : 'We do not have an active topic. What would you like to discuss?');
+    return;
+  }
+  // Explicit 'never mind' cancels only UNCOMMITTED drafts. It never removes
+  // saved appointments, tasks, or memories, or initiates a fresh AI request.
+  if(/^(?:never mind|nevermind|forget that request|cancel that request|drop that request)[.!? ]*$/i.test(text.trim())){
+    await addMessage('user',text);
+    const hadDraft=!!(pendingTaskChange||pendingPlan||pendingReminder||planClarification||contextualMeetingDraft||butler.pending);
+    if(hadDraft){aurenCancelPendingDrafts();await addMessage('auren','Certainly. I have cancelled the unfinished request. Nothing was saved or changed.');}
+    else await addMessage('auren','Certainly. There is no unfinished request to cancel.');
+    return;
+  }
   // Natural corrections take priority over saved-memory disputes and incomplete prior prompts.
   const corrected=parseConversationCorrection(text);
   if(corrected!==null){
@@ -2693,6 +2714,11 @@ async function send(text) {
   }
   if(explicitNewAppointment && pendingTaskChange)pendingTaskChange=null;
   if((explicitNewTask||explicitNewAppointment) && butler.pending)butler.pending=null;
+  // v2.58: An explicit new navigation request is not approval of any stale
+  // memory/task/calendar draft. The specialist still handles the destination.
+  if(/^(?:(?:please|can you|could you)\s+)?(?:take me to|navigate to|directions to|drive to|go to)\b/i.test(text.trim())){
+    aurenCancelPendingDrafts();
+  }
   // A bare confirmation with an unresolved memory prompt belongs to the memory
   // specialist, not the task handler or a generic AI conversation.
   if(butler.pending && !pendingTaskChange && !pendingPlan && !pendingReminder &&
