@@ -1,3 +1,4 @@
+// AUREN v3.39 — cross-device nearby results and fuzzy destination names.
 // AUREN v3.38 — stable iPhone speech handoff + routing.
 // AUREN v3.35 — complete app.js with integrated nearby choices and directions.
 // AUREN v3.21 — account-specific local data and prior voice fixes preserved.
@@ -4786,6 +4787,11 @@ const aurenUniversalPlaces334 = createUniversalPlacesBrain({
 });
 
 async function send(text) {
+  // v3.39: handle place commands FIRST, before older chat/navigation routers.
+  if (aurenPlaces339.parse(text)) {
+    try { if (await aurenPlaces339.handle(text)) return; }
+    catch (error) { console.warn('AUREN v3.39 route error',error); }
+  }
   // v3.34: user-initiated navigation takes priority over older local/AI routes.
   if (aurenUniversalPlaces334.parse(text)) {
     try {
@@ -6123,3 +6129,104 @@ aurenPlaces = (() => {
   // Location permissions and standing status stay in Settings; results are temporary and belong by the chat.
   return {handle,clear};
 })();
+
+
+// AUREN v3.39 — Places UI & speech-friendly name matching, Mac + iPhone.
+// Embedded by the full app.js builder. Requires no edits to voice modules.
+const aurenPlaces339 = (() => {
+  let options = [], lastPlace = null, activeRequest = 0;
+  const norm = s => String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');
+  const clean = s => String(s || '').replace(/[’]/g,"'").replace(/\s+/g,' ').trim();
+  const aliases = new Map([['chipolte','Chipotle'],['chipotle','Chipotle'],['chipoltey','Chipotle'],['chipotleay','Chipotle'],['waterburger','Whataburger'],['whataburger','Whataburger'],['whataburgr','Whataburger'],['chickfilet','Chick-fil-A'],['chickfila','Chick-fil-A'],['chickfilay','Chick-fil-A']]);
+  function lev(a,b) { a=norm(a);b=norm(b); if(!a||!b||a.length>60||b.length>60)return 999;let p=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){const n=[i];for(let j=1;j<=b.length;j++)n[j]=Math.min(n[j-1]+1,p[j]+1,p[j-1]+(a[i-1]===b[j-1]?0:1));p=n;}return p[b.length]; }
+  const mapDir = dest => 'https://www.google.com/maps/dir/?'+new URLSearchParams({api:'1',destination:dest,travelmode:'driving'});
+  const mapSearch = q => 'https://www.google.com/maps/search/?'+new URLSearchParams({api:'1',query:q});
+  const categories = [
+    ['restaurants',/\b(restaurants?|food|something to eat|somewhere to eat|places? to eat|dinner|lunch|breakfast|brunch)\b/i,'["amenity"~"^(restaurant|fast_food|cafe)$"]'],
+    ['coffee shops',/\b(coffee|cafes?|coffee shops?)\b/i,'["amenity"~"^(cafe)$"]'],
+    ['gas stations',/\b(gas stations?|fuel stations?)\b/i,'["amenity"="fuel"]'],
+    ['gyms',/\b(gyms?|fitness centers?)\b/i,'["leisure"="fitness_centre"]'],
+    ['pharmacies',/\b(pharmac(?:y|ies)|drugstores?)\b/i,'["amenity"="pharmacy"]'],
+    ['grocery stores',/\b(grocer(?:y|ies)|supermarkets?)\b/i,'["shop"="supermarket"]']
+  ];
+  function parse(raw) {
+    let t=clean(raw).replace(/^(?:(?:hey|hi|okay|ok)\s+)?(?:auren|aaron|oren)[,!. ]*/i,'').replace(/^(?:(?:please|hey)\s+)?(?:can|could|would|will)\s+you\s+/i,'').replace(/^please\s+/i,'').replace(/[.?!]+$/,'').trim();
+    if(!t)return null;
+    if(/^(?:send (?:me )?(?:those |the |my |its )?directions again|directions again|repeat (?:those |the )?directions|take me there again|open (?:the )?route again|send me there again)$/i.test(t))return {kind:'repeat'};
+    if(/^(?:show|open|display|bring back)\s+(?:me\s+)?(?:the\s+)?(?:nearby\s+)?(?:results|options|places|list)\s*(?:again)?$/i.test(t))return {kind:'list'};
+    let m=t.match(/^(?:(?:take|send|bring|guide|drive)\s+me\s+to|(?:navigate|head|go|drive)\s+to|(?:give|send|show|get)\s+(?:me\s+)?(?:the\s+)?(?:directions?|route)\s+(?:to|for)|directions?\s+(?:to|for))\s+(?:the\s+)?(?:number\s+)?(first|second|third|fourth|fifth|sixth|seventh|eighth|[1-8])(?:\s+one)?$/i);
+    if(m)return {kind:'select',index:({first:0,second:1,third:2,fourth:3,fifth:4,sixth:5,seventh:6,eighth:7})[m[1].toLowerCase()] ?? Number(m[1])-1};
+    m=t.match(/^(?:find|show|search for|look for|locate|what are|where are)\s+(?:me\s+)?(?:some\s+)?(?:the\s+)?(.+?)\s*(?:near(?:by| me)?|around me|close to me)?$/i);
+    const searchTerm=m?clean(m[1]):null;
+    if(searchTerm){for(const [label,rule,selector] of categories)if(rule.test(searchTerm))return {kind:'nearby',label,selector};}
+    m=t.match(/^(?:find|show|search for|look for|locate|what are|where are)\s+(?:me\s+)?(?:some\s+)?(?:the\s+)?(?:nearby\s+)?(.+)$/i);
+    if(m){let name=clean(m[1]).replace(/\s+(?:near me|nearby|around me|close to me)$/i,'');if(name.length>=3)return {kind:'name',name};}
+    // Short phrases produced by clipped iPhone dictation are accepted only if the
+    // destination is unambiguous. Do not rewrite other normal conversation.
+    m=t.match(/^(?:only\s+)?to\s+(.{3,70})$/i);
+    if(m && /(?:chip|burger|restaurant|cafe|starbucks|target|walmart)/i.test(m[1]))return {kind:'name',name:clean(m[1])};
+    m=t.match(/^(?:send|take|bring|drive|guide|lead)\s+(?:me\s+)?(?:over\s+)?to\s+(.+)$/i)
+      ||t.match(/^(?:get|give|send|show)\s+(?:me\s+)?(?:directions?|a route|the route|the directions?)\s+(?:to|for)\s+(.+)$/i)
+      ||t.match(/^(?:navigate|route|go|drive|head)\s+(?:me\s+)?to\s+(.+)$/i)
+      ||t.match(/^(?:open|pull up)\s+(?:google\s+)?maps\s+(?:to|for)\s+(.+)$/i)
+      ||t.match(/^directions?\s+(?:to|for)\s+(.+)$/i);
+    if(!m)return null;
+    let name=clean(m[1]).replace(/^(?:a|an|the)\s+/i,'').replace(/\s+(?:please|near me|around me|nearby)$/i,'');
+    if(!name||/^(?:it|that|there|me|you|my schedule|my account|the settings|home)$/i.test(name))return null;
+    for(const [label,rule,selector] of categories){if(rule.test(name)&&/\b(?:nearby|near me|closest|nearest|some|any)\b/i.test(t))return {kind:'nearby',label,selector};}
+    return name.length>=2&&name.length<110?{kind:'name',name}:null;
+  }
+  function panel(){let box=document.getElementById('aurenPlaces339Panel');if(!box){box=document.createElement('section');box.id='aurenPlaces339Panel';box.setAttribute('aria-label','AUREN places and directions');box.setAttribute('role','region');box.style.cssText='position:fixed!important;z-index:2147483000!important;left:50%!important;top:auto!important;bottom:calc(env(safe-area-inset-bottom, 0px) + 14px)!important;transform:translateX(-50%)!important;box-sizing:border-box!important;width:min(94vw,480px)!important;max-height:65dvh!important;overflow:auto!important;padding:16px!important;border:1px solid #c9aa70!important;border-radius:15px!important;background:#20242a!important;color:#f6e7cb!important;box-shadow:0 15px 65px #000a!important;font:15px/1.4 -apple-system,BlinkMacSystemFont,sans-serif!important;';document.body.appendChild(box);}else if(box.parentElement!==document.body)document.body.appendChild(box);box.replaceChildren();return box;}
+  function element(tag,text){const e=document.createElement(tag);e.textContent=text;return e;}
+  function action(box,label,fn){const b=element('button',label);b.type='button';b.style.cssText='margin:7px 7px 2px 0;padding:11px 13px;border:0;border-radius:9px;background:#dfbd7e;color:#141414;font-size:14px;font-weight:700;cursor:pointer;';b.onclick=fn;box.appendChild(b);return b;}
+  function anchor(box,label,url){const a=element('a',label);a.href=url;a.target='_blank';a.rel='noopener noreferrer';a.style.cssText='display:block;padding:13px 12px;background:#dfbd7e;color:#141414;border-radius:9px;text-align:center;text-decoration:none;font-weight:800;margin:10px 0;overflow-wrap:anywhere';box.appendChild(a);return a;}
+  function close(box){action(box,'Close',()=>box.remove());}
+  function title(box,message){const h=element('strong',message);h.style.cssText='display:block;font-size:17px;margin-bottom:9px';box.appendChild(h);}
+  function notice(message,search){const box=panel();title(box,message);if(search)anchor(box,'Search in Google Maps',mapSearch(search));close(box);}
+  function setDestination(place){lastPlace=place;const b=panel();title(b,place.name);const note=element('div','Directions are ready');note.style.opacity='.85';b.appendChild(note);anchor(b,'Open directions in Google Maps',mapDir(place.lat!=null&&place.lon!=null?`${place.lat},${place.lon}`:place.name));close(b);}
+  function showOptions(label){const box=panel();title(box,`Nearby ${label} · ${options.length} places`);const desc=element('div','Results from OpenStreetMap. Distances are approximate straight-line distances.');desc.style.cssText='font-size:12px;opacity:.85;margin-bottom:8px';box.appendChild(desc);options.forEach((p,i)=>{const r=document.createElement('div');r.style.cssText='padding:10px 0;border-top:1px solid #756647';r.appendChild(element('strong',`${i+1}. ${p.name}${Number.isFinite(p.km)?` · ${p.km.toFixed(1)} km`:''}`));if(p.address){const sub=element('div',p.address);sub.style.fontSize='12px';r.appendChild(sub);}action(r,'Get directions',()=>setDestination(p));box.appendChild(r);});anchor(box,'More places in Google Maps',mapSearch(`${label} near me`));close(box);}
+  const km=(a,b,c,d)=>{const R=Math.PI/180,x=(c-a)*R,y=(d-b)*R;return Math.sqrt((x*6371)**2+(y*6371*Math.cos((a+c)*R/2))**2);};
+  function gps(){try{if(typeof locationApproved!=='undefined'&&!locationApproved)return null;const p=typeof aurenLocation!=='undefined'?aurenLocation:null;const latitude=Number(p?.latitude??p?.coords?.latitude),longitude=Number(p?.longitude??p?.coords?.longitude);return Number.isFinite(latitude)&&Number.isFinite(longitude)?{latitude,longitude}:null;}catch{return null;}}
+  async function fetchOSM(selector,point,limit=90){if(!point)return null;const {latitude:lat,longitude:lon}=point;
+    const query=`[out:json][timeout:15];(node(around:6500,${lat},${lon})${selector};way(around:6500,${lat},${lon})${selector};);out center ${limit};`;
+    const endpoints=['https://overpass.kumi.systems/api/interpreter','https://overpass.private.coffee/api/interpreter','https://overpass-api.de/api/interpreter'];
+    for(const ep of endpoints){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),7000);try{const r=await fetch(ep,{method:'POST',body:new URLSearchParams({data:query}),signal:controller.signal,headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'}});if(!r.ok)continue;const json=await r.json();if(Array.isArray(json.elements))return json.elements;}catch(e){console.info('AUREN nearby provider unavailable:',e?.message||e);}finally{clearTimeout(timer);}}
+    return null;
+  }
+  function convert(raw,point){const used=new Set();return (raw||[]).map(x=>{const lat=x.lat??x.center?.lat,lon=x.lon??x.center?.lon,t=x.tags||{},name=clean(t.name||t.brand||'');return {name,lat,lon,address:[t['addr:housenumber'],t['addr:street']].filter(Boolean).join(' '),km:km(point.latitude,point.longitude,lat,lon)};}).filter(x=>x.name&&Number.isFinite(x.lat)&&Number.isFinite(x.lon)).sort((a,b)=>a.km-b.km).filter(x=>{const k=norm(x.name)+':'+x.lat.toFixed(3)+':'+x.lon.toFixed(3);if(used.has(k))return false;used.add(k);return true;});}
+  function matchName(name,candidates){const wanted=norm(aliases.get(norm(name))||name);if(!wanted)return null;const scored=candidates.map(c=>{const n=norm(c.name),err=lev(wanted,n);const part=(n.includes(wanted)||wanted.includes(n))?0.1:1;return {place:c,score:err/Math.max(wanted.length,n.length,1)*part};}).sort((a,b)=>a.score-b.score||a.place.km-b.place.km);const win=scored[0];return win && win.score<=.32?win.place:null;}
+  async function searchCategory(intent,request){const p=gps();options=[];
+    if(!p){notice('Nearby listings need Location enabled in AUREN Settings.',`${intent.label} near me`);return;}
+    notice(`Searching for nearby ${intent.label}…`,`${intent.label} near me`);
+    const raw=await fetchOSM(intent.selector,p);if(request!==activeRequest)return;
+    options=convert(raw,p).slice(0,8);
+    if(options.length)showOptions(intent.label);
+    else notice(`No verified nearby ${intent.label} listings were returned.`,`${intent.label} near me`);
+  }
+  async function searchName(name,request){const known=aliases.get(norm(name));if(known)name=known;
+    const p=gps();notice(`Finding ${name}…`,name);
+    if(!p){setDestination({name});return;}
+    // First find the exact name; if transcription mangled it, search all nearby
+    // food businesses to compare phonetic-like spellings and edit distance.
+    let places=[];
+    const token=norm(name).slice(0,20);
+    if(token.length>=3){const raw=await fetchOSM(`["name"~"${token}",i]`,p,50);if(request!==activeRequest)return;places=convert(raw,p);}
+    let matched=matchName(name,places);
+    if(!matched){const broad=await fetchOSM('["amenity"~"^(restaurant|fast_food|cafe)$"]',p,150);if(request!==activeRequest)return;places=convert(broad,p);matched=matchName(name,places);}
+    if(request!==activeRequest)return;
+    if(matched){setDestination(matched);return;}
+    // Never guess a coordinate when name matching is uncertain.
+    setDestination({name});
+  }
+  async function handle(input){const intent=parse(input);if(!intent)return false;const request=++activeRequest;
+    try{if(typeof addMessage==='function')await addMessage('user',String(input));}catch{}
+    if(intent.kind==='repeat'){if(lastPlace)setDestination(lastPlace);else notice('Choose a destination first.');return true;}
+    if(intent.kind==='list'){if(options.length)showOptions('places');else notice('Ask me to find nearby restaurants or another category first.');return true;}
+    if(intent.kind==='select'){if(options[intent.index])setDestination(options[intent.index]);else notice(`I have ${options.length} nearby options. Try another number.`);return true;}
+    if(intent.kind==='nearby'){await searchCategory(intent,request);return true;}
+    if(intent.kind==='name'){await searchName(intent.name,request);return true;}
+    return false;
+  }
+  return {handle,parse};
+})();
+
