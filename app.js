@@ -1,3 +1,4 @@
+// AUREN v3.40 — miles, full available addresses, cross-device places.
 // AUREN v3.39 — cross-device nearby results and fuzzy destination names.
 // AUREN v3.38 — stable iPhone speech handoff + routing.
 // AUREN v3.35 — complete app.js with integrated nearby choices and directions.
@@ -4787,10 +4788,10 @@ const aurenUniversalPlaces334 = createUniversalPlacesBrain({
 });
 
 async function send(text) {
-  // v3.39: handle place commands FIRST, before older chat/navigation routers.
-  if (aurenPlaces339.parse(text)) {
-    try { if (await aurenPlaces339.handle(text)) return; }
-    catch (error) { console.warn('AUREN v3.39 route error',error); }
+  // v3.40: place commands run before the older navigation/chat handlers.
+  if (aurenPlaces340.parse(text)) {
+    try { if (await aurenPlaces340.handle(text)) return; }
+    catch (error) { console.warn('AUREN v3.40 route error',error); }
   }
   // v3.34: user-initiated navigation takes priority over older local/AI routes.
   if (aurenUniversalPlaces334.parse(text)) {
@@ -6131,9 +6132,9 @@ aurenPlaces = (() => {
 })();
 
 
-// AUREN v3.39 — Places UI & speech-friendly name matching, Mac + iPhone.
+// AUREN v3.40 — Places UI & speech-friendly name matching, Mac + iPhone.
 // Embedded by the full app.js builder. Requires no edits to voice modules.
-const aurenPlaces339 = (() => {
+const aurenPlaces340 = (() => {
   let options = [], lastPlace = null, activeRequest = 0;
   const norm = s => String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');
   const clean = s => String(s || '').replace(/[’]/g,"'").replace(/\s+/g,' ').trim();
@@ -6176,15 +6177,15 @@ const aurenPlaces339 = (() => {
     for(const [label,rule,selector] of categories){if(rule.test(name)&&/\b(?:nearby|near me|closest|nearest|some|any)\b/i.test(t))return {kind:'nearby',label,selector};}
     return name.length>=2&&name.length<110?{kind:'name',name}:null;
   }
-  function panel(){let box=document.getElementById('aurenPlaces339Panel');if(!box){box=document.createElement('section');box.id='aurenPlaces339Panel';box.setAttribute('aria-label','AUREN places and directions');box.setAttribute('role','region');box.style.cssText='position:fixed!important;z-index:2147483000!important;left:50%!important;top:auto!important;bottom:calc(env(safe-area-inset-bottom, 0px) + 14px)!important;transform:translateX(-50%)!important;box-sizing:border-box!important;width:min(94vw,480px)!important;max-height:65dvh!important;overflow:auto!important;padding:16px!important;border:1px solid #c9aa70!important;border-radius:15px!important;background:#20242a!important;color:#f6e7cb!important;box-shadow:0 15px 65px #000a!important;font:15px/1.4 -apple-system,BlinkMacSystemFont,sans-serif!important;';document.body.appendChild(box);}else if(box.parentElement!==document.body)document.body.appendChild(box);box.replaceChildren();return box;}
+  function panel(){let box=document.getElementById('aurenPlaces340Panel');if(!box){box=document.createElement('section');box.id='aurenPlaces340Panel';box.setAttribute('aria-label','AUREN places and directions');box.setAttribute('role','region');box.style.cssText='position:fixed!important;z-index:2147483000!important;left:50%!important;top:auto!important;bottom:calc(env(safe-area-inset-bottom, 0px) + 14px)!important;transform:translateX(-50%)!important;box-sizing:border-box!important;width:min(94vw,480px)!important;max-height:65dvh!important;overflow:auto!important;padding:16px!important;border:1px solid #c9aa70!important;border-radius:15px!important;background:#20242a!important;color:#f6e7cb!important;box-shadow:0 15px 65px #000a!important;font:15px/1.4 -apple-system,BlinkMacSystemFont,sans-serif!important;';document.body.appendChild(box);}else if(box.parentElement!==document.body)document.body.appendChild(box);box.replaceChildren();return box;}
   function element(tag,text){const e=document.createElement(tag);e.textContent=text;return e;}
   function action(box,label,fn){const b=element('button',label);b.type='button';b.style.cssText='margin:7px 7px 2px 0;padding:11px 13px;border:0;border-radius:9px;background:#dfbd7e;color:#141414;font-size:14px;font-weight:700;cursor:pointer;';b.onclick=fn;box.appendChild(b);return b;}
   function anchor(box,label,url){const a=element('a',label);a.href=url;a.target='_blank';a.rel='noopener noreferrer';a.style.cssText='display:block;padding:13px 12px;background:#dfbd7e;color:#141414;border-radius:9px;text-align:center;text-decoration:none;font-weight:800;margin:10px 0;overflow-wrap:anywhere';box.appendChild(a);return a;}
   function close(box){action(box,'Close',()=>box.remove());}
   function title(box,message){const h=element('strong',message);h.style.cssText='display:block;font-size:17px;margin-bottom:9px';box.appendChild(h);}
   function notice(message,search){const box=panel();title(box,message);if(search)anchor(box,'Search in Google Maps',mapSearch(search));close(box);}
-  function setDestination(place){lastPlace=place;const b=panel();title(b,place.name);const note=element('div','Directions are ready');note.style.opacity='.85';b.appendChild(note);anchor(b,'Open directions in Google Maps',mapDir(place.lat!=null&&place.lon!=null?`${place.lat},${place.lon}`:place.name));close(b);}
-  function showOptions(label){const box=panel();title(box,`Nearby ${label} · ${options.length} places`);const desc=element('div','Results from OpenStreetMap. Distances are approximate straight-line distances.');desc.style.cssText='font-size:12px;opacity:.85;margin-bottom:8px';box.appendChild(desc);options.forEach((p,i)=>{const r=document.createElement('div');r.style.cssText='padding:10px 0;border-top:1px solid #756647';r.appendChild(element('strong',`${i+1}. ${p.name}${Number.isFinite(p.km)?` · ${p.km.toFixed(1)} km`:''}`));if(p.address){const sub=element('div',p.address);sub.style.fontSize='12px';r.appendChild(sub);}action(r,'Get directions',()=>setDestination(p));box.appendChild(r);});anchor(box,'More places in Google Maps',mapSearch(`${label} near me`));close(box);}
+  function setDestination(place){lastPlace=place;const b=panel();title(b,place.name);const note=element('div','Directions are ready');note.style.opacity='.85';b.appendChild(note);if(Number.isFinite(place.km)){const dist=element('div',`${(place.km*0.621371).toFixed(1)} mi away · approximate straight-line distance`);dist.style.cssText='margin-top:7px;font-size:13px;opacity:.9';b.appendChild(dist);}if(place.address){const address=element('div',place.address);address.style.cssText='margin-top:5px;font-size:13px;opacity:.9';b.appendChild(address);}anchor(b,'Open directions in Google Maps',mapDir(place.lat!=null&&place.lon!=null?`${place.lat},${place.lon}`:place.name));close(b);}
+  function showOptions(label){const box=panel();title(box,`Nearby ${label} · ${options.length} places`);const desc=element('div','Distances are approximate straight-line miles, not driving miles. Addresses appear when the place database provides them.');desc.style.cssText='font-size:12px;opacity:.85;margin-bottom:8px';box.appendChild(desc);options.forEach((p,i)=>{const r=document.createElement('div');r.style.cssText='padding:10px 0;border-top:1px solid #756647';r.appendChild(element('strong',`${i+1}. ${p.name}`));const dist=element('div',Number.isFinite(p.km)?`${(p.km*0.621371).toFixed(1)} mi away · straight-line estimate`:'Distance unavailable');dist.style.cssText='font-size:13px;color:#e8c68e;margin-top:4px';r.appendChild(dist);const sub=element('div',p.address||'Street address unavailable — tap directions to view on Maps');sub.style.cssText='font-size:13px;opacity:.85;overflow-wrap:anywhere;margin:4px 0';r.appendChild(sub);action(r,'Get directions',()=>setDestination(p));box.appendChild(r);});anchor(box,'More places in Google Maps',mapSearch(`${label} near me`));close(box);}
   const km=(a,b,c,d)=>{const R=Math.PI/180,x=(c-a)*R,y=(d-b)*R;return Math.sqrt((x*6371)**2+(y*6371*Math.cos((a+c)*R/2))**2);};
   function gps(){try{if(typeof locationApproved!=='undefined'&&!locationApproved)return null;const p=typeof aurenLocation!=='undefined'?aurenLocation:null;const latitude=Number(p?.latitude??p?.coords?.latitude),longitude=Number(p?.longitude??p?.coords?.longitude);return Number.isFinite(latitude)&&Number.isFinite(longitude)?{latitude,longitude}:null;}catch{return null;}}
   async function fetchOSM(selector,point,limit=90){if(!point)return null;const {latitude:lat,longitude:lon}=point;
@@ -6193,7 +6194,7 @@ const aurenPlaces339 = (() => {
     for(const ep of endpoints){const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),7000);try{const r=await fetch(ep,{method:'POST',body:new URLSearchParams({data:query}),signal:controller.signal,headers:{'Content-Type':'application/x-www-form-urlencoded;charset=UTF-8'}});if(!r.ok)continue;const json=await r.json();if(Array.isArray(json.elements))return json.elements;}catch(e){console.info('AUREN nearby provider unavailable:',e?.message||e);}finally{clearTimeout(timer);}}
     return null;
   }
-  function convert(raw,point){const used=new Set();return (raw||[]).map(x=>{const lat=x.lat??x.center?.lat,lon=x.lon??x.center?.lon,t=x.tags||{},name=clean(t.name||t.brand||'');return {name,lat,lon,address:[t['addr:housenumber'],t['addr:street']].filter(Boolean).join(' '),km:km(point.latitude,point.longitude,lat,lon)};}).filter(x=>x.name&&Number.isFinite(x.lat)&&Number.isFinite(x.lon)).sort((a,b)=>a.km-b.km).filter(x=>{const k=norm(x.name)+':'+x.lat.toFixed(3)+':'+x.lon.toFixed(3);if(used.has(k))return false;used.add(k);return true;});}
+  function convert(raw,point){const used=new Set();return (raw||[]).map(x=>{const lat=x.lat??x.center?.lat,lon=x.lon??x.center?.lon,t=x.tags||{},name=clean(t.name||t.brand||'');return {name,lat,lon,address:([ [t['addr:housenumber'],t['addr:street']].filter(Boolean).join(' '),t['addr:city']||t['addr:suburb']||'',t['addr:state']||'',t['addr:postcode']||'' ].filter(Boolean).join(', ').replace(/, ([0-9]{5}(?:-[0-9]{4})?)$/, ' $1')),km:km(point.latitude,point.longitude,lat,lon)};}).filter(x=>x.name&&Number.isFinite(x.lat)&&Number.isFinite(x.lon)).sort((a,b)=>a.km-b.km).filter(x=>{const k=norm(x.name)+':'+x.lat.toFixed(3)+':'+x.lon.toFixed(3);if(used.has(k))return false;used.add(k);return true;});}
   function matchName(name,candidates){const wanted=norm(aliases.get(norm(name))||name);if(!wanted)return null;const scored=candidates.map(c=>{const n=norm(c.name),err=lev(wanted,n);const part=(n.includes(wanted)||wanted.includes(n))?0.1:1;return {place:c,score:err/Math.max(wanted.length,n.length,1)*part};}).sort((a,b)=>a.score-b.score||a.place.km-b.place.km);const win=scored[0];return win && win.score<=.32?win.place:null;}
   async function searchCategory(intent,request){const p=gps();options=[];
     if(!p){notice('Nearby listings need Location enabled in AUREN Settings.',`${intent.label} near me`);return;}
