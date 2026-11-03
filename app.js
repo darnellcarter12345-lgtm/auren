@@ -1,3 +1,4 @@
+// AUREN v3.38 — stable iPhone speech handoff + routing.
 // AUREN v3.35 — complete app.js with integrated nearby choices and directions.
 // AUREN v3.21 — account-specific local data and prior voice fixes preserved.
 // AUREN v3.19 — stable one-tap iPhone, silence-finish microphone experience.
@@ -113,7 +114,7 @@ import { Butler, isSessionNote } from './butler.js';
 import { buildBackup, encryptBackup, decryptBackup, validateBackup, applyPlan, describeReport, LIMITS } from './backup.js';
 import { loadSettings, saveSettings } from './settings.js';
 import { createVoice } from './voice.js?v=3.21';
-import { createIPhoneRecorder } from './iphone-voice.js?v=3.21';
+import { createIPhoneRecorder } from './iphone-voice.js?v=3.38';
 import { getAIEndpoint, setAIEndpoint, askAI } from './ai.js';
 import { getWeatherBriefing } from './weather.js';
 
@@ -373,6 +374,28 @@ const voice = createVoice({
     if (!aurenIOS) queueMicrotask(() => syncVoiceUI());
   }
 });
+// AUREN v3.38 — iPhone voice routing.
+// A single, synchronous stop action prevents doubling iOS speech volume when
+// the user interrupts a spoken answer to ask a new question.
+window.aurenStopForIPhoneTurn = () => {
+  try { if (voice.speaking) voice.stopSpeaking(); } catch {}
+  try { window.speechSynthesis?.cancel(); } catch {}
+};
+// Correct obvious speech-recognition truncation ONLY in an iPhone voice turn.
+// Do not alter typed text, names in saved records, or uncertain conversation.
+function aurenRepairIPhoneNavigationTranscript(raw) {
+  const text=String(raw||'').trim();
+  if(!text) return text;
+  let t=text.replace(/^(?:(?:hey|hi)\s+)?(?:auren|aaron|oren)[,!. ]*/i,'').trim();
+  // Safari sometimes drops the first verb: "only to Chipotle" / "to Chipotle".
+  const missing=t.match(/^(?:(?:only|send|direct|route|navigate|drive|go|head|bring)\s+)?to\s+(.{2,100})$/i);
+  if (missing && !/^(?:it|that|this|there|me|you|a|the)\b/i.test(missing[1]))
+    return 'take me to '+missing[1].trim();
+  // "send me to" is ordinary user wording for driving directions.
+  t=t.replace(/^(?:please\s+)?(?:can|could|would|will)\s+you\s+/i,'');
+  if (/^(?:send|take|bring|drive|guide)\s+me\s+to\s+.{2,100}$/i.test(t))return t.replace(/^send\s+me\s+to\s+/i,'take me to ');
+  return text;
+}
 // iPhone uses direct audio capture, not Safari SpeechRecognition.
 const aurenIOS = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 const iphoneRecorder = aurenIOS ? createIPhoneRecorder({
@@ -389,6 +412,7 @@ const iphoneRecorder = aurenIOS ? createIPhoneRecorder({
     else if(!voice.speaking) $('aurenHeadline').textContent = 'At your service.';
   },
   onText: async transcript => {
+    transcript = aurenRepairIPhoneNavigationTranscript(transcript);
     $('chatInput').value = transcript;
     showCaption(transcript, 'YOU');
     // Honor spoken-replies preference; recording does not force speaker volume on.
