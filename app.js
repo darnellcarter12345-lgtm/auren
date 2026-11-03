@@ -1,3 +1,4 @@
+// AUREN v3.45 — iPhone Hear AUREN immediately and context-safe topic switching.
 // AUREN v3.43 — Original-button iPhone speech repair.
 // AUREN v3.41 — Mac nearby results and Maps-return listening recovery.
 // AUREN v3.40 — miles, full available addresses, cross-device places.
@@ -273,12 +274,12 @@ const aurenSpeechFallback=document.createElement('button');
 aurenSpeechFallback.type='button';aurenSpeechFallback.textContent='🔊 Tap to hear AUREN';
 aurenSpeechFallback.style.cssText='display:none;margin:10px auto;padding:13px 20px;border-radius:12px;border:1px solid #c9a661;background:#342d22;color:#f7dfb2;font-size:16px;font-weight:700;cursor:pointer';
 aurenSpeechFallback.addEventListener('click',()=>{
- if(!aurenSpeechRetryText)return;
+ const aurenV345Replay = String(aurenSpeechRetryText||'At your service.');
  if(!capabilities.speak){showStatus('Speech synthesis is not available in this browser.','error');return;}
  voice.setEnabled(true);$('speakReplies').checked=true;
  try{localStorage.setItem(AUREN_SPEECH_PREF,'true');}catch{}
- voice.primeAudio();aurenSpeechFallback.style.display='none';
- voice.speak(aurenSpeechRetryText,{manual:true});
+ voice.primeAudio();if(!aurenIOS)aurenSpeechFallback.style.display='none';
+ voice.speak(aurenV345Replay,{manual:true});
 });
 
 const chicagoClock=document.createElement('div');chicagoClock.style.cssText='font-size:11px;opacity:.75;margin-top:8px;';
@@ -369,9 +370,9 @@ const voice = createVoice({
     if(aurenIOS && /AUREN speaking/i.test(String(msg)))aurenV343SawSpeech=true;
     if(aurenIOS){
       if(/spoken reply unavailable|has not started spoken audio|speech output unavailable|speech did not start|speech playback timed out/i.test(msg)){
-        aurenSpeechFallback.style.display = aurenSpeechRetryText ? 'block' : 'none';
+        aurenSpeechFallback.style.display = aurenIOS ? 'block' : (aurenSpeechRetryText ? 'block' : 'none');
       } else if(/AUREN speaking|Tap the orb to speak/i.test(msg)){
-        if(/AUREN speaking/i.test(msg))aurenSpeechFallback.style.display='none';
+        if(/AUREN speaking/i.test(msg) && !aurenIOS)aurenSpeechFallback.style.display='none';
       }
     }
     $('voiceStatus').textContent = msg;
@@ -579,6 +580,9 @@ let lastOrbTap = 0;
 const orbButton = $('orbControl');
 orbButton.insertAdjacentElement('afterend',speechPanel);
 speechPanel.insertAdjacentElement('afterend',aurenSpeechFallback);
+// v3.45 — The existing Hear AUREN control is available immediately on iPhone.
+if(aurenIOS){aurenSpeechFallback.style.display='block';aurenSpeechFallback.textContent='🔊 Hear AUREN';}
+
 function activateOrb(event) {
   if (aurenIOS) {
     // The orb invokes the identical native button path as “Speak to AUREN”.
@@ -4839,7 +4843,25 @@ const aurenUniversalPlaces334 = createUniversalPlacesBrain({
   }
 });
 
+// AUREN v3.45 — Hear immediately + new topic protection.
+// Only explicit place/navigation commands may inherit the previous Maps state.
+// An unrelated question resets incomplete location prompts; other memories remain.
+function aurenV345ExplicitPlaces(raw){
+  const q=String(raw||'').trim().replace(/^(?:(?:hey|hi|okay)\s+)?(?:auren|aaron|oren)[,.! ]+/i,'').trim();
+  return /^(?:(?:please|can you|could you|would you)\s+)?(?:find|show|search|look for|locate|recommend|suggest|navigate|directions|take me|send me|bring me|drive me|guide me|go to|head to|open maps|pull up maps|where is|where are|how far|how do i get to|how can i get to|get directions|give me directions|show me directions|send directions|route to|closest|nearest|repeat directions|directions again|open directions|show results|more places|the first|the second|the third|number [1-8])\b/i.test(q) || /\b(?:near me|nearby|around me|google maps)\b/i.test(q);
+}
+function aurenV345NewConversationTopic(raw){
+  const q=String(raw||'').trim().replace(/^(?:(?:hey|hi|okay)\s+)?(?:auren|aaron|oren)[,.! ]+/i,'').trim();
+  if(aurenV345ExplicitPlaces(q)) return false;
+  return /\b(?:what are you doing|what do you do|how are you|what's up|how's it going|tell me|explain|why|who|what|when|how|can we talk|let's talk|i want to talk|i have a question|my schedule|my day|my calendar|weather|remind me|appointment|meeting|project|memory)\b/i.test(q);
+}
 async function send(text) {
+  // v3.45: A new question is not a follow-up to the last Maps destination.
+  if(aurenV345NewConversationTopic(text)) {
+    try{aurenPlaces.clear();}catch(e){console.debug('Maps context cleanup skipped',e);}
+    try{conversationAnchor=null;}catch{}
+  }
+
   // v3.41 — route places requests before the ordinary AI handler.
   if (aurenPlaces341.parse(text)) {
     try { if (await aurenPlaces341.handle(text)) return; }
