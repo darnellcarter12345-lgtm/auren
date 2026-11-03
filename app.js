@@ -1,3 +1,4 @@
+// AUREN v3.43 — Original-button iPhone speech repair.
 // AUREN v3.41 — Mac nearby results and Maps-return listening recovery.
 // AUREN v3.40 — miles, full available addresses, cross-device places.
 // AUREN v3.39 — cross-device nearby results and fuzzy destination names.
@@ -365,6 +366,7 @@ const voice = createVoice({
     }
   },
   onStatus: msg => {
+    if(aurenIOS && /AUREN speaking/i.test(String(msg)))aurenV343SawSpeech=true;
     if(aurenIOS){
       if(/spoken reply unavailable|has not started spoken audio|speech output unavailable|speech did not start|speech playback timed out/i.test(msg)){
         aurenSpeechFallback.style.display = aurenSpeechRetryText ? 'block' : 'none';
@@ -423,8 +425,57 @@ const iphoneRecorder = aurenIOS ? createIPhoneRecorder({
     await send(transcript);
   }
 }) : null;
+// AUREN v3.43 — Original-button iPhone speech repair (Mac untouched).
+// Do not create new buttons, change voices, or take over desktop speech.
+let aurenV343SpeechSerial=0;
+let aurenV343RecoveryTimer=null;
+let aurenV343LastVoiceTurn=0;
+let aurenV343SawSpeech=false;
+function aurenV343StopRecovery(){
+  ++aurenV343SpeechSerial;
+  if(aurenV343RecoveryTimer!==null){clearTimeout(aurenV343RecoveryTimer);aurenV343RecoveryTimer=null;}
+}
+function aurenV343PrepareTap(){
+  if(!aurenIOS)return;
+  aurenV343StopRecovery(); // A real tap must never replay the previous reply.
+  // Unlock/resume the same Safari speech engine through the original user gesture.
+  // Do not queue an utterance while the mic is active.
+  if($('speakReplies')?.checked){
+    try{voice.setEnabled(true);voice.primeAudio();}catch{}
+    try{window.speechSynthesis?.resume();}catch{}
+  }
+}
+function aurenV343Speak(text){
+  if(!aurenIOS){voice.speak(text);return;}
+  aurenV343StopRecovery();
+  if(!$('speakReplies')?.checked)return; // Respect an intentionally disabled setting.
+  const content=String(text||'').trim();
+  if(!content)return;
+  try{voice.setEnabled(true);}catch{}
+  const myTurn=aurenV343SpeechSerial;
+  aurenV343SawSpeech=false;
+  aurenV343LastVoiceTurn=Date.now();
+  try{window.speechSynthesis?.resume();}catch{}
+  voice.speak(content);
+  // Safari occasionally loses a reply after finishing microphone capture.
+  // Retry the SAME voice engine only when nothing began playing. No extra UI.
+  aurenV343RecoveryTimer=setTimeout(()=>{
+    aurenV343RecoveryTimer=null;
+    if(myTurn!==aurenV343SpeechSerial||document.hidden||!$('speakReplies')?.checked)return;
+    const synth=window.speechSynthesis;
+    if(!synth || synth.speaking || aurenV343SawSpeech)return;
+    try{
+      voice.stopSpeaking();
+      synth.cancel(); synth.resume();
+      voice.setEnabled(true);
+      voice.speak(content,{manual:true}); // Bounded single recovery, no loop.
+    }catch(e){console.warn('AUREN iPhone speech retry failed',e);}
+  },5500);
+}
 let aurenLastIPhoneTap=0;
 async function toggleIPhoneRecorder() {
+  // Keep the existing button. Stop speech first; prepare speech playback for the next reply.
+  aurenV343PrepareTap();
   if (!iphoneRecorder) return;
   if (iphoneRecorder.busy) {
     $('voiceStatus').textContent = 'Finishing your reply. Try the orb again once AUREN is ready.';
@@ -2889,7 +2940,7 @@ async function addMessage(role, text, opts = {}) {
   if (role === 'auren' && !opts.err && !opts.silent) aurenSpeechRetryText = String(rec.text||'');
   if(role==='auren' && !opts.err && !opts.replay && !opts.silent) aurenCaptureAssistantQuestion(rec.text);
   drawMessage(rec, opts);
-  if (role === 'auren' && !opts.err && !opts.silent) voice.speak(rec.text);
+  if (role === 'auren' && !opts.err && !opts.silent) aurenV343Speak(rec.text);
   await persistMessage(rec, opts);
 }
 
@@ -6261,4 +6312,3 @@ const aurenPlaces341 = (() => {
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)onReturnFromMaps();});
   return {handle,parse,showOptions};
 })();
-
