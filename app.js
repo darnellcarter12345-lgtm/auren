@@ -1,3 +1,4 @@
+// AUREN v3.46 — persistent Hear AUREN toggle; no old-message replay.
 // AUREN v3.45 — iPhone Hear AUREN immediately and context-safe topic switching.
 // AUREN v3.43 — Original-button iPhone speech repair.
 // AUREN v3.41 — Mac nearby results and Maps-return listening recovery.
@@ -273,13 +274,29 @@ let aurenSpeechRetryText='';
 const aurenSpeechFallback=document.createElement('button');
 aurenSpeechFallback.type='button';aurenSpeechFallback.textContent='🔊 Tap to hear AUREN';
 aurenSpeechFallback.style.cssText='display:none;margin:10px auto;padding:13px 20px;border-radius:12px;border:1px solid #c9a661;background:#342d22;color:#f7dfb2;font-size:16px;font-weight:700;cursor:pointer';
+// AUREN v3.46 — persistent Hear AUREN toggle; NEVER replays earlier replies.
+function aurenV346PaintHearButton(){
+  if(!aurenIOS)return;
+  const enabled=Boolean($('speakReplies')?.checked);
+  aurenSpeechFallback.style.display='block';
+  aurenSpeechFallback.textContent=enabled?'🔊 Hear AUREN: ON':'🔇 Hear AUREN: OFF';
+  aurenSpeechFallback.setAttribute('aria-pressed',String(enabled));
+  aurenSpeechFallback.setAttribute('aria-label',enabled?'Turn off AUREN spoken replies':'Turn on AUREN spoken replies');
+}
 aurenSpeechFallback.addEventListener('click',()=>{
- const aurenV345Replay = String(aurenSpeechRetryText||'At your service.');
- if(!capabilities.speak){showStatus('Speech synthesis is not available in this browser.','error');return;}
- voice.setEnabled(true);$('speakReplies').checked=true;
- try{localStorage.setItem(AUREN_SPEECH_PREF,'true');}catch{}
- voice.primeAudio();if(!aurenIOS)aurenSpeechFallback.style.display='none';
- voice.speak(aurenV345Replay,{manual:true});
+  if(!aurenIOS || !capabilities.speak)return;
+  const next=!$('speakReplies').checked;
+  $('speakReplies').checked=next;
+  voice.setEnabled(next);
+  if(next){
+    // Safari needs a real user gesture to prime playback. Do not synthesize any reply.
+    try{voice.primeAudio();}catch(e){console.debug('Audio unlock unavailable',e);}
+  }else{
+    try{voice.stopSpeaking();}catch{}
+    try{window.speechSynthesis?.cancel();}catch{}
+  }
+  try{localStorage.setItem(AUREN_SPEECH_PREF,String(next));}catch{}
+  aurenV346PaintHearButton();
 });
 
 const chicagoClock=document.createElement('div');chicagoClock.style.cssText='font-size:11px;opacity:.75;margin-top:8px;';
@@ -370,9 +387,9 @@ const voice = createVoice({
     if(aurenIOS && /AUREN speaking/i.test(String(msg)))aurenV343SawSpeech=true;
     if(aurenIOS){
       if(/spoken reply unavailable|has not started spoken audio|speech output unavailable|speech did not start|speech playback timed out/i.test(msg)){
-        aurenSpeechFallback.style.display = aurenIOS ? 'block' : (aurenSpeechRetryText ? 'block' : 'none');
+        if(aurenIOS) aurenV346PaintHearButton(); else aurenSpeechFallback.style.display = aurenSpeechRetryText ? 'block' : 'none';
       } else if(/AUREN speaking|Tap the orb to speak/i.test(msg)){
-        if(/AUREN speaking/i.test(msg) && !aurenIOS)aurenSpeechFallback.style.display='none';
+        if(!aurenIOS && /AUREN speaking/i.test(msg))aurenSpeechFallback.style.display='none';
       }
     }
     $('voiceStatus').textContent = msg;
@@ -531,10 +548,13 @@ let speechWanted=true;
 try { const v=localStorage.getItem(AUREN_SPEECH_PREF); if(v!==null) speechWanted=v==='true'; } catch {}
 $('speakReplies').checked=capabilities.speak && speechWanted;
 voice.setEnabled($('speakReplies').checked);
+if(aurenIOS)aurenV346PaintHearButton();
 $('speakReplies').onchange=()=>{
   const on=$('speakReplies').checked;
   voice.setEnabled(on);
   if(on) voice.primeAudio();
+  else {try{voice.stopSpeaking();}catch{}}
+  if(aurenIOS)aurenV346PaintHearButton();
   try {localStorage.setItem(AUREN_SPEECH_PREF,String(on));} catch {}
   showStatus(on?'Spoken replies enabled.':'Spoken replies disabled.','info');
 };
@@ -580,6 +600,8 @@ let lastOrbTap = 0;
 const orbButton = $('orbControl');
 orbButton.insertAdjacentElement('afterend',speechPanel);
 speechPanel.insertAdjacentElement('afterend',aurenSpeechFallback);
+// AUREN v3.46 initialize Hear toggle
+if(aurenIOS)queueMicrotask(()=>aurenV346PaintHearButton());
 // v3.45 — The existing Hear AUREN control is available immediately on iPhone.
 if(aurenIOS){aurenSpeechFallback.style.display='block';aurenSpeechFallback.textContent='🔊 Hear AUREN';}
 
