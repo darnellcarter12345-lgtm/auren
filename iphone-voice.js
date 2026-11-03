@@ -1,10 +1,45 @@
-// AUREN v3.22 — iPhone-only tap-to-talk reliability update.
+// AUREN v3.23 — iPhone-only continuous foreground conversation.
 // Replace iphone-voice.js only. app.js / desktop voice remain unchanged.
 export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
   let stream = null, recorder = null, context = null, source = null, analyser = null;
   let chunks = [], monitor = null, deadline = null, stopGuard = null;
   let phase = 'idle', serial = 0, began = 0, speechStarted = 0, lastVoice = 0;
   let baseline = 0.006, positiveFrames = 0;
+  let session = false, sleepTimer = null, nextTurnTimer = null, stopRequested = false;
+  let deliverySucceeded = false;
+  const SESSION_IDLE_MS = 24000;
+  const isVisible = () => !document.hidden;
+  const sleep = () => { session = false; clearTimeout(sleepTimer); clearTimeout(nextTurnTimer); updateButton('idle'); };
+  function armSleep() {
+    clearTimeout(sleepTimer);
+    sleepTimer = setTimeout(() => {
+      // Don't sleep in the middle of a spoken reply.
+      if (phase !== 'idle' || window.speechSynthesis?.speaking || window.speechSynthesis?.pending) { armSleep(); return; }
+      sleep('Conversation asleep. Tap to start again.');
+    }, SESSION_IDLE_MS);
+  }
+  function queueNextTurn() {
+    clearTimeout(nextTurnTimer); clearTimeout(sleepTimer);
+    if (!session || !isVisible()) return;
+    const started = Date.now(); let heardSpeech = false, settledAt = 0;
+    // Safari releases its audio output asynchronously. Never record over AUREN's voice.
+    const step = () => {
+      if (!session || !isVisible() || phase !== 'idle') return;
+      const speaking = !!(window.speechSynthesis?.speaking || window.speechSynthesis?.pending ||
+        /AUREN speaking/i.test(document.getElementById('voiceStatus')?.textContent || ''));
+      if (speaking) { heardSpeech = true; settledAt = 0; }
+      else if (heardSpeech && !settledAt) settledAt = Date.now();
+      // Allow speech to begin; this also handles silent replies (speech disabled).
+      if ((heardSpeech && settledAt && Date.now() - settledAt > 650) ||
+          (!heardSpeech && Date.now() - started > 3500)) {
+        status.textContent = 'Conversation open — listening for your next question…';
+        void start(true); return;
+      }
+      if (Date.now() - started > 75000) { armSleep(); return; }
+      nextTurnTimer = setTimeout(step, 220);
+    };
+    nextTurnTimer = setTimeout(step, 220);
+  }
   const MAX_MS = 45000, MAX_BYTES = 2 * 1024 * 1024;
   const report = (message, state = 'idle') => {
     onStatus?.(message, state);
@@ -28,22 +63,36 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
   if (hintTarget?.parentElement) hintTarget.insertAdjacentElement('afterend', button);
   else document.getElementById('orbControl')?.insertAdjacentElement('afterend', button);
   button.insertAdjacentElement('afterend', status);
-  // Route through the existing iPhone-only orb handler. Doing so synchronously
-  // inside a real user click preserves the browser's user-activation opportunity.
+  const endButton = document.createElement('button');
+  endButton.type = 'button'; endButton.id = 'aurenIPhoneEnd';
+  endButton.textContent = 'End conversation'; endButton.hidden = true;
+  endButton.style.cssText = 'display:block;margin:5px auto 12px;padding:9px 16px;background:transparent;color:#c5a168;border:1px solid #786342;border-radius:999px;font:500 13px system-ui';
+  status.insertAdjacentElement('afterend', endButton);
+  endButton.addEventListener('click', () => {
+    session = false; clearTimeout(sleepTimer); clearTimeout(nextTurnTimer);
+    if (phase === 'recording') void stop();
+    else { updateButton('idle'); report('Conversation ended.','idle'); }
+  });
+  // Keep the existing orb handler available. This button starts its own
+  // iPhone-only session and never modifies the desktop voice service.
   button.addEventListener('click', () => {
-    if (phase === 'processing' || phase === 'stopping' || phase === 'starting') return;
-    document.getElementById('orbControl')?.click();
+    if (phase === 'recording') { void stop(); return; }
+    if (phase !== 'idle') return;
+    session = true; clearTimeout(sleepTimer); clearTimeout(nextTurnTimer);
+    void start(false);
   });
   function updateButton(state) {
     const listening = phase === 'recording' || state === 'listening';
     const working = ['starting','stopping','processing'].includes(phase);
-    button.textContent = listening ? '■ Finish speaking' : working ? 'One moment…' : '🎙 Speak to AUREN';
+    button.textContent = listening ? '■ Finish speaking' : working ? 'One moment…' : session ? '🎙 Continue conversation' : '🎙 Speak to AUREN';
     button.disabled = working;
     button.style.opacity = working ? '.65' : '1';
     button.style.background = listening ? '#302820' : '#b99457';
     button.style.color = listening ? '#f4d6a0' : '#161719';
     button.setAttribute('aria-pressed', String(listening));
-    status.textContent = listening ? 'Listening… Pause when finished, or tap to send.' : working ? 'Processing your voice message…' : 'Tap once to speak.';
+    endButton.hidden = !session;
+    status.textContent = listening ? 'Listening… Pause to send. Conversation stays open.' :
+      working ? 'Processing your message…' : session ? 'Conversation open. AUREN will listen again after replying.' : 'Tap to start a conversation.';
   }
   function stopMonitoring() {
     clearInterval(monitor); monitor = null;
@@ -112,15 +161,17 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
       if (!text) { report('I could not hear words clearly. Tap to retry.', 'error'); return; }
       report('Heard: ' + text.slice(0, 100), 'processing');
       await onText(text);
-      report('Ready for your next question.', 'idle');
+      deliverySucceeded = true;
+      report('Reply ready.', 'idle');
     } catch (err) {
       report(err.name === 'AbortError' ? 'Voice request timed out. Tap to retry.' : 'Voice request failed: ' + (err.message || 'Please retry.'), 'error');
     } finally { clearTimeout(timer); }
   }
-  async function start() {
+  async function start(automatic = false) {
     if (phase !== 'idle') return;
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { report('Microphone unavailable. Open AUREN in iPhone Safari over HTTPS.', 'error'); return; }
     phase = 'starting'; const token = ++serial;
+    clearTimeout(sleepTimer); deliverySucceeded = false;
     report('Connecting microphone…', 'processing');
     try {
       // Permission request is the first awaited action, directly from the tap.
@@ -143,7 +194,11 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
         stopMonitoring(); stopTracks(); recorder = null; chunks = [];
         phase = 'processing'; updateButton('processing');
         try { await deliver(blob); } finally {
-          if (token === serial) { phase = 'idle'; updateButton('idle'); }
+          if (token === serial) {
+            phase = 'idle'; updateButton('idle');
+            if (session && deliverySucceeded) queueNextTurn();
+            else if (session) armSleep();
+          }
         }
       };
       r.start(250); began = Date.now(); phase = 'recording';
@@ -153,7 +208,11 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
     } catch (err) {
       if (token !== serial) return;
       reset();
-      report(err.name === 'NotAllowedError' ? 'Microphone denied. Allow it in Safari website settings.' : 'Microphone problem: ' + err.message, 'error');
+      if (automatic) {
+        // Some Safari releases require a fresh gesture for permission/audio sessions.
+        session = false; updateButton('idle');
+        report('Safari needs one more tap to resume the microphone.', 'error');
+      } else report(err.name === 'NotAllowedError' ? 'Microphone denied. Allow it in Safari website settings.' : 'Microphone problem: ' + err.message, 'error');
     }
   }
   async function stop() {
@@ -175,10 +234,10 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
   }
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden || !['starting','recording','stopping'].includes(phase)) return;
-    ++serial;
+    ++serial; session = false; clearTimeout(sleepTimer); clearTimeout(nextTurnTimer);
     const old = recorder; reset();
     try { if (old?.state === 'recording') old.stop(); } catch {}
     report('Microphone off while Safari is in the background.', 'idle');
   });
-  return { start, stop, get recording() { return phase === 'recording'; }, get busy() { return phase === 'starting' || phase === 'stopping' || phase === 'processing'; } };
+  return { start: () => { session = true; return start(false); }, stop, get recording() { return phase === 'recording'; }, get busy() { return phase === 'starting' || phase === 'stopping' || phase === 'processing'; } };
 }
