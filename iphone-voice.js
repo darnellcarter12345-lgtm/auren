@@ -1,4 +1,5 @@
-// AUREN v3.32 — resume voice conversations after Maps; preserve v3.26 orb and controls.
+// AUREN v3.38 — stable audio handoff, one-tap interruption and speech cleanup, no overlapping audio, more reliable transcription.
+// AUREN v3.26 — iPhone orb state feedback and one true session toggle.
 // Replace iphone-voice.js only. app.js / desktop voice remain unchanged.
 export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
   let stream = null, recorder = null, context = null, source = null, analyser = null;
@@ -8,7 +9,7 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
   let session = false, sleepTimer = null, nextTurnTimer = null, stopRequested = false;
   let deliverySucceeded = false, silentTurns = 0, micReadyAt = 0, speechFrames = 0;
   let transcriptionAbort = null;
-  let backgroundedAt = 0, resumeAfterMaps = false, returnTimer = null, resumeNeedsTap = false;
+  let iPhoneSpeechHandoff = 0;
   // UI effects are isolated to this recorder, which is only constructed on iOS.
   const orb = document.getElementById('orbControl');
   const headline = document.getElementById('aurenHeadline');
@@ -39,13 +40,13 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
   document.head.append(style);
   document.body.classList.add('auren-ios-voice');
   function detectVisualPhase() {
-    if (!session) return 'asleep';
+    if (!session && phase === 'idle') return 'asleep';
     if (phase === 'starting') return 'starting';
     if (phase === 'recording') return 'listening';
     if (phase === 'processing' || phase === 'stopping') return 'thinking';
     const spoken = document.getElementById('voiceStatus')?.textContent || '';
     if (window.speechSynthesis?.speaking || window.speechSynthesis?.pending || /AUREN speaking/i.test(spoken)) return 'speaking';
-    return 'thinking'; // The conversation stays awake while waiting for the next turn.
+    return 'asleep'; // Ready for a fresh tap; don't pretend to be recording.
   }
   function paintOrb(force = false) {
     const state = detectVisualPhase();
@@ -58,7 +59,7 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
     if (headline) headline.textContent = titles[state];
     if (heroState) {heroState.textContent = descriptions[state]; heroState.hidden = state === 'asleep';}
     if (wakeHint) wakeHint.hidden = state !== 'asleep';
-    if (orb) {orb.setAttribute('aria-label', state === 'asleep' ? 'Speak to AUREN' : 'Finish Talking'); orb.setAttribute('aria-pressed', String(state !== 'asleep'));}
+    if (orb) {orb.setAttribute('aria-label', state === 'listening' ? 'Send this question' : 'Speak to AUREN'); orb.setAttribute('aria-pressed', String(state === 'listening'));}
   }
   function pulseTap() {
     orb?.classList.remove('auren-ios-tapped');
@@ -67,29 +68,42 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
   }
   visualTimer = setInterval(() => {if (session || uiPhase !== 'asleep') paintOrb();}, 200);
   paintOrb(true);
-  // Capture the orb's native click before app.js's older toggle handler.
-  // No synthetic click, so getUserMedia still runs inside the user's gesture.
-  orb?.addEventListener('click', event => {
-    event.preventDefault();event.stopImmediatePropagation();pulseTap();
-    if (resumeNeedsTap && session) resumeByTap();
-    else if (session || phase !== 'idle') endConversation();
-    else beginConversation();
-  }, true);
-  // Legacy settings microphone button uses the same session toggle.
-  document.getElementById('micBtn')?.addEventListener('click', event => {
-    event.preventDefault();event.stopImmediatePropagation();
-    if (resumeNeedsTap && session) resumeByTap();
-    else if (session || phase !== 'idle') endConversation();
-    else beginConversation();
-  }, true);
-  function beginConversation() {
-    if (session || phase !== 'idle') return;
-    session = true;clearTimeout(sleepTimer);clearTimeout(nextTurnTimer);
-    updateButton('starting');paintOrb(true);void start(false);
+  // v3.38: ONE gesture path. While speaking, a tap cancels playback and starts
+  // a fresh user turn. While recording, a tap finishes that turn. During
+  // transcription, extra taps must NOT create concurrent requests/recorders.
+  function tapToTalk(event) {
+    if (event) { event.preventDefault(); event.stopImmediatePropagation(); }
+    pulseTap();
+    if (phase === 'recording') { void stop(); return; }
+    if (phase === 'starting' || phase === 'stopping') {
+      report('Opening your microphone. One moment.', 'processing');
+      return;
+    }
+    if (phase === 'processing') {
+      const isSpeaking = !!(window.speechSynthesis?.speaking || window.speechSynthesis?.pending || /speaking/i.test(document.getElementById('voiceStatus')?.textContent || ''));
+      // Permit barge-in ONLY once a spoken answer is actually playing, rather
+      // than allowing multiple concurrent transcription uploads.
+      if (!isSpeaking || recorder || transcriptionAbort) {
+        report('Finishing your request. Tap once AUREN starts responding.', 'processing');
+        return;
+      }
+      ++serial; // Invalidate previous recorder completion callback.
+      phase = 'idle';
+    }
+    clearTimeout(sleepTimer); clearTimeout(nextTurnTimer);
+    // Cancel output BEFORE getUserMedia, avoiding iPhone audio-session doubling.
+    iPhoneSpeechHandoff++;
+    try { window.aurenStopForIPhoneTurn?.(); } catch {}
+    try { window.speechSynthesis?.cancel(); } catch {}
+    if (!session) session = true;
+    if (phase === 'idle') { updateButton('starting'); void start(false); }
   }
+  orb?.addEventListener('click', tapToTalk, true);
+  document.getElementById('micBtn')?.addEventListener('click', tapToTalk, true);
+  function beginConversation() { tapToTalk(); }
 
   const SESSION_IDLE_MS = 30000;
-  const QUIET_TURN_MS = 13500;
+  const QUIET_TURN_MS = 17000;
   const MAX_QUIET_TURNS = 2;
   const isVisible = () => !document.hidden;
   const sleep = () => { endConversation('Conversation asleep. Tap Speak to AUREN to start again.'); };
@@ -147,18 +161,12 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
   if (hintTarget?.parentElement) hintTarget.insertAdjacentElement('afterend', button);
   else document.getElementById('orbControl')?.insertAdjacentElement('afterend', button);
   button.insertAdjacentElement('afterend', status);
-  // Only one voice button on iPhone. A tap starts an open conversation;
-  // while open, the same button *ends the entire session*, not just a turn.
-  button.addEventListener('click', () => {
-    if (resumeNeedsTap && session) resumeByTap();
-    else if (session || phase !== 'idle') endConversation();
-    else beginConversation();
-  });
+  // One voice button: tap to listen, tap again to submit, or interrupt playback.
+  button.addEventListener('click', tapToTalk);
   function endConversation(message = 'Conversation ended. Microphone off.') {
     session = false;
     ++serial; // Invalidate pending permission callbacks and recorder events.
-    clearTimeout(sleepTimer); clearTimeout(nextTurnTimer); clearTimeout(returnTimer);
-    resumeAfterMaps = false; resumeNeedsTap = false; backgroundedAt = 0;
+    clearTimeout(sleepTimer); clearTimeout(nextTurnTimer);
     clearTimeout(stopGuard); stopGuard = null;
     try { transcriptionAbort?.abort(); } catch {}
     transcriptionAbort = null;
@@ -172,16 +180,16 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
   }
   function updateButton(state) {
     const active = session;
-    button.textContent = resumeNeedsTap && active ? '🎙 Resume Conversation' : active ? '■ Finish Talking' : '🎙 Speak to AUREN';
+    button.textContent = phase === 'recording' ? '■ Send this question' : '🎙 Speak to AUREN';
     button.disabled = false; // Always allow ending, even during network processing.
     button.style.opacity = '1';
     button.style.background = active ? '#302820' : '#b99457';
     button.style.color = active ? '#f4d6a0' : '#161719';
     button.setAttribute('aria-pressed', String(active));
-    status.textContent = resumeNeedsTap && active ? 'Safari paused the microphone. Tap to resume this conversation.' : !active ? 'Tap to start a conversation.' :
-      phase === 'recording' ? 'Listening… Pause to send. Tap Finish Talking to end the session.' :
-      phase === 'processing' || phase === 'starting' || phase === 'stopping' ? 'One moment… Finish Talking is always available.' :
-      'Conversation open. AUREN will listen again after replying.';
+    status.textContent = !active ? 'Tap to speak.' :
+      phase === 'recording' ? 'Listening… Pause to send, or tap Send this question.' :
+      phase === 'processing' || phase === 'starting' || phase === 'stopping' ? 'One moment… Your request is processing.' :
+      'Tap once to ask your next question. AUREN will not listen over its own voice.';
   }
   function discardCurrentRecording() {
     ++serial;
@@ -229,12 +237,12 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
         const rms = Math.sqrt(square / buffer.length), now = Date.now();
         if (now - began < 800) baseline = baseline * .9 + Math.min(rms, .04) * .1;
         // A lower adaptive threshold helps quiet iPhone voices. Keep sustained-frame gating to avoid noise triggers.
-        const threshold = Math.max(.007, Math.min(.030, baseline * 2.2));
+        const threshold = Math.max(.0055, Math.min(.026, baseline * 1.9));
         if (rms > threshold) {
           positiveFrames++;
           if (positiveFrames >= 3) { if (!speechStarted) speechStarted = now; lastVoice = now; speechFrames++; }
         } else positiveFrames = 0;
-        if (speechStarted && now - began > 2000 && now - speechStarted > 950 && now - lastVoice > 3000) void stop();
+        if (speechStarted && now - began > 2400 && now - speechStarted > 1300 && now - lastVoice > 4300) void stop();
         // Do not submit silence to transcription as an empty request.
         if (!speechStarted && now - micReadyAt > QUIET_TURN_MS) {
           if (session && ++silentTurns < MAX_QUIET_TURNS) {
@@ -282,11 +290,11 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { report('Microphone unavailable. Open AUREN in iPhone Safari over HTTPS.', 'error'); return; }
     phase = 'starting'; const token = ++serial; paintOrb(true);
     if (!automatic) silentTurns = 0;
-    clearTimeout(sleepTimer); deliverySucceeded = false; resumeNeedsTap = false;
+    clearTimeout(sleepTimer); deliverySucceeded = false;
     report('Connecting microphone…', 'processing');
     try {
       // Permission request is the first awaited action, directly from the tap.
-      const media = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 } });
+      const media = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
       if (token !== serial || document.hidden) { media.getTracks().forEach(t => t.stop()); reset(); return; }
       stream = media;
       for (const track of media.getAudioTracks()) track.onended = () => {
@@ -307,8 +315,12 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
         try { await deliver(blob); } finally {
           if (token === serial) {
             phase = 'idle'; updateButton('idle'); paintOrb(true);
-            if (session && deliverySucceeded) queueNextTurn();
-            else if (session) armSleep();
+            if (session) {
+              // iOS requires a fresh tap for a reliable audio session. Never
+              // auto-record while speech synthesis may still be playing.
+              report('Ready. Tap the orb to speak again or interrupt my reply.', 'idle');
+              armSleep();
+            }
           }
         }
       };
@@ -321,8 +333,8 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
       reset();
       if (automatic) {
         // Some Safari releases require a fresh gesture for permission/audio sessions.
-        resumeNeedsTap = true; updateButton('idle');
-        report('Safari paused the microphone. Tap Resume Conversation to continue.', 'error');
+        session = false; updateButton('idle');
+        report('Safari needs one more tap to resume the microphone.', 'error');
       } else report(err.name === 'NotAllowedError' ? 'Microphone denied. Allow it in Safari website settings.' : 'Microphone problem: ' + err.message, 'error');
     }
   }
@@ -343,47 +355,12 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
       } else { ++serial; reset(); report('Recorder reset. Tap to try again.', 'error'); }
     } catch (err) { ++serial; reset(); report('Could not stop recording: ' + err.message, 'error'); }
   }
-  // iPhone Safari suspends microphone tracks when navigating to Maps. Never keep
-  // the mic running in the background; preserve only the *session intent*.
-  function suspendForBackground() {
-    if (!session || resumeAfterMaps || !document.hidden) return;
-    backgroundedAt = Date.now(); resumeAfterMaps = true; resumeNeedsTap = false;
-    ++serial; clearTimeout(sleepTimer); clearTimeout(nextTurnTimer); clearTimeout(returnTimer);
-    try { transcriptionAbort?.abort(); } catch {}
-    transcriptionAbort = null;
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden || !['starting','recording','stopping'].includes(phase)) return;
+    ++serial; session = false; clearTimeout(sleepTimer); clearTimeout(nextTurnTimer);
     const old = recorder; reset();
     try { if (old?.state === 'recording') old.stop(); } catch {}
-    report('Conversation paused while Maps is open. Microphone off.', 'idle');
-  }
-  function resumeByTap() {
-    if (!session || document.hidden || phase !== 'idle') return;
-    resumeNeedsTap = false; resumeAfterMaps = false;
-    updateButton('processing');
-    // Fresh gesture: immediately request microphone from this click.
-    void start(false);
-  }
-  function maybeResumeFromBackground() {
-    if (!session || !resumeAfterMaps || document.hidden) return;
-    resumeAfterMaps = false; clearTimeout(returnTimer);
-    const awayMs = Date.now() - backgroundedAt;
-    if (awayMs > 20 * 60 * 1000) {
-      endConversation('Conversation ended after a long time away. Tap to start again.');
-      return;
-    }
-    // Give AUREN time to show its Maps-return greeting and finish talking.
-    // queueNextTurn checks speechSynthesis before activating the microphone.
-    report('Welcome back. Conversation is resuming…', 'processing');
-    if (phase === 'idle') queueNextTurn();
-  }
-  document.addEventListener('visibilitychange', () => {
-    if (document.hidden) suspendForBackground();
-    else if (resumeAfterMaps) returnTimer = setTimeout(maybeResumeFromBackground, 900);
-  });
-  window.addEventListener('pageshow', () => {
-    if (resumeAfterMaps) returnTimer = setTimeout(maybeResumeFromBackground, 900);
-  });
-  window.addEventListener('focus', () => {
-    if (resumeAfterMaps) returnTimer = setTimeout(maybeResumeFromBackground, 900);
+    report('Microphone off while Safari is in the background.', 'idle');
   });
   return { start: () => { if (!session) {beginConversation(); return;} return start(false); }, stop, finish: endConversation, get sessionActive() {return session;}, get recording() { return phase === 'recording'; }, get busy() { return phase === 'starting' || phase === 'stopping' || phase === 'processing'; } };
 }
