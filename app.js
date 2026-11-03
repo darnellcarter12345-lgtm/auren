@@ -4576,6 +4576,70 @@ async function aurenFlowHandle(raw){
  return true;
 }
 
+// AUREN_V332_ADAPTIVE_BRAIN — derived from your existing device-local records.
+const AUREN_V332_ATTENDANCE_KEY='auren_v332_attendance_by_event';
+let aurenV332Attendance={};
+try {const saved=JSON.parse(localStorage.getItem(AUREN_V332_ATTENDANCE_KEY)||'{}');if(saved&&typeof saved==='object'&&!Array.isArray(saved))aurenV332Attendance=saved;}catch{}
+let aurenV332Followup=null;
+function aurenV332SaveAttendance(){
+ try{const encoded=JSON.stringify(aurenV332Attendance);localStorage.setItem(AUREN_V332_ATTENDANCE_KEY,encoded);return localStorage.getItem(AUREN_V332_ATTENDANCE_KEY)===encoded;}catch{return false;}
+}
+function aurenV332PassedEvents(date=localDate()){
+ const now=Date.now();return plansFor(date).filter(p=>eventTimestamp(p)+Math.max(1,Number(p.duration)||60)*60000<=now);
+}
+function aurenV332Schedule(raw){
+ const t=String(raw||'').trim();
+ const q=t.toLowerCase().replace(/^(?:hey\s+)?auren[,! ]*/,'').replace(/[.!?]+$/,'').trim();
+ const previous=aurenV332Followup;
+ if(previous&&Date.now()-previous.at>4*60000)aurenV332Followup=null;
+ else if(previous&&/^(?:yes|yeah|yep|i did|i attended|i went|no|nope|i didn't|i did not|i missed it|cancel|not now|keep it|remove it|remove that|delete it|delete that|take it off|clear it|go ahead|confirm|please do)$/.test(q)){
+  const p=plans.find(x=>x.id===previous.id);
+  if(!p){aurenV332Followup=null;return 'That appointment is no longer saved. Nothing was changed.';}
+  if(previous.stage==='attendance'){
+   if(/^(?:cancel|not now|keep it)$/.test(q)){aurenV332Followup=null;return 'Understood. Your appointment is unchanged.';}
+   const attended=/^(?:yes|yeah|yep|i did|i attended|i went)$/.test(q);
+   const missed=/^(?:no|nope|i didn't|i did not|i missed it)$/.test(q);
+   if(!attended&&!missed)return null;
+   const prior=aurenV332Attendance[p.id];
+   aurenV332Attendance[p.id]={status:attended?'attended':'missed',updated:Date.now()};
+   if(!aurenV332SaveAttendance()){if(prior===undefined)delete aurenV332Attendance[p.id];else aurenV332Attendance[p.id]=prior;aurenV332Followup=null;return 'I could not verify the attendance save on this browser.';}
+   aurenV332Followup={stage:'remove',id:p.id,at:Date.now()};
+   return (attended?'I marked that meeting as attended.':'I marked that meeting as missed.')+' Would you like me to remove it from Your Day, or keep it for your records?';
+  }
+  if(previous.stage==='remove'){
+   if(/^(?:no|nope|cancel|not now|keep it)$/.test(q)){aurenV332Followup=null;return 'Of course. The appointment stays in Your Day.';}
+   if(/^(?:yes|yeah|yep|remove it|remove that|delete it|delete that|take it off|clear it|go ahead|confirm|please do)$/.test(q)){
+    const beforePlans=plans.slice(),beforeReminders=reminders.slice();
+    plans=plans.filter(x=>x.id!==p.id);reminders=reminders.filter(x=>x.eventId!==p.id);
+    try{savePlans();saveReminders();renderDay();aurenV332Followup=null;return 'Removed '+p.title+' from Your Day and its linked reminders. Your attendance record is kept on this browser.';}
+    catch(e){plans=beforePlans;reminders=beforeReminders;try{savePlans();saveReminders();}catch{}aurenV332Followup=null;return 'I could not verify the removal, so the appointment was restored.';}
+   }
+  }
+ }
+ const intent=/^(?:is there anything else (?:i (?:need|have) to do )?(?:today|for today)?|anything else (?:for )?today|what(?:'s| is) left (?:for )?today|what do i (?:still )?have (?:left )?to do today|have (?:my |the )?meetings? (?:already )?(?:passed|finished)|did (?:my |the )?meetings? (?:already )?(?:pass|end)|what meetings? (?:have |already )?passed|what(?:'s| is) (?:still )?coming up today|what do i have left on my schedule today)$/.test(q);
+ if(!intent)return null;
+ const today=localDate(),now=Date.now(),past=aurenV332PassedEvents(today);
+ const current=plansFor(today).filter(p=>eventTimestamp(p)<=now&&eventTimestamp(p)+Math.max(1,Number(p.duration)||60)*60000>now);
+ const future=plansFor(today).filter(p=>eventTimestamp(p)>now);
+ const pending=tasksOnDate(today).filter(x=>!isTaskComplete(x,today));
+ const overdue=aurenTasks.filter(x=>x.repeat==='once'&&!x.done&&x.due<today);
+ const due=aurenRemindersForView(today).filter(r=>Date.parse(r.at)>now&&!r.fired);
+ const lines=[];
+ if(current.length)lines.push('Scheduled right now: '+current.slice(0,2).map(x=>x.title).join('; ')+'.');
+ if(future.length)lines.push('Still upcoming: '+future.slice(0,3).map(x=>x.title+' at '+formatClock(x.time)).join('; ')+'.');
+ else lines.push('No later appointments are saved for today.');
+ if(pending.length||overdue.length)lines.push('Unfinished tasks: '+[...overdue,...pending].slice(0,3).map(x=>x.title).join('; ')+'.');
+ if(due.length)lines.push('Upcoming reminders: '+due.slice(0,2).map(x=>aurenReminderTitle(x.text)).join('; ')+'.');
+ if(past.length){
+  lines.push('Scheduled times have passed for: '+past.slice(-3).map(x=>x.title+' ('+(aurenV332Attendance[x.id]?.status||'attendance not confirmed')+')').join('; ')+'.');
+  const unknown=past.filter(x=>!aurenV332Attendance[x.id]);
+  if(unknown.length){const event=unknown[unknown.length-1];aurenV332Followup={stage:'attendance',id:event.id,at:Date.now()};lines.push('Did you attend '+event.title+'?');}
+  else {aurenV332Followup=null;lines.push('Those attendance statuses are saved. You can ask me to review your schedule again.');}
+ }else aurenV332Followup=null;
+ lines.push('This reflects records saved in AUREN, not external calendars.');
+ return lines.join(' ');
+}
+
 async function send(text) {
   refreshPersonalProfile();
   const addressed = aurenAddressCommand(text);
@@ -4585,6 +4649,8 @@ async function send(text) {
     return;
   }
   text=addressed.command;
+  const v332ScheduleAnswer=aurenV332Schedule(text);
+  if(v332ScheduleAnswer!==null){await addMessage('user',text);await addMessage('auren',v332ScheduleAnswer);return;}
   // v3.05: Persistent conversation preferences take precedence over generic AI.
   const learnedCommand=aurenLearnCommand(text);
   if(learnedCommand!==null){await addMessage('user',text);await addMessage('auren',learnedCommand);return;}
@@ -5497,7 +5563,7 @@ async function renderStorageInfo() {
 
 // AUREN v2.15 SMART PLACES: opt-in, any-category place search, safe Maps return flow.
 aurenPlaces = (() => {
-  let phase='idle', pending='', coords=null, results=[], requestId=0, lastMapClick=0, mapPending=false, returned=false, lookupFailed=false, navigationTarget='', awaitingPlace=false, lastNavigationAt=0, lastPlacePromptAt=0;
+  let phase='idle', pending='', coords=null, results=[], requestId=0, lastMapClick=0, mapPending=false, returned=false, lookupFailed=false, navigationTarget='', navigationLabel='', awaitingPlace=false, lastNavigationAt=0, lastPlacePromptAt=0;
   const yes=/^(?:yes|yep|yeah|sure|okay|ok|go ahead|please do|use my location|enable it)[.!? ]*$/i;
   const no=/^(?:no|nope|no thanks|not now|cancel)[.!? ]*$/i;
   const done=/^(?:done|finished|i(?:'m| am) done|that's all|end search|close results|stop searching)[.!? ]*$/i;
@@ -5607,9 +5673,9 @@ aurenPlaces = (() => {
     mapChoices.replaceChildren();mapOverlay.style.display='flex';
     if(hasResults){
       const list=document.createElement('div');list.style.cssText='display:grid;gap:9px;margin:8px 0 12px';
-      for(const place of places.slice(0,8)){
+      for(const [placeNumber,place] of places.slice(0,8).entries()){
         const card=document.createElement('div');card.style.cssText='padding:11px;border:1px solid rgba(199,168,104,.35);border-radius:12px;background:#292b31';
-        const name=document.createElement('strong');name.textContent=place.name;
+        const name=document.createElement('strong');name.textContent=(placeNumber+1)+'. '+place.name;
         const detail=document.createElement('p');detail.textContent=place.km.toFixed(1)+' km away (straight line)'+(place.cuisine?' · '+place.cuisine:'')+(place.address?' · '+place.address:'')+(place.hours?' · Hours listed: '+place.hours:'');detail.style.cssText='font-size:12px;opacity:.85;margin:4px 0 8px';
         const directions=document.createElement('button');directions.type='button';directions.textContent='Get directions';directions.onclick=()=>openMap(mapLink(place));
         card.append(name,detail,directions);list.append(card);
@@ -5744,7 +5810,7 @@ aurenPlaces = (() => {
     if(closest){const r=results[0];await addMessage('auren',`${r.name} is the closest of the places I found, about ${r.km.toFixed(1)} kilometres away in a straight line. Driving distance may differ.`);return true;}
     if(ref){
       await addMessage('auren',wantsDirections?`I’ve prepared directions to ${ref.name}. Select Open directions on screen.`:`${ref.name} is about ${ref.km.toFixed(1)} kilometres away in a straight line${ref.cuisine?'. Cuisine: '+ref.cuisine:''}${ref.address?', at '+ref.address:''}${ref.hours?'. Listed hours: '+ref.hours+' (unverified)':''}. Would you like directions?`);
-      if(wantsDirections){navigationTarget=ref.name;lastNavigationAt=Date.now();showPopup(`Directions to ${ref.name} are ready.`,results);}
+      if(wantsDirections){replyWithDirections(ref.lat+','+ref.lon,ref.name);}
       return true;
     }
     return false;
@@ -5819,14 +5885,14 @@ aurenPlaces = (() => {
   function isAddressReply(t){
     return /^(?:(?:yes|yeah|okay|ok|please|and|then)\s*[,.:]?\s+)*(?:send (?:me )?(?:their |its |the )?address|send me directions|take me there|open directions|directions please|go there)[.!? ]*$/i.test(t);
   }
-  function replyWithDirections(target){
+  function replyWithDirections(target,label=target){
     // The chat link is persistent and works even if a modal was closed.
-    phase='consent';navigationTarget=target;pending=target;lastNavigationAt=Date.now();awaitingPlace=false;
-    showPopup('Directions are ready for '+target+'. Google Maps will choose your current location when permitted.');
+    phase='consent';navigationTarget=target;navigationLabel=label;pending=label;lastNavigationAt=Date.now();awaitingPlace=false;
+    showPopup('Directions are ready for '+label+'. Google Maps will choose your current location when permitted.');
     const url=directionsURL(target);
     const wrap=document.createElement('div');wrap.className='msg auren';
     const link=document.createElement('a');link.href=url;link.target='_blank';link.rel='noopener noreferrer';
-    link.textContent='Open directions to '+target+' in Google Maps';
+    link.textContent='Open directions to '+label+' in Google Maps';
     link.style.cssText='color:#e6c581;font-weight:700;text-decoration:underline;';
     link.addEventListener('click',()=>{lastMapClick=Date.now();mapPending=true;returned=false;closePopup();});
     wrap.append(link);$('log')?.append(wrap);
@@ -5867,7 +5933,7 @@ aurenPlaces = (() => {
       const target=navigationTarget;
       await addMessage('user',t);
       replyWithDirections(target);
-      await addMessage('auren','Directions to '+target+' are ready. Tap Open directions.');
+      await addMessage('auren','Directions to '+(navigationLabel||target)+' are ready. Tap Open directions.');
       return true;
     }
     if(/\b(?:turn|switch|disable|stop|clear|forget)\b.*\blocation\b/i.test(t)&&/off|disable|stop|clear|forget/i.test(t)){clear();return false;}
@@ -5893,7 +5959,10 @@ aurenPlaces = (() => {
   }
   function onReturn(){if(!mapPending||returned||Date.now()-lastMapClick<1000||Date.now()-lastMapClick>20*60*1000||document.hidden)return;returned=true;mapPending=false;
     if(phase==='results'||phase==='searching'||phase==='consent'){
-      closePopup();noticeText.textContent='Back from Maps. Your previous search is still available.';returnNotice.style.display='block';
+      closePopup();noticeText.textContent='Welcome back. How did your search for '+(navigationLabel||pending||'that place')+' go?';returnNotice.style.display='block';
+      const priorResume=document.getElementById('aurenV332ResumeVoice');if(priorResume)priorResume.remove();
+      if(aurenIOS&&iphoneRecorder&&!iphoneRecorder.recording){const resume=document.createElement('button');resume.type='button';resume.id='aurenV332ResumeVoice';resume.textContent='Resume conversation';resume.style.marginLeft='8px';resume.onclick=()=>{resume.remove();returnNotice.style.display='none';void toggleIPhoneRecorder();};returnNotice.append(resume);}
+      void addMessage('auren','Welcome back. How did your search for '+(navigationLabel||pending||'that place')+' go?');
       // Return notice stays on screen; do not add another chat turn.
     }}
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)setTimeout(onReturn,450);});window.addEventListener('focus',()=>setTimeout(onReturn,450));
