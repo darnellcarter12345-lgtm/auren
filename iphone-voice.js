@@ -1,4 +1,4 @@
-// AUREN v3.23 — iPhone-only continuous foreground conversation.
+// AUREN v3.24 — iPhone-only conversation and quieter-voice capture improvements.
 // Replace iphone-voice.js only. app.js / desktop voice remain unchanged.
 export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
   let stream = null, recorder = null, context = null, source = null, analyser = null;
@@ -6,8 +6,10 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
   let phase = 'idle', serial = 0, began = 0, speechStarted = 0, lastVoice = 0;
   let baseline = 0.006, positiveFrames = 0;
   let session = false, sleepTimer = null, nextTurnTimer = null, stopRequested = false;
-  let deliverySucceeded = false;
-  const SESSION_IDLE_MS = 24000;
+  let deliverySucceeded = false, silentTurns = 0, micReadyAt = 0, speechFrames = 0;
+  const SESSION_IDLE_MS = 30000;
+  const QUIET_TURN_MS = 13500;
+  const MAX_QUIET_TURNS = 2;
   const isVisible = () => !document.hidden;
   const sleep = () => { session = false; clearTimeout(sleepTimer); clearTimeout(nextTurnTimer); updateButton('idle'); };
   function armSleep() {
@@ -31,7 +33,7 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
       else if (heardSpeech && !settledAt) settledAt = Date.now();
       // Allow speech to begin; this also handles silent replies (speech disabled).
       if ((heardSpeech && settledAt && Date.now() - settledAt > 650) ||
-          (!heardSpeech && Date.now() - started > 3500)) {
+          (!heardSpeech && Date.now() - started > 6200)) {
         status.textContent = 'Conversation open — listening for your next question…';
         void start(true); return;
       }
@@ -65,12 +67,12 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
   button.insertAdjacentElement('afterend', status);
   const endButton = document.createElement('button');
   endButton.type = 'button'; endButton.id = 'aurenIPhoneEnd';
-  endButton.textContent = 'End conversation'; endButton.hidden = true;
-  endButton.style.cssText = 'display:block;margin:5px auto 12px;padding:9px 16px;background:transparent;color:#c5a168;border:1px solid #786342;border-radius:999px;font:500 13px system-ui';
+  endButton.textContent = 'Finish Talking'; endButton.hidden = true;
+  endButton.style.cssText = 'margin:5px auto 12px;padding:9px 16px;background:transparent;color:#c5a168;border:1px solid #786342;border-radius:999px;font:500 13px system-ui';
   status.insertAdjacentElement('afterend', endButton);
   endButton.addEventListener('click', () => {
     session = false; clearTimeout(sleepTimer); clearTimeout(nextTurnTimer);
-    if (phase === 'recording') void stop();
+    if (phase === 'recording') { discardCurrentRecording(); }
     else { updateButton('idle'); report('Conversation ended.','idle'); }
   });
   // Keep the existing orb handler available. This button starts its own
@@ -93,6 +95,13 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
     endButton.hidden = !session;
     status.textContent = listening ? 'Listening… Pause to send. Conversation stays open.' :
       working ? 'Processing your message…' : session ? 'Conversation open. AUREN will listen again after replying.' : 'Tap to start a conversation.';
+  }
+  function discardCurrentRecording() {
+    ++serial;
+    const oldRecorder = recorder;
+    reset();
+    try { if (oldRecorder?.state === 'recording') oldRecorder.stop(); } catch {}
+    report('Conversation ended. Microphone off.', 'idle');
   }
   function stopMonitoring() {
     clearInterval(monitor); monitor = null;
@@ -132,12 +141,25 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
         for (let i = 0; i < buffer.length; i++) square += buffer[i] * buffer[i];
         const rms = Math.sqrt(square / buffer.length), now = Date.now();
         if (now - began < 800) baseline = baseline * .9 + Math.min(rms, .04) * .1;
-        const threshold = Math.max(.012, Math.min(.052, baseline * 3));
+        // A lower adaptive threshold helps quiet iPhone voices. Keep sustained-frame gating to avoid noise triggers.
+        const threshold = Math.max(.007, Math.min(.030, baseline * 2.2));
         if (rms > threshold) {
           positiveFrames++;
-          if (positiveFrames >= 4) { if (!speechStarted) speechStarted = now; lastVoice = now; }
+          if (positiveFrames >= 3) { if (!speechStarted) speechStarted = now; lastVoice = now; speechFrames++; }
         } else positiveFrames = 0;
-        if (speechStarted && now - began > 1800 && now - speechStarted > 700 && now - lastVoice > 2300) void stop();
+        if (speechStarted && now - began > 2000 && now - speechStarted > 950 && now - lastVoice > 3000) void stop();
+        // Do not submit silence to transcription as an empty request.
+        if (!speechStarted && now - micReadyAt > QUIET_TURN_MS) {
+          if (session && ++silentTurns < MAX_QUIET_TURNS) {
+            // Keep the same recorder alive for one more listening window.
+            micReadyAt = now;
+            report('Still listening. You can speak whenever you are ready.', 'listening');
+          } else {
+            session = false;
+            discardCurrentRecording();
+            report('Conversation asleep after silence. Tap Speak to AUREN again.', 'idle');
+          }
+        }
         // Don't drop messages just because microphone amplitude is quiet.
         // If detection isn't confident, manual tap or maximum duration remains available.
       }, 110);
@@ -161,8 +183,8 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
       if (!text) { report('I could not hear words clearly. Tap to retry.', 'error'); return; }
       report('Heard: ' + text.slice(0, 100), 'processing');
       await onText(text);
-      deliverySucceeded = true;
-      report('Reply ready.', 'idle');
+      deliverySucceeded = true; silentTurns = 0;
+      report('Reply received.', 'idle');
     } catch (err) {
       report(err.name === 'AbortError' ? 'Voice request timed out. Tap to retry.' : 'Voice request failed: ' + (err.message || 'Please retry.'), 'error');
     } finally { clearTimeout(timer); }
@@ -171,6 +193,7 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
     if (phase !== 'idle') return;
     if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) { report('Microphone unavailable. Open AUREN in iPhone Safari over HTTPS.', 'error'); return; }
     phase = 'starting'; const token = ++serial;
+    if (!automatic) silentTurns = 0;
     clearTimeout(sleepTimer); deliverySucceeded = false;
     report('Connecting microphone…', 'processing');
     try {
@@ -201,7 +224,7 @@ export function createIPhoneRecorder({ endpoint, onStatus, onText }) {
           }
         }
       };
-      r.start(250); began = Date.now(); phase = 'recording';
+      r.start(250); began = Date.now(); micReadyAt = began; phase = 'recording';
       report('I’m listening… Speak naturally.', 'listening');
       watchSpeech(media);
       deadline = setTimeout(() => { if (phase === 'recording') void stop(); }, MAX_MS);
