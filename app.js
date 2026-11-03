@@ -115,6 +115,7 @@ import { createVoice } from './voice.js?v=3.21';
 import { createIPhoneRecorder } from './iphone-voice.js?v=3.21';
 import { getAIEndpoint, setAIEndpoint, askAI } from './ai.js';
 import { getWeatherBriefing } from './weather.js';
+import { createUniversalPlacesBrain } from './universal-places-v3.34.js?v=3.34';
 
 const $ = id => document.getElementById(id);
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
@@ -4640,7 +4641,37 @@ function aurenV332Schedule(raw){
  return lines.join(' ');
 }
 
+// AUREN v3.34 — Universal Places (Mac and iPhone; one shared intent router).
+const aurenUniversalPlaces334 = createUniversalPlacesBrain({
+  addMessage,
+  getLocation: () => locationApproved && aurenLocation ? aurenLocation : null,
+  appendLink: (url, label) => {
+    const log = document.getElementById('log');
+    if (!log) return;
+    const row = document.createElement('div');
+    row.className = 'msg auren';
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.textContent = label;
+    a.style.cssText = 'display:block;padding:10px 0;color:#e6c581;font-weight:700;text-decoration:underline';
+    row.append(a);
+    log.append(row);
+    log.scrollTop = log.scrollHeight;
+  }
+});
+
 async function send(text) {
+  // v3.34: user-initiated navigation takes priority over older local/AI routes.
+  if (aurenUniversalPlaces334.parse(text)) {
+    try {
+      if (await aurenUniversalPlaces334.handle(text)) return;
+    } catch (error) {
+      console.warn('AUREN v3.34 place lookup failed; original routing available.', error);
+    }
+  }
+
   refreshPersonalProfile();
   const addressed = aurenAddressCommand(text);
   if (addressed.wake) {
