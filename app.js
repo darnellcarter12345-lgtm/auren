@@ -1,306 +1,27 @@
+// AUREN v3.49b — original one-time Hear AUREN behavior; single speech queue.
 // AUREN v3.48 — iPhone automatic spoken reply repair; no new controls.
-// AUREN v3.46 — persistent Hear AUREN toggle; no old-message replay.
-// AUREN v3.45 — iPhone Hear AUREN immediately and context-safe topic switching.
-// AUREN v3.43 — Original-button iPhone speech repair.
-// AUREN v3.41 — Mac nearby results and Maps-return listening recovery.
-// AUREN v3.40 — miles, full available addresses, cross-device places.
-// AUREN v3.39 — cross-device nearby results and fuzzy destination names.
-// AUREN v3.38 — stable iPhone speech handoff + routing.
-// AUREN v3.35 — complete app.js with integrated nearby choices and directions.
-// AUREN v3.21 — account-specific local data and prior voice fixes preserved.
-// AUREN v3.19 — stable one-tap iPhone, silence-finish microphone experience.
-// AUREN v3.17 — iPhone speech output recovery and audible reply fallback.
-// AUREN v3.16 — contextual replies and iPhone Safari speech playback.
-// AUREN v3.15 — Fix unbound record-edit pending state during voice and text requests.
-// AUREN v3.14 — Spoken, opt-in check-ins independent of microphone listening.
-// AUREN v3.13 — Quiet check-ins without microphone; restored original v3.11 voice selection.
-// AUREN v3.11 — Optional Wellness Care and Time-Aware Greetings.
-// AUREN v3.10 — Advanced Alfred-Style Attentiveness, grounded voluntary context.
-// AUREN v3.09 — Adaptive Learning Over Time; transparent suggestion scores and user controls.
-// AUREN v3.08 — Trust & Attentiveness Engine; grounded tone, selective support, respectful correction.
-// AUREN v3.07 — Natural Conversation Flow; grounded follow-ups and low-friction declines.
-// AUREN v3.06 — Unified Personal Brain; consistent grounded context.
-// AUREN v3.05 — contextual conversation, selective initiative, persistent feedback.
-// AUREN v3.04 — Conversational sensitivity and grounded situation awareness.
-// AUREN v3.03 — Explicit feedback learning, respectful check-ins, and contextual butler improvements.
-// AUREN v3.02 — Butler personality controls, grounded dialogue and consent-first check-ins.
-// AUREN v3.01 — Safari geolocation recovery, accurate failures, and city/ZIP fallback.
-// AUREN v3.00 — Grounded context-and-care intelligence, consent-first personalization.
-// AUREN v2.99 — Verified reminder/appointment conversion, editing and distinct Your Day labels.
-// AUREN v2.98 — field-aware reminder clarification plus saved-profile-first name memory.
-// AUREN v2.93 — saved-profile-first name authority; no conversation-memory false positives.
-// AUREN v2.92 — persistent name recall, refreshed profile context, verified loader.
-// AUREN v2.91 — Defensive schedule intent engine, verified reminder-aware speech, cache update.
-// AUREN v2.89 — Fix undefined schedule parser variable; unify spoken briefing and Your Day truth.
-// AUREN v2.88 — Unified Your Day schedule reading and saved-record truth.
-// AUREN v2.87 — Flexible reminder phrasing and non-repeating clarification.
-// AUREN v2.86 — Patient listening, reduced accidental interruptions.
-// AUREN v2.85 — Context-aware schedule clarification and corrected Safari loader.
-// AUREN v2.84 — Natural Your Day language and context-aware suggestions.
-// AUREN v2.83 — Verified reminder storage and real Your Day reminder entries.
-// AUREN v2.82 — Persistent local profile identity and priority name recall.
-// AUREN v2.81 — Reliable direct reminder routing, tonight support, and honest saves.
-// AUREN v2.80.1 — Internal planner only; email drafting without unverified Gmail access.
-// AUREN v2.80 — Verified action boundaries and useful AI handoffs.
-// AUREN v2.79 — Grounded capability routing and accurate external-app boundaries.
-// AUREN v2.78 — Safe continuity bridge for local and AI responses.
-// AUREN v2.77 — Stable integration release; unchanged v2.76 planning features.
-// AUREN v2.76 — Integrated planning intelligence; builds on v2.75.
-// AUREN v2.75 — Verified personal meeting context, preserves v2.74 continuity.
-// AUREN v2.74 — Unified briefing continuity and grounded follow-ups.
-// AUREN v2.73 — Verified capabilities and grounded AI response correction.
-// AUREN v2.72.7 — Fix deployed Safari syntax error in reference-safety string.
-// AUREN v2.72.4 — Fix Safari Unexpected identifier s in memory reply.
-// AUREN v2.72.3 — Corrected invalid regex in workload estimate lookup; full startup syntax repair.
-// AUREN v2.72.1 — Safari-safe regex compatibility / clean full-source startup repair.
-// AUREN v2.72 — Adaptive JARVIS Personality; grounded conversational modes.
-// AUREN v2.71 — Safe Multi-Step Action Intelligence.
-// AUREN v2.70 — Grounded, on-demand personal recommendations from saved tasks, plans and approved preferences.
-// AUREN v2.69 — Verified topic-specific memory search, provenance clarity and privacy-first recall.
-// AUREN v2.68 — Confirmed actual task durations, privacy-limited history and adaptive comparisons.
-// AUREN v2.67 — Confirmed task effort estimates and grounded workload fit checks.
-// AUREN v2.66 — Grounded workload and calendar-gap analysis.
-// AUREN v2.65 — Grounded competing-priority comparison and decision support.
-// AUREN v2.64 — Grounded schedule follow-ups and routine-fit guidance.
-// AUREN v2.63 — Unified grounded tasks, routines, appointments and reminder recommendations.
-// AUREN v2.62 — Grounded personal routine intelligence and realistic daily routine checks.
-// AUREN v2.61 — Read-only proactive preparation and attention checks from saved plans.
-// AUREN v2.60 — Grounded smart daily planning, preparation and next-step suggestions.
-// AUREN v2.59 — safe new-question handoff and correction recovery.
-// AUREN v2.58 — conversation repair, bounded clarifications, safe context recovery.
-// AUREN v2.57 — end-to-end action handoff and regression guards.
-// AUREN v2.56 — Regression safeguards for pending actions and topic changes.
-// AUREN v2.55 — Verified intent handoffs and safe confirmation routing.
-// AUREN v2.54 — Conversational decision routing, bounded clarification and safe action handling.
-// AUREN v2.53 — verified save status, consistent conversational facts, and safe confirmations.
-// AUREN v2.52 — safer appointment and place references, targeted clarification.
-// AUREN v2.51 — Longer conversation continuity, bounded non-sensitive topic trail.
-// AUREN v2.50 — Multi-turn appointment references and contextual people awareness.
-// AUREN v2.49 — Natural topic changes, conversation boundary and relevant memory isolation.
-// AUREN v2.48 — Topic-aware saved preferences and grounded contextual assistance.
-// AUREN v2.47 — Conversation recovery, bounded follow-ups, safe AI retries.
-// AUREN v2.46 — Natural corrections, scoped context and one-question clarifications.
-// AUREN v2.45 — Contextual butler personality, concise intent routing, restrained suggestions.
-// AUREN v2.44 — Verified long-term memory, transparent recall and preference-aware replies.
-// AUREN v2.43 — Advanced Conversation Intelligence: grounded follow-ups and topic reset.
-// AUREN v2.42 — Personalized daily preparation, real commitments and restrained next steps.
-// AUREN v2.41 — Smarter deadlines, overdue tasks and calendar-safe work suggestions.
-// AUREN v2.40 — Confirmed tasks, repeatable routines, and grounded daily task awareness.
-// AUREN v2.39 — Adaptive Daily Intelligence: grounded rankings, briefings, and follow-ups.
-// AUREN v2.38 — Proactive daily readiness, context-grounded preparation, and safe follow-through.
-// AUREN v2.37 — grounded next-action priority intelligence and focused schedule guidance.
-// AUREN v2.36 — reliable appointment corrections, confirmed saves and focused follow-through.
-// AUREN v2.35 — grounded day follow-ups and concise, context-safe daily guidance.
-// AUREN v2.34 — grounded daily intelligence, conflicts, priorities and context.
-// AUREN v2.33 — focused nearby popup: results or directions and close.
-// AUREN v2.32 — reliable actions, contextual place follow-ups, honest recommendations.
-// AUREN v2.31 — conversation-first directions, no navigation loops or repetitive location questions.
-// AUREN v2.30 — persistent destination context and chat-to-directions handoff
-// AUREN v2.29 — clean voice destinations, device-current-location navigation, useful best-places fallback
-// AUREN v2.28 — reliable Maps directions and no failed-search retry loop
-// AUREN v2.27 — richer nearby cards, relevant choices, transparent ratings.
-// AUREN v2.26 — Reliable profile, direct name recall, seamless Settings.
-// AUREN v2.25 — Reliable nearby discovery, spoken results and contextual follow-ups
-// AUREN v2.24 — Name-aware wake routing, respectful butler identity, no name correction
-// AUREN v2.23 — Nearby Places visible loading, results, and fallback
-// AUREN v2.22 — category-aware places, quiet location controls, graceful fallback
-// AUREN v2.21 — complete-intent search and simple Maps choices
-// AUREN v2.20 — Maps return navigation, concise replies, responsive live captions
-// AUREN v2.19 — intent-first directions, immediate Maps popup, contextual responses
-// AUREN v2.16.7 — Smart Places controls in Settings; conversation stays clean.
-// AUREN v2.16.4 — startup reference repair; topic-switch patience, simplified orb status and subtle Central clock
-// AUREN — js/app.js
-// Connects the screen to the modules. All text is inserted with textContent (no HTML injection).
-// v0.2: status banner for storage problems, session panel, privacy controls, safe backup import.
-
-import { openDB, put, getAll, del, clear, healthCheck, storageEstimate, uid, STORES } from './db.js';
-import * as Mem from './memory.js';
-import * as Proj from './projects.js';
-import { NeedsConfirmationError, historySafe, classify } from './sensitive.js';
-import { Butler, isSessionNote } from './butler.js';
-import { buildBackup, encryptBackup, decryptBackup, validateBackup, applyPlan, describeReport, LIMITS } from './backup.js';
-import { loadSettings, saveSettings } from './settings.js';
-import { createVoice } from './voice.js?v=3.48';
-import { createIPhoneRecorder } from './iphone-voice.js?v=3.38';
-import { getAIEndpoint, setAIEndpoint, askAI } from './ai.js';
-import { getWeatherBriefing } from './weather.js';
-
-// AUREN v3.35 — Universal Places + visible numbered nearby choices.
-// Drop-in replacement for universal-places-v3.34.js. No microphone changes.
-function createUniversalPlacesBrain({addMessage, getLocation, appendLink}) {
-  const TTL=30*60*1000;
-  let recent=null, choices=[], listAt=0, lastCategory='', busy=false;
-  const clean=s=>String(s||'').normalize('NFKC').replace(/[’]/g,"'").replace(/\s+/g,' ').trim();
-  const normal=s=>clean(s).toLowerCase().replace(/[^a-z0-9]/g,'');
-  const mapURL=dest=>'https://www.google.com/maps/dir/?'+new URLSearchParams({api:'1',destination:dest,travelmode:'driving',dir_action:'navigate'});
-  const searchURL=q=>'https://www.google.com/maps/search/?'+new URLSearchParams({api:'1',query:q});
-  const forbidden=/^(?:my schedule|my calendar|my memories|my settings|the app|my projects|your day|my home screen|sleep|there|it|that)$/i;
-  const ordinal={first:0,one:0,second:1,two:1,third:2,three:2,fourth:3,four:3,fifth:4,five:4,sixth:5,six:5,seventh:6,seven:6,eighth:7,eight:7};
-  const categoryRules=[
-    {key:'restaurants',match:/\b(?:restaurants?|places? to eat|somewhere to eat|food|dinner|lunch|breakfast|brunch|grab a bite)\b/i,osm:'["amenity"~"restaurant|fast_food|cafe"]'},
-    {key:'coffee shops',match:/\b(?:coffee shops?|cafes?|espresso)\b/i,osm:'["amenity"="cafe"]'},
-    {key:'gyms',match:/\b(?:gyms?|fitness centers?)\b/i,osm:'["leisure"="fitness_centre"]'},
-    {key:'parks',match:/\b(?:parks?|gardens?|nature reserves?)\b/i,osm:'["leisure"~"park|garden|nature_reserve"]'},
-    {key:'gas stations',match:/\b(?:gas stations?|fuel stations?)\b/i,osm:'["amenity"="fuel"]'},
-    {key:'pharmacies',match:/\b(?:pharmacies|pharmacy|drugstores?)\b/i,osm:'["amenity"="pharmacy"]'},
-    {key:'grocery stores',match:/\b(?:grocery stores?|supermarkets?)\b/i,osm:'["shop"="supermarket"]'},
-    {key:'hotels',match:/\b(?:hotels?|motels?)\b/i,osm:'["tourism"~"hotel|motel"]'},
-    {key:'barbers',match:/\b(?:barbers?|haircuts?)\b/i,osm:'["shop"="hairdresser"]'},
-    {key:'car washes',match:/\b(?:car washes?|carwashes?)\b/i,osm:'["amenity"="car_wash"]'},
-    {key:'mechanics',match:/\b(?:mechanics?|auto repair shops?)\b/i,osm:'["shop"="car_repair"]'},
-    {key:'libraries',match:/\b(?:libraries|library)\b/i,osm:'["amenity"="library"]'}
-  ];
-  const distKm=(a,b,c,d)=>{const r=v=>v*Math.PI/180, dl=r(c-a),dn=r(d-b), x=Math.sin(dl/2)**2+Math.cos(r(a))*Math.cos(r(c))*Math.sin(dn/2)**2;return 12742*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));};
-  function nameDistance(a,b){a=normal(a);b=normal(b);if(!a||!b||a.length>90||b.length>90)return 999;let prev=Array.from({length:b.length+1},(_,i)=>i);for(let i=1;i<=a.length;i++){const row=[i];for(let j=1;j<=b.length;j++)row[j]=Math.min(row[j-1]+1,prev[j]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1));prev=row;}return prev[b.length];}
-  function parse(raw){
-    let q=clean(raw).replace(/^(?:(?:hey|hi|okay|ok)\s+)?(?:auren|aaron|oren)[,:! ]+/i,'').replace(/^(?:(?:please|can|could|would|will)\s+(?:you\s+)?)?/i,'').replace(/^(?:and|then|also|okay|ok)[, ]+/i,'').replace(/[!? .]+$/,'').trim();
-    if(/^(?:send (?:me )?(?:those |the |its |that )?directions again|repeat (?:the |those )?directions|take me there again|open (?:the )?route again|send me there again|directions again|go there|take me there|navigate there|send directions there|open directions again)$/i.test(q))return {reference:true};
-    if(choices.length && Date.now()-listAt<TTL){
-      const n=q.match(/\b(?:the\s+|number\s+|option\s+|place\s+|result\s+|restaurant\s+)?(first|second|third|fourth|fifth|sixth|seventh|eighth|[1-8])(?:\s+(?:one|place|result|option|restaurant))?\b/i)
-        ||q.match(/^(?:number\s+|option\s+|place\s+)?(one|two|three|four|five|six|seven|eight)$/i);
-      const word=n?.[1]?.toLowerCase();const index=word?(Number.isInteger(Number(word))&&+word>=1&&+word<=8?Number(word)-1:ordinal[word]):undefined;
-      if(index!==undefined && /\b(?:take|send|go|navigate|directions|route|open|drive|bring|number|option|place|result|restaurant|first|second|third)\b/i.test(q))return {selected:index};
-      if(/^(?:show|list|repeat|say) (?:me )?(?:the )?(?:places|results|options)(?: again)?$/i.test(q))return {showAgain:true};
-    }
-    if(/^(?:find|show|list|recommend|suggest|search for|look for|give me|where are|what are)\b/i.test(q)||/\b(?:near me|nearby|around me|in my area)\b/i.test(q)){
-      const rule=categoryRules.find(x=>x.match.test(q));
-      if(rule && (/(?:near|around|closest|where|find|show|list|recommend|suggest|search|look|give me|what are)/i.test(q)))return {category:rule};
-    }
-    const patterns=[
-      /^(?:send|take|bring|drive|guide|lead)\s+me\s+(?:over\s+)?to\s+(.+)$/i,
-      /^(?:get|give|send|show)\s+(?:me\s+)?(?:directions|a route|the route|the directions)\s+(?:to|for)\s+(.+)$/i,
-      /^(?:navigate|route|go|drive|head)\s+(?:me\s+)?to\s+(.+)$/i,
-      /^(?:open|pull up)\s+(?:google\s+)?maps\s+(?:to|for)\s+(.+)$/i,
-      /^(?:how (?:do|can) i (?:get|drive|go) to)\s+(.+)$/i,
-      /^directions\s+(?:to|for)\s+(.+)$/i,
-      /^(?:find|locate|show me)\s+(?:the\s+)?(?:closest|nearest)\s+(.+)$/i
-    ];
-    let match=null;for(const p of patterns){match=q.match(p);if(match)break;}
-    if(!match)return null;
-    let term=clean(match[1]).replace(/^(?:a|an|the)\s+/i,'').replace(/\s+(?:near me|around me|nearby|please|for me)$/i,'').trim();
-    if(!term||term.length<2||term.length>100||forbidden.test(term)||/^(?:a place|somewhere|anything|the restaurant|a restaurant|food|nothing)$/i.test(term))return null;
-    return {term,closest:/\b(?:closest|nearest)\b/i.test(q)};
-  }
-  function node(){return document.getElementById('aurenUniversalPlacesChoices');}
-  function ensurePanel(){let panel=node();if(panel)return panel;const host=document.getElementById('log');if(!host)return null;panel=document.createElement('section');panel.id='aurenUniversalPlacesChoices';panel.style.cssText='padding:16px;margin:12px 0;background:#20242b;color:#efdfba;border:1px solid #b8995e;border-radius:14px';host.append(panel);return panel;}
-  function button(label,fn){const b=document.createElement('button');b.type='button';b.textContent=label;b.style.cssText='padding:10px 14px;margin:4px;border-radius:9px;background:#d8b36e;color:#171717;font-weight:700;border:0;cursor:pointer;';b.onclick=fn;return b;}
-  function link(url,label){appendLink(url,label);}
-  function noteDestination(name,destination){recent={name,destination,at:Date.now()};}
-  async function sendLink(name,destination){noteDestination(name,destination);await addMessage('auren',`Directions to ${name} are ready. Tap the route link below.`);link(mapURL(destination),`Open directions to ${name}`);}
-  function showChoices(){const panel=ensurePanel();if(!panel)return;panel.replaceChildren();const title=document.createElement('strong');title.textContent=`Nearby ${lastCategory} — ${choices.length} options`;panel.append(title);const note=document.createElement('p');note.textContent='From OpenStreetMap. Listed by straight-line distance, not reviews or driving time.';note.style.cssText='font-size:12px;opacity:.8;margin:6px 0 10px';panel.append(note);
-    choices.forEach((p,i)=>{const line=document.createElement('div');line.style.cssText='padding:10px 4px;border-top:1px solid #66583f';const name=document.createElement('div');name.textContent=`${i+1}. ${p.name} · ${p.km.toFixed(1)} km away`;name.style.fontWeight='700';line.append(name);if(p.address){const address=document.createElement('small');address.textContent=p.address;address.style.display='block';line.append(address);}line.append(button('Get directions',()=>{void sendLink(p.name,`${p.lat},${p.lon}`);}));panel.append(line);});
-    panel.append(button('More in Google Maps',()=>{link(searchURL(`${lastCategory} near me`),`Search ${lastCategory} in Google Maps`);}));
-    const host=document.getElementById('log');if(host)host.scrollTop=host.scrollHeight;
-  }
-  async function queryOSM(selector,lat,lon){const query=`[out:json][timeout:16];(node(around:6000,${lat},${lon})${selector};way(around:6000,${lat},${lon})${selector};);out center 70;`;
-    const endpoints=['https://overpass.kumi.systems/api/interpreter','https://overpass.private.coffee/api/interpreter','https://overpass-api.de/api/interpreter'];
-    for(const endpoint of endpoints){const controller=new AbortController();const timer=setTimeout(()=>controller.abort(),7500);try{const r=await fetch(endpoint,{method:'POST',body:new URLSearchParams({data:query}),signal:controller.signal});if(!r.ok)continue;const data=await r.json();if(Array.isArray(data.elements))return data.elements;}catch(e){console.info('Nearby source failed',e?.message||e);}finally{clearTimeout(timer);}}
-    return null;
-  }
-  async function nearby(category){if(busy){await addMessage('auren','I am still checking nearby places.');return true;}busy=true;const gps=typeof getLocation==='function'?getLocation():null;lastCategory=category.key;
-    if(!gps||!Number.isFinite(gps.latitude)||!Number.isFinite(gps.longitude)){busy=false;choices=[];await addMessage('auren',`To show a numbered list of nearby ${category.key}, first enable Location in AUREN Settings. You can also use Google Maps without sharing GPS with AUREN.`);link(searchURL(`${category.key} near me`),`Search ${category.key} in Google Maps`);return true;}
-    await addMessage('auren',`Searching for nearby ${category.key}.`);
-    try{const raw=await queryOSM(category.osm,gps.latitude,gps.longitude);if(!raw){choices=[];await addMessage('auren','The free nearby listings service is unavailable right now. You can still search in Google Maps.');link(searchURL(`${category.key} near me`),`Search ${category.key} in Google Maps`);return true;}
-      const seen=new Set();choices=raw.map(e=>{const tags=e.tags||{};const lat=e.lat??e.center?.lat,lon=e.lon??e.center?.lon;return {name:String(tags.name||tags.brand||''),lat,lon,km:distKm(gps.latitude,gps.longitude,lat,lon),address:[tags['addr:housenumber'],tags['addr:street']].filter(Boolean).join(' ')};}).filter(p=>p.name&&Number.isFinite(p.lat)&&Number.isFinite(p.lon)).sort((a,b)=>a.km-b.km).filter(p=>{const k=normal(p.name)+':'+Math.round(p.lat*1000)+':'+Math.round(p.lon*1000);if(seen.has(k))return false;seen.add(k);return true;}).slice(0,8);
-      listAt=Date.now();if(choices.length){showChoices();await addMessage('auren',`I found ${choices.length} nearby ${category.key} options. I have numbered them on screen. You can say “take me to the second one” or tap Get directions.`);}else{await addMessage('auren',`I couldn't verify any nearby ${category.key} listings. Try Google Maps for more choices.`);link(searchURL(`${category.key} near me`),`Search ${category.key} in Google Maps`);}return true;
-    }finally{busy=false;}
-  }
-  async function lookup(name,gps){if(!gps||!Number.isFinite(gps.latitude)||!Number.isFinite(gps.longitude))return null;
-    const tokens=clean(name).split(/\s+/).map(w=>w.replace(/[^a-z0-9]/gi,'')).filter(w=>w.length>=3);if(!tokens.length)return null;const word=tokens.sort((a,b)=>b.length-a.length)[0].slice(0,32);
-    // Nearby lookup is exact-ish; do not silently treat a distant unrelated name as a match.
-    const selector=`["name"~"${word}",i]`;const raw=await queryOSM(selector,gps.latitude,gps.longitude);if(!raw)return null;
-    const matched=raw.map(x=>({name:x.tags?.name||'',lat:x.lat??x.center?.lat,lon:x.lon??x.center?.lon})).filter(x=>x.name&&Number.isFinite(x.lat)&&Number.isFinite(x.lon)).map(x=>({...x,score:nameDistance(name,x.name)})).sort((a,b)=>a.score-b.score||distKm(gps.latitude,gps.longitude,a.lat,a.lon)-distKm(gps.latitude,gps.longitude,b.lat,b.lon));
-    const best=matched[0];if(best&&best.score<=Math.max(1,Math.floor(normal(name).length*.22))&&(!matched[1]||matched[1].score>best.score||normal(matched[1].name)===normal(best.name)))return best;return null;
-  }
-  async function handle(raw){const intent=parse(raw);if(!intent)return false;
-    if(intent.reference){if(!recent||Date.now()-recent.at>TTL)return false;await addMessage('user',raw);await sendLink(recent.name,recent.destination);return true;}
-    if(intent.showAgain){await addMessage('user',raw);showChoices();await addMessage('auren','Here are your nearby options again.');return true;}
-    if(intent.selected!==undefined){await addMessage('user',raw);const picked=choices[intent.selected];if(!picked){await addMessage('auren',`I only found ${choices.length} places. Which number would you like?`);return true;}await sendLink(picked.name,`${picked.lat},${picked.lon}`);return true;}
-    if(intent.category){await addMessage('user',raw);return nearby(intent.category);}
-    await addMessage('user',raw);const name=intent.term;let matched=null;try{matched=await lookup(name,typeof getLocation==='function'?getLocation():null);}catch(e){console.info('Place name match unavailable',e?.message||e);}await sendLink(matched?.name||name,matched?`${matched.lat},${matched.lon}`:name);return true;
-  }
-  return {handle,parse,lookup,get choices(){return choices.slice();}};
-}
-
-
-
-const $ = id => document.getElementById(id);
-const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
-const butler = new Butler();
-// Initialized before voice callbacks; Smart Places replaces the fallback after setup.
-let aurenPlaces = { handle: async () => false, clear: () => {} };
-const settings = loadSettings();
-const HISTORY_LIMIT = 200;
-// Conversation continuity lasts across refreshes on this browser.
-// Only the last few non-sensitive conversational turns are sent to AI.
-const CONVERSATION_KEY = 'auren_ai_recent_v296';
-const aiRecent = [];
-try {
-  const stored = JSON.parse(localStorage.getItem(CONVERSATION_KEY) || '[]');
-  if (Array.isArray(stored)) aiRecent.push(...stored.filter(v =>
-    v && ['user', 'assistant'].includes(v.role) && typeof v.content === 'string'
-  ).slice(-20).map(v => ({role:v.role, content:v.content.slice(0,650)})));
-} catch { /* Keep working without saved history. */ }
-function rememberConversationTurn(question, answer) {
-  const sensitive = classify(question + ' ' + answer);
-  // Never keep sensitive chat in the AI context cache.
-  if (sensitive.blocked.length || sensitive.sensitive.length) return;
-  aiRecent.push({role:'user', content:question.slice(0,650)},
-    {role:'assistant', content:answer.slice(0,650)});
-  if (aiRecent.length > 20) aiRecent.splice(0, aiRecent.length - 20);
-  try { localStorage.setItem(CONVERSATION_KEY, JSON.stringify(aiRecent)); } catch {}
-}
-let latestBriefingContext = null;
-try { const saved = JSON.parse(sessionStorage.getItem('auren_latest_briefing_v213') || 'null');
-  if (saved && typeof saved.text === 'string' && Date.now()-saved.at < 45*60000) latestBriefingContext = saved;
-} catch {}
-
-const aiEndpointInput = $('aiEndpoint');
-window.addEventListener('auren:ai-endpoint-updated', () => { aiEndpointInput.value = getAIEndpoint(); });
-aiEndpointInput.value = getAIEndpoint();
-$('saveAIEndpoint').onclick = () => { try { setAIEndpoint(aiEndpointInput.value); window.dispatchEvent(new Event('auren:ai-endpoint-changed')); showStatus('AUREN AI connection saved on this browser.', 'ok'); } catch (e) { showStatus(e.message, 'error'); } };
-$('clearAIEndpoint').onclick = () => { setAIEndpoint(''); aiEndpointInput.value = ''; showStatus('AI connection removed.', 'info'); };
-let storageOk = false, sinceTrim = 0;
-// Compact voice subtitles: fixed two lines, with older words rolling away.
-// Full messages remain unchanged in Text chat and history.
-const captionNode = $('liveTranscript');
-// Accessible standalone transcript panel. Does not replace the rotating reminder ticker.
-const speechPanel=document.createElement('section');
-speechPanel.id='aurenSpeechPanel';
-speechPanel.setAttribute('aria-label','Live voice conversation');
-speechPanel.style.cssText='box-sizing:border-box;width:min(92%,680px);margin:14px auto 12px;padding:14px 18px;border:1px solid rgba(199,168,104,.38);border-radius:15px;background:rgba(25,27,32,.92);color:#e6d5af;line-height:1.55;text-align:left;min-height:66px;max-height:158px;overflow-y:auto;overflow-wrap:anywhere;font-size:15px;';
-const speechPanelTitle=document.createElement('strong');speechPanelTitle.textContent=''; speechPanelTitle.hidden=true;speechPanelTitle.style.cssText='display:block;font-size:10px;letter-spacing:2px;opacity:.75;margin-bottom:5px;';
-const speechPanelText=document.createElement('div');speechPanelText.textContent='Your conversation appears here when speaking.';
-let aurenSpeechRetryText='';
-const aurenSpeechFallback=document.createElement('button');
-aurenSpeechFallback.type='button';aurenSpeechFallback.textContent='🔊 Tap to hear AUREN';
-aurenSpeechFallback.style.cssText='display:none;margin:10px auto;padding:13px 20px;border-radius:12px;border:1px solid #c9a661;background:#342d22;color:#f7dfb2;font-size:16px;font-weight:700;cursor:pointer';
-// AUREN v3.46 — persistent Hear AUREN toggle; NEVER replays earlier replies.
-function aurenV346PaintHearButton(){
-  if(!aurenIOS)return;
-  const enabled=Boolean($('speakReplies')?.checked);
-  aurenSpeechFallback.style.display='block';
-  aurenSpeechFallback.textContent=enabled?'🔊 Hear AUREN: ON':'🔇 Hear AUREN: OFF';
-  aurenSpeechFallback.setAttribute('aria-pressed',String(enabled));
-  aurenSpeechFallback.setAttribute('aria-label',enabled?'Turn off AUREN spoken replies':'Turn on AUREN spoken replies');
-}
-aurenSpeechFallback.addEventListener('click',()=>{
-  if(!aurenIOS || !capabilities.speak)return;
-  const next=!$('speakReplies').checked;
-  $('speakReplies').checked=next;
-  voice.setEnabled(next);
-  if(next){
-    // Safari needs a real user gesture to prime playback. Do not synthesize any reply.
-    try{voice.primeAudio();}catch(e){console.debug('Audio unlock unavailable',e);}
-  }else{
-    try{voice.stopSpeaking();}catch{}
-    try{window.speechSynthesis?.cancel();}catch{}
-  }
-  try{localStorage.setItem(AUREN_SPEECH_PREF,String(next));}catch{}
-  aurenV346PaintHearButton();
-});
-
-const chicagoClock=document.createElement('div');chicagoClock.style.cssText='font-size:11px;opacity:.75;margin-top:8px;';
+// AUREN v3.49: one-time voice activation, never an ON/OFF toggle.
+ let aurenIPhoneAudioUnlocked=false;
+ function aurenV346PaintHearButton(){
+   if(!aurenIOS)return;
+   aurenSpeechFallback.style.display=aurenIPhoneAudioUnlocked?'none':'block';
+   aurenSpeechFallback.textContent='🔊 Hear AUREN';
+   aurenSpeechFallback.setAttribute('aria-label','Enable AUREN spoken replies');
+   aurenSpeechFallback.removeAttribute('aria-pressed');
+ }
+ aurenSpeechFallback.addEventListener('click',()=>{
+   if(!aurenIOS || !capabilities.speak)return;
+   $('speakReplies').checked=true;
+   try{localStorage.setItem(AUREN_SPEECH_PREF,'true');}catch{}
+   voice.setEnabled(true);
+   voice.primeAudio();
+   aurenIPhoneAudioUnlocked=true;
+   aurenV346PaintHearButton();
+   // One brief confirmation ONLY on this user gesture. No history replay.
+   // The direct tap is important because iPhone Safari can block async speech.
+   voice.speak('At your service.',{manual:true});
+ });
+ const chicagoClock=document.createElement('div');chicagoClock.style.cssText='font-size:11px;opacity:.75;margin-top:8px;';
 const paintChicagoClock=()=>{chicagoClock.textContent='Dallas · '+new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',weekday:'short',hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date());};
 paintChicagoClock();setInterval(paintChicagoClock,30000);
 speechPanel.append(speechPanelTitle,speechPanelText);
@@ -388,7 +109,7 @@ const voice = createVoice({
     if(aurenIOS && /AUREN speaking/i.test(String(msg)))aurenV343SawSpeech=true;
     if(aurenIOS){
       if(/spoken reply unavailable|has not started spoken audio|speech output unavailable|speech did not start|speech playback timed out/i.test(msg)){
-        if(aurenIOS) aurenV346PaintHearButton(); else aurenSpeechFallback.style.display = aurenSpeechRetryText ? 'block' : 'none';
+        if(aurenIOS){aurenIPhoneAudioUnlocked=false;aurenV346PaintHearButton();}else aurenSpeechFallback.style.display=aurenSpeechRetryText?'block':'none';
       } else if(/AUREN speaking|Tap the orb to speak/i.test(msg)){
         if(!aurenIOS && /AUREN speaking/i.test(msg))aurenSpeechFallback.style.display='none';
       }
@@ -465,14 +186,13 @@ function aurenV343PrepareTap(){
   }
 }
 function aurenV343Speak(text){
-  // v3.48: the voice module owns iPhone retries. Never create a second app-level
-  // playback timer, which could cancel the first reply or replay it twice.
-  if(aurenIOS)aurenV343StopRecovery();
-  if(aurenIOS && !$('speakReplies')?.checked)return;
-  if(aurenIOS){try{voice.setEnabled(true);}catch{}}
-  voice.speak(String(text||''));
-}
-let aurenLastIPhoneTap=0;
+   if(aurenIOS)aurenV343StopRecovery();
+   if(aurenIOS && !$('speakReplies')?.checked)return;
+   const content=String(text||'').trim();
+   if(!content)return;
+   voice.speak(content);
+ }
+ let aurenLastIPhoneTap=0;
 async function toggleIPhoneRecorder() {
   // Keep the existing button. Stop speech first; prepare speech playback for the next reply.
   aurenV343PrepareTap();
@@ -585,7 +305,7 @@ speechPanel.insertAdjacentElement('afterend',aurenSpeechFallback);
 // AUREN v3.46 initialize Hear toggle
 if(aurenIOS)queueMicrotask(()=>aurenV346PaintHearButton());
 // v3.45 — The existing Hear AUREN control is available immediately on iPhone.
-if(aurenIOS){aurenSpeechFallback.style.display='block';aurenSpeechFallback.textContent='🔊 Hear AUREN';}
+
 
 function activateOrb(event) {
   if (aurenIOS) {
