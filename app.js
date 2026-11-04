@@ -1,3 +1,4 @@
+// AUREN v3.48 — iPhone automatic spoken reply repair; no new controls.
 // AUREN v3.46 — persistent Hear AUREN toggle; no old-message replay.
 // AUREN v3.45 — iPhone Hear AUREN immediately and context-safe topic switching.
 // AUREN v3.43 — Original-button iPhone speech repair.
@@ -119,7 +120,7 @@ import { NeedsConfirmationError, historySafe, classify } from './sensitive.js';
 import { Butler, isSessionNote } from './butler.js';
 import { buildBackup, encryptBackup, decryptBackup, validateBackup, applyPlan, describeReport, LIMITS } from './backup.js';
 import { loadSettings, saveSettings } from './settings.js';
-import { createVoice } from './voice.js?v=3.21';
+import { createVoice } from './voice.js?v=3.48';
 import { createIPhoneRecorder } from './iphone-voice.js?v=3.38';
 import { getAIEndpoint, setAIEndpoint, askAI } from './ai.js';
 import { getWeatherBriefing } from './weather.js';
@@ -464,31 +465,12 @@ function aurenV343PrepareTap(){
   }
 }
 function aurenV343Speak(text){
-  if(!aurenIOS){voice.speak(text);return;}
-  aurenV343StopRecovery();
-  if(!$('speakReplies')?.checked)return; // Respect an intentionally disabled setting.
-  const content=String(text||'').trim();
-  if(!content)return;
-  try{voice.setEnabled(true);}catch{}
-  const myTurn=aurenV343SpeechSerial;
-  aurenV343SawSpeech=false;
-  aurenV343LastVoiceTurn=Date.now();
-  try{window.speechSynthesis?.resume();}catch{}
-  voice.speak(content);
-  // Safari occasionally loses a reply after finishing microphone capture.
-  // Retry the SAME voice engine only when nothing began playing. No extra UI.
-  aurenV343RecoveryTimer=setTimeout(()=>{
-    aurenV343RecoveryTimer=null;
-    if(myTurn!==aurenV343SpeechSerial||document.hidden||!$('speakReplies')?.checked)return;
-    const synth=window.speechSynthesis;
-    if(!synth || synth.speaking || aurenV343SawSpeech)return;
-    try{
-      voice.stopSpeaking();
-      synth.cancel(); synth.resume();
-      voice.setEnabled(true);
-      voice.speak(content,{manual:true}); // Bounded single recovery, no loop.
-    }catch(e){console.warn('AUREN iPhone speech retry failed',e);}
-  },5500);
+  // v3.48: the voice module owns iPhone retries. Never create a second app-level
+  // playback timer, which could cancel the first reply or replay it twice.
+  if(aurenIOS)aurenV343StopRecovery();
+  if(aurenIOS && !$('speakReplies')?.checked)return;
+  if(aurenIOS){try{voice.setEnabled(true);}catch{}}
+  voice.speak(String(text||''));
 }
 let aurenLastIPhoneTap=0;
 async function toggleIPhoneRecorder() {
