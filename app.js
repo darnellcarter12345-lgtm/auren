@@ -1,27 +1,82 @@
-// AUREN v3.49b — original one-time Hear AUREN behavior; single speech queue.
-// AUREN v3.48 — iPhone automatic spoken reply repair; no new controls.
-// AUREN v3.49: one-time voice activation, never an ON/OFF toggle.
- let aurenIPhoneAudioUnlocked=false;
- function aurenV346PaintHearButton(){
-   if(!aurenIOS)return;
-   aurenSpeechFallback.style.display=aurenIPhoneAudioUnlocked?'none':'block';
-   aurenSpeechFallback.textContent='🔊 Hear AUREN';
-   aurenSpeechFallback.setAttribute('aria-label','Enable AUREN spoken replies');
-   aurenSpeechFallback.removeAttribute('aria-pressed');
- }
- aurenSpeechFallback.addEventListener('click',()=>{
-   if(!aurenIOS || !capabilities.speak)return;
-   $('speakReplies').checked=true;
-   try{localStorage.setItem(AUREN_SPEECH_PREF,'true');}catch{}
-   voice.setEnabled(true);
-   voice.primeAudio();
-   aurenIPhoneAudioUnlocked=true;
-   aurenV346PaintHearButton();
-   // One brief confirmation ONLY on this user gesture. No history replay.
-   // The direct tap is important because iPhone Safari can block async speech.
-   voice.speak('At your service.',{manual:true});
- });
- const chicagoClock=document.createElement('div');chicagoClock.style.cssText='font-size:11px;opacity:.75;margin-top:8px;';
+// AUREN v3.50 — Startup restoration + iPhone one-tap speech initialization.
+// Restores the declarations accidentally removed by v3.49b. Preserves all later features.
+import { openDB, put, getAll, del, clear, healthCheck, storageEstimate, uid, STORES } from './db.js';
+import * as Mem from './memory.js';
+import * as Proj from './projects.js';
+import { NeedsConfirmationError, historySafe, classify } from './sensitive.js';
+import { Butler, isSessionNote } from './butler.js';
+import { buildBackup, encryptBackup, decryptBackup, validateBackup, applyPlan, describeReport, LIMITS } from './backup.js';
+import { loadSettings, saveSettings } from './settings.js';
+import { createVoice } from './voice.js?v=3.49';
+import { createIPhoneRecorder } from './iphone-voice.js?v=3.21';
+import { getAIEndpoint, setAIEndpoint, askAI } from './ai.js';
+import { getWeatherBriefing } from './weather.js';
+import { createUniversalPlacesBrain } from './universal-places-v3.34.js?v=3.34';
+const $ = id => document.getElementById(id);
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+const butler = new Butler();
+let aurenPlaces = { handle: async () => false, clear: () => {} };
+const settings = loadSettings();
+const HISTORY_LIMIT = 200;
+const CONVERSATION_KEY = 'auren_ai_recent_v296';
+const aiRecent = [];
+try {
+  const stored = JSON.parse(localStorage.getItem(CONVERSATION_KEY) || '[]');
+  if (Array.isArray(stored)) aiRecent.push(...stored.filter(v =>
+    v && ['user', 'assistant'].includes(v.role) && typeof v.content === 'string'
+  ).slice(-20).map(v => ({role:v.role, content:v.content.slice(0,650)})));
+} catch { /* Keep working without saved history. */ }
+function rememberConversationTurn(question, answer) {
+  const sensitive = classify(question + ' ' + answer);
+  if (sensitive.blocked.length || sensitive.sensitive.length) return;
+  aiRecent.push({role:'user', content:question.slice(0,650)},
+    {role:'assistant', content:answer.slice(0,650)});
+  if (aiRecent.length > 20) aiRecent.splice(0, aiRecent.length - 20);
+  try { localStorage.setItem(CONVERSATION_KEY, JSON.stringify(aiRecent)); } catch {}
+}
+let latestBriefingContext = null;
+try { const saved = JSON.parse(sessionStorage.getItem('auren_latest_briefing_v213') || 'null');
+  if (saved && typeof saved.text === 'string' && Date.now()-saved.at < 45*60000) latestBriefingContext = saved;
+} catch {}
+const aiEndpointInput = $('aiEndpoint');
+window.addEventListener('auren:ai-endpoint-updated', () => { aiEndpointInput.value = getAIEndpoint(); });
+aiEndpointInput.value = getAIEndpoint();
+$('saveAIEndpoint').onclick = () => { try { setAIEndpoint(aiEndpointInput.value); window.dispatchEvent(new Event('auren:ai-endpoint-changed')); showStatus('AUREN AI connection saved on this browser.', 'ok'); } catch (e) { showStatus(e.message, 'error'); } };
+$('clearAIEndpoint').onclick = () => { setAIEndpoint(''); aiEndpointInput.value = ''; showStatus('AI connection removed.', 'info'); };
+let storageOk = false, sinceTrim = 0;
+const captionNode = $('liveTranscript');
+const speechPanel=document.createElement('section');
+speechPanel.id='aurenSpeechPanel';
+speechPanel.setAttribute('aria-label','Live voice conversation');
+speechPanel.style.cssText='box-sizing:border-box;width:min(92%,680px);margin:14px auto 12px;padding:14px 18px;border:1px solid rgba(199,168,104,.38);border-radius:15px;background:rgba(25,27,32,.92);color:#e6d5af;line-height:1.55;text-align:left;min-height:66px;max-height:158px;overflow-y:auto;overflow-wrap:anywhere;font-size:15px;';
+const speechPanelTitle=document.createElement('strong');speechPanelTitle.textContent=''; speechPanelTitle.hidden=true;speechPanelTitle.style.cssText='display:block;font-size:10px;letter-spacing:2px;opacity:.75;margin-bottom:5px;';
+const speechPanelText=document.createElement('div');speechPanelText.textContent='Your conversation appears here when speaking.';
+let aurenSpeechRetryText='';
+const aurenSpeechFallback=document.createElement('button');
+aurenSpeechFallback.type='button';aurenSpeechFallback.textContent='🔊 Hear AUREN';
+aurenSpeechFallback.style.cssText='display:none;margin:10px auto;padding:13px 20px;border-radius:12px;border:1px solid #c9a661;background:#342d22;color:#f7dfb2;font-size:16px;font-weight:700;cursor:pointer';
+// AUREN v3.50: one user gesture enables future voice replies; never replay chat history.
+let aurenIPhoneAudioUnlocked=false;
+function aurenV346PaintHearButton(){
+  if(!aurenIOS)return;
+  aurenSpeechFallback.style.display=aurenIPhoneAudioUnlocked?'none':'block';
+  aurenSpeechFallback.textContent='🔊 Hear AUREN';
+  aurenSpeechFallback.setAttribute('aria-label','Enable AUREN spoken replies');
+  aurenSpeechFallback.removeAttribute('aria-pressed');
+}
+aurenSpeechFallback.addEventListener('click',()=>{
+  if(!aurenIOS||!capabilities.speak)return;
+  $('speakReplies').checked=true;
+  try{localStorage.setItem(AUREN_SPEECH_PREF,'true');}catch{}
+  voice.setEnabled(true);
+  try{voice.primeAudio();}catch(error){console.warn('AUREN: audio activation',error);}
+  try{window.speechSynthesis?.resume();}catch{}
+  aurenIPhoneAudioUnlocked=true;
+  aurenV346PaintHearButton();
+  // Brief confirmation is spoken once on the direct tap, never from old chat history.
+  voice.speak('At your service.',{manual:true});
+});
+const chicagoClock=document.createElement('div');chicagoClock.style.cssText='font-size:11px;opacity:.75;margin-top:8px;';
 const paintChicagoClock=()=>{chicagoClock.textContent='Dallas · '+new Intl.DateTimeFormat('en-US',{timeZone:'America/Chicago',weekday:'short',hour:'numeric',minute:'2-digit',timeZoneName:'short'}).format(new Date());};
 paintChicagoClock();setInterval(paintChicagoClock,30000);
 speechPanel.append(speechPanelTitle,speechPanelText);
@@ -109,7 +164,7 @@ const voice = createVoice({
     if(aurenIOS && /AUREN speaking/i.test(String(msg)))aurenV343SawSpeech=true;
     if(aurenIOS){
       if(/spoken reply unavailable|has not started spoken audio|speech output unavailable|speech did not start|speech playback timed out/i.test(msg)){
-        if(aurenIOS){aurenIPhoneAudioUnlocked=false;aurenV346PaintHearButton();}else aurenSpeechFallback.style.display=aurenSpeechRetryText?'block':'none';
+        if(!aurenIOS)aurenSpeechFallback.style.display=aurenSpeechRetryText?'block':'none';
       } else if(/AUREN speaking|Tap the orb to speak/i.test(msg)){
         if(!aurenIOS && /AUREN speaking/i.test(msg))aurenSpeechFallback.style.display='none';
       }
