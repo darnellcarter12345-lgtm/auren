@@ -1,3 +1,4 @@
+// AUREN v3.55 — nearby place handoff: verified listings, real Maps links, truthful follow-ups.
 // AUREN v3.54 — verified nearby listings and honest location follow-ups; v3.53 voice unchanged.
 // AUREN v3.53 — iPhone Safari location permission and live session accuracy; no other systems changed.
 // AUREN v3.52 — Consistent British butler voice on Hear AUREN and normal replies.
@@ -4711,12 +4712,28 @@ const aurenUniversalPlaces334 = createUniversalPlacesBrain({
 // AUREN v3.51 — Only deliberate place commands may reach a Places Brain.
 // This gate is shared by all legacy map routers. No old map conversation may
 // turn a general chat question into directions.
+// v3.55: Carefully recognize iPhone dictation such as
+// "I need nearby listening to Chipotle" (listings, misheard by Safari).
+// Only requests for physical locations qualify, not mentions in conversation.
+function aurenV355NearbyPlaceRequest(raw) {
+  const q=String(raw||'').trim()
+    .replace(/^(?:(?:hey|hi)\s+)?(?:auren|aaron|oren)[,!. ]*/i,'')
+    .replace(/[.?!]+$/,'').trim();
+  if(q.length>145)return null;
+  const m=q.match(/^(?:(?:i\s+(?:need|want|would like)|can you (?:find|show|send|give|list|locate)|could you (?:find|show|send|give|list)|please (?:find|show|send|give|list)|find|show|give|send|list)\s+(?:me\s+)?)(?:(?:some|the|a|any)\s+)?(?:(?:nearby|nearest|closest|local)\s+)?(?:listings?|listening|locations?|restaurants?|stores?|places?|branches?)\s+(?:for|of|to|at|near)\s+([A-Za-z][A-Za-z0-9&'’ .-]{2,65})$/i);
+  if(!m)return null;
+  const name=m[1].trim().replace(/\s+(?:near me|around me|nearby)$/i,'').trim();
+  if(!name || /^(?:me|you|it|them|that|this|my schedule|my memory)$/i.test(name))return null;
+  return {kind:'name',name};
+}
 function aurenV351ActualPlaceIntent(raw) {
   const q=String(raw||'').trim()
     .replace(/^(?:(?:hey|hi|okay|ok)\s+)?(?:auren|aaron|oren)[,!. ]*/i,'')
     .replace(/^(?:(?:please)\s+)?(?:can|could|would|will)\s+you\s+/i,'')
     .replace(/^please\s+/i,'').trim().replace(/[.!?]+$/,'').trim();
   if(!q || q.length>190) return false;
+  if(aurenV355NearbyPlaceRequest(raw))return true;
+  if(/^what are (?:the\s+)?(?:nearby|nearest|closest)\s+(?:restaurants?|coffee shops?|cafes?|gyms?|gas stations?|pharmacies|grocery stores?|places?|stores?)$/i.test(q))return true;
   // Topics and tasks are never physical destinations, even following Maps.
   if(/^(?:what|why|who|when|how|tell me|explain|help me|remember|remind|schedule|set|write|draft|create|delete|change|turn|stop|play|call|text|message|email|summari[sz]e)\b/i.test(q)) {
     // Genuine location questions must explicitly ask where a physical place is.
@@ -4743,6 +4760,13 @@ function aurenV351ActualPlaceIntent(raw) {
 }
 function aurenV351NewConversationTopic(raw){return !aurenV351ActualPlaceIntent(raw);}
 async function send(text) {
+  // v3.55: Resolve clearly expressed listing requests before the generic AI.
+  // Safari may transcribe "listings" as "listening". Never search the raw sentence.
+  const v355Name=aurenV355NearbyPlaceRequest(text);
+  if(v355Name){
+    try{if(await aurenPlaces341.handle('find '+v355Name.name+' near me',text))return;}
+    catch(error){console.warn('AUREN nearby list handoff failed',error);}
+  }
   // v3.54: Nearby-search follow-ups belong to the verified Places handler,
   // never the general AI. Do not confuse a chat "yes" with location consent.
   if(aurenPlaces341.isRecentPlacesFollowup(text)) {
@@ -5181,7 +5205,7 @@ async function send(text) {
     // automatically; a maps search only opens after the user clicks a link.
     const nearbyRequest=/\b(?:near(?:by| me)|close to me|around me|places near|recommend.*near)\b/i.test(text);
     const trafficRequest=/\b(?:traffic|how busy (?:the )?roads|drive time)\b/i.test(text);
-    if((nearbyRequest && aurenV351ActualPlaceIntent(text)) || trafficRequest){
+    if(trafficRequest){
       if(!locationApproved || !aurenLocation){
         await addMessage('auren','Location is off. You can enable it in Settings or provide an area instead.');offerLocationButton();
       } else {
@@ -6136,6 +6160,8 @@ const aurenPlaces341 = (() => {
   function parse(raw) {
     let t=clean(raw).replace(/^(?:(?:hey|hi|okay|ok)\s+)?(?:auren|aaron|oren)[,!. ]*/i,'').replace(/^(?:(?:please|hey)\s+)?(?:can|could|would|will)\s+you\s+/i,'').replace(/^please\s+/i,'').replace(/[.?!]+$/,'').trim();
     if(!t)return null;
+    const dictatedListing=aurenV355NearbyPlaceRequest(raw);
+    if(dictatedListing)return dictatedListing;
     if(/^(?:send (?:me )?(?:those |the |my |its )?directions again|directions again|repeat (?:those |the )?directions|take me there again|open (?:the )?route again|send me there again)$/i.test(t))return {kind:'repeat'};
     if(/^(?:show|open|display|bring back)\s+(?:me\s+)?(?:the\s+)?(?:nearby\s+)?(?:results|options|places|list)\s*(?:again)?$/i.test(t))return {kind:'list'};
     let m=t.match(/^(?:(?:take|send|bring|guide|drive)\s+me\s+to|(?:navigate|head|go|drive)\s+to|(?:give|send|show|get)\s+(?:me\s+)?(?:the\s+)?(?:directions?|route)\s+(?:to|for)|directions?\s+(?:to|for))\s+(?:the\s+)?(?:number\s+)?(first|second|third|fourth|fifth|sixth|seventh|eighth|[1-8])(?:\s+one)?$/i);
@@ -6144,7 +6170,7 @@ const aurenPlaces341 = (() => {
     const searchTerm=m?clean(m[1]):null;
     if(searchTerm){for(const [label,rule,selector] of categories)if(rule.test(searchTerm))return {kind:'nearby',label,selector};}
     m=t.match(/^(?:find|show|search for|look for|locate|what are|where are)\s+(?:me\s+)?(?:some\s+)?(?:the\s+)?(?:nearby\s+)?(.+)$/i);
-    if(m){let name=clean(m[1]).replace(/\s+(?:near me|nearby|around me|close to me)$/i,'').replace(/\s+(?:locations?|restaurants?|stores?|branches?)$/i,'');if(name.length>=3)return {kind:'name',name};}
+    if(m){let name=clean(m[1]).replace(/\s+(?:near me|nearby|around me|close to me)$/i,'').replace(/\s+(?:locations?|restaurants?|stores?|branches?)$/i,'').replace(/^(?:nearest|closest|nearby)\s+/i,'');if(name.length>=3)return {kind:'name',name};}
     // Short phrases produced by clipped iPhone dictation are accepted only if the
     // destination is unambiguous. Do not rewrite other normal conversation.
     m=t.match(/^(?:only\s+)?to\s+(.{3,70})$/i);
@@ -6181,6 +6207,11 @@ const aurenPlaces341 = (() => {
   function matchName(name,candidates){const wanted=norm(aliases.get(norm(name))||name);if(!wanted)return null;const scored=candidates.map(c=>{const n=norm(c.name),err=lev(wanted,n);const part=(n.includes(wanted)||wanted.includes(n))?0.1:1;return {place:c,score:err/Math.max(wanted.length,n.length,1)*part};}).sort((a,b)=>a.score-b.score||a.place.km-b.place.km);const win=scored[0];return win && win.score<=.32?win.place:null;}
   // v3.54: A list is considered found ONLY after the provider returns named
   // locations with coordinates. A Google Maps fallback is not a verified list.
+  function sendActualMapsLink(term){
+    // A real tappable link, not an assistant message claiming Maps has opened.
+    // Google Maps performs its own live search when the user taps the link.
+    aurenAppendPlaceLink(String(term).trim()+' near me');
+  }
   async function verifiedReply(message){
     try{await addMessage('auren',message);}catch(error){console.warn('AUREN verified places reply failed',error);}
   }
@@ -6199,15 +6230,16 @@ const aurenPlaces341 = (() => {
     notice(`Searching for nearby ${intent.label}…`,`${intent.label} near me`);
     const raw=await fetchOSM(intent.selector,p);if(request!==activeRequest)return;
     options=convert(raw,p).slice(0,8);
-    if(options.length){showOptions(intent.label);await verifiedReply(verifiedListText(intent.label,options));}
-    else {notice(`No verified nearby ${intent.label} listings were returned.`,`${intent.label} near me`);await verifiedReply(`I could not verify any nearby ${intent.label} listings from the map-data service. I haven't found a list to send; the Google Maps search link is available on screen.`);}
+    if(options.length){showOptions(intent.label);await verifiedReply(verifiedListText(intent.label,options));sendActualMapsLink(intent.label);}
+    else {notice(`No verified nearby ${intent.label} listings were returned.`,`${intent.label} near me`);await verifiedReply(`I could not verify any nearby ${intent.label} listings from the map-data service. I haven't found a list to send. Tap the Google Maps link below to search.`);sendActualMapsLink(intent.label);}
   }
   async function searchName(name,request){
     const known=aliases.get(norm(name));if(known)name=known;
     const p=gps();options=[];lastCategory=name;
     if(!p){
       notice(`AUREN location is OFF. Turn it ON in Settings to search for nearby ${name}.`,`${name} near me`);
-      await verifiedReply(`I cannot verify nearby ${name} locations because AUREN does not currently have your Safari location. Please enable Location in Settings; I have not found or sent any listings.`);
+      await verifiedReply(`AUREN does not have your Safari location, so I cannot verify which ${name} is nearest. You can enable Location in Settings, or tap the Google Maps search link below. I have not found or sent a verified list.`);
+      sendActualMapsLink(name);
       return;
     }
     notice(`Finding nearby ${name} locations…`,`${name} near me`);
@@ -6226,23 +6258,24 @@ const aurenPlaces341 = (() => {
       found=convert(raw,p).filter(x=>norm(x.name).includes(safeToken) || safeToken.includes(norm(x.name)));
     }
     options=found.filter(x=>norm(x.name).includes(safeToken)||safeToken.includes(norm(x.name))).slice(0,8);
-    if(options.length){showOptions(name);await verifiedReply(verifiedListText(name,options));}
+    if(options.length){showOptions(name);await verifiedReply(verifiedListText(name,options));sendActualMapsLink(name);}
     else{
       notice(`No verified nearby ${name} listings were returned.`,`${name} near me`);
-      await verifiedReply(`I could not verify nearby ${name} locations from the map-data service. I haven't found a list to send. Use the Google Maps search link on screen to check current listings.`);
+      await verifiedReply(`I could not verify nearby ${name} locations from the map-data service. I haven't found a list to send. Tap the Google Maps link below to search.`);
+      sendActualMapsLink(name);
     }
   }
   function recentFollowup(raw){
     if(!lastRequestedPlace||Date.now()-lastRequestedPlace.at>5*60*1000)return false;
-    return /^(?:(?:yes|yeah|yep|sure|okay|ok)[,.! ]+)?(?:send (?:me )?(?:them|those|the locations|the places|the list)|show (?:me )?(?:them|those|the locations|the places|the list)|list (?:them|those)|give me (?:them|those|the list)|where are (?:they|those)|what are (?:the |those )?locations|yes(?: please)?|go ahead|please do)[.!? ]*$/i.test(String(raw||'').trim());
+    return /^(?:(?:yes|yeah|yep|sure|okay|ok)[,.! ]+)?(?:send (?:me )?(?:them|those|the locations|the places|the list)|show (?:me )?(?:them|those|the locations|the places|the list)|list (?:them|those)|give me (?:them|those|the list)|where are (?:they|those)|what are (?:the |those )?locations|yes(?: please)?|go ahead|please do|i(?:'m| am) ready|ready to (?:see|view) (?:them|the results|the list))[.!? ]*$/i.test(String(raw||'').trim().replace(/[‘’]/g,"'"));
   }
   async function followup(raw){
     if(!recentFollowup(raw))return false;
     await addMessage('user',String(raw));
-    if(options.length){showOptions(lastCategory);await verifiedReply(verifiedListText(lastCategory,options));return true;}
+    if(options.length){showOptions(lastCategory);await verifiedReply(verifiedListText(lastCategory,options));sendActualMapsLink(lastCategory);return true;}
     if(!hasGPS()){
       notice('AUREN location is not available. Enable it in Settings.',`${lastRequestedPlace.name||lastRequestedPlace.label} near me`);
-      await verifiedReply('I do not have a verified list to send because AUREN location is OFF or unavailable. Turn Location ON in Settings and ask for the places again.');return true;
+      await verifiedReply('I do not have a verified list to send because AUREN location is OFF or unavailable. Turn Location ON in Settings or tap the Google Maps link below.');sendActualMapsLink(lastRequestedPlace.name||lastRequestedPlace.label);return true;
     }
     const request=++activeRequest;
     if(lastRequestedPlace.kind==='name')await searchName(lastRequestedPlace.name,request);
