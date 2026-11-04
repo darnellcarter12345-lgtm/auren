@@ -1,3 +1,4 @@
+// AUREN v3.48 — smoother iPhone speech; desktop voice unchanged.
 // AUREN voice v3.18 — unchanged sound from v3.17; improved iPhone recorder controller.
 // AUREN voice v3.17 — verified speech startup and recovery.
 // AUREN voice v3.16 — Safari iOS playback reliability.
@@ -366,6 +367,7 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
     }
   }
   function stopSpeaking() {
+    ++iosSpeechGeneration; clearTimeout(iosSpeechTimer); iosSpeechTimer=null;
     if (synth) synth.cancel();
     currentUtterance = null;
     speaking = false; spokenText = '';
@@ -384,7 +386,76 @@ export function createVoice({ onTranscript, onStatus, onInterim, onHeard, onSpok
       return true;
     } catch (error) { report('iPhone audio is unavailable. Try tapping the orb again.'); return false; }
   }
+// AUREN v3.48: one iPhone speech queue, one bounded retry, no interface changes.
+  let iosSpeechGeneration = 0;
+  let iosSpeechTimer = null;
+  function speakMobileReliably(text, options = {}) {
+    if (!enabled || !synth || !available().speak || !text) return;
+    const generation = ++iosSpeechGeneration;
+    clearTimeout(iosSpeechTimer);
+    if (!conversation || !interruptionsEnabled) abort();
+    try { synth.cancel(); synth.resume(); } catch {}
+    clearPhrase(); speaking = true; interrupted = false; spokenText = String(text);
+    interruptionCandidate = ''; interruptionSamples = 0;
+    let started = false;
+    const run = (attempt) => {
+      if (generation !== iosSpeechGeneration || !enabled || document.hidden) return;
+      // Use a fresh utterance after a cancelled queue. Never reuse a cancelled one.
+      const u = new SpeechSynthesisUtterance(String(text));
+      currentUtterance = u;
+      u.lang = navigator.language || 'en-US';
+      u.rate = voiceRate; u.pitch = voicePitch;
+      const chosen = voicePick();
+      if (chosen) { u.voice = chosen; u.lang = chosen.lang; }
+      u.onstart = () => {
+        if (generation !== iosSpeechGeneration || currentUtterance !== u) return;
+        started = true; onSpoken?.(text, text); report('AUREN speaking…');
+      };
+      u.onboundary = e => {
+        if (generation !== iosSpeechGeneration || currentUtterance !== u) return;
+        if (Number.isInteger(e.charIndex) && e.charIndex >= 0) {
+          onSpoken?.(String(text).slice(0, Math.min(String(text).length, e.charIndex+(e.charLength||1))), text);
+        }
+      };
+      u.onend = () => {
+        if (generation !== iosSpeechGeneration || currentUtterance !== u) return;
+        clearTimeout(iosSpeechTimer); iosSpeechTimer=null;
+        currentUtterance=null; speaking=false; spokenText=''; onSpoken?.(text,text);
+        try { options.onFinished?.(); } catch(e) { console.warn('AUREN continuation failed', e); }
+        report('Tap the orb to speak'); scheduleIdle();
+      };
+      u.onerror = e => {
+        if (generation !== iosSpeechGeneration || currentUtterance !== u) return;
+        // Cancellation from an intentional interruption is not a playback error.
+        if (e.error === 'canceled' || e.error === 'interrupted') return;
+        if (!started && attempt===0) { retry(); return; }
+        finishFailure();
+      };
+      const finishFailure = () => {
+        if (generation !== iosSpeechGeneration) return;
+        currentUtterance=null; speaking=false; spokenText='';
+        report('AUREN could not start audio. Check iPhone media volume and spoken replies.');
+      };
+      let retryScheduled = false;
+      const retry = () => {
+        if (generation !== iosSpeechGeneration || started || retryScheduled) return;
+        retryScheduled = true; currentUtterance = null;
+        try { synth.cancel(); synth.resume(); } catch {}
+        iosSpeechTimer = setTimeout(() => run(1), 220);
+      };
+      try { synth.resume(); synth.speak(u); report('Speech queued…'); }
+      catch (e) { if(attempt===0)retry();else finishFailure(); return; }
+      iosSpeechTimer = setTimeout(() => {
+        if (generation !== iosSpeechGeneration || started) return;
+        if (attempt===0)retry();else finishFailure();
+      }, attempt===0 ? 2200 : 2700);
+    };
+    // Safari is more reliable when it receives a short pause after the recording closes.
+    iosSpeechTimer = setTimeout(() => run(0), 120);
+  }
+  
   function speak(text, options = {}) {
+    if (mobileWebKit) return speakMobileReliably(text, options);
     if (!enabled || !available().speak || !text) return;
     try { synth.resume(); } catch {}
     // A fresh answer replaces prior speech; stop timers/recognition only once.
