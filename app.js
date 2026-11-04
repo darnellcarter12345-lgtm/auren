@@ -1,3 +1,4 @@
+// AUREN v3.56 — brand-agnostic nearby listings and directions.
 // AUREN v3.55 — nearby place handoff: verified listings, real Maps links, truthful follow-ups.
 // AUREN v3.54 — verified nearby listings and honest location follow-ups; v3.53 voice unchanged.
 // AUREN v3.53 — iPhone Safari location permission and live session accuracy; no other systems changed.
@@ -4726,13 +4727,33 @@ function aurenV355NearbyPlaceRequest(raw) {
   if(!name || /^(?:me|you|it|them|that|this|my schedule|my memory)$/i.test(name))return null;
   return {kind:'name',name};
 }
+// v3.56: Extract arbitrary names, not a fixed brand whitelist.
+// Only explicit search/directions language is routed to Places.
+function aurenV356NamedPlaceRequest(raw){
+  let q=String(raw||'').trim()
+    .replace(/^(?:(?:hey|hi|okay|ok)\s+)?(?:auren|aaron|oren)[,!. ]*/i,'')
+    .replace(/^(?:(?:please)\s+)?(?:can|could|would|will)\s+you\s+/i,'')
+    .replace(/^please\s+/i,'').replace(/[.!?]+$/,'').trim();
+  if(!q||q.length>175)return null;
+  // "I need nearby listings/listening to [ANY BUSINESS]" plus general variations.
+  let m=q.match(/^(?:(?:i\s+(?:need|want|would like|am looking for|i'm looking for)\s+)|(?:find|show|send|give|list|locate|look up|search for)\s+(?:me\s+)?)(?:(?:some|the|a|any)\s+)?(?:(?:nearby|nearest|closest|local)\s+)?(?:listings?|listening|locations?|restaurants?|stores?|places?|branches?|shops?)\s+(?:for|of|to|at|near)\s+(.+)$/i);
+  if(!m)m=q.match(/^(?:find|show|search(?: for)?|look for|look up|locate|list|give me|send me)\s+(?:me\s+)?(?:(?:the|some|a|any|nearest|closest|nearby)\s+)*(.+?)\s+(?:near me|nearby|around me|in my area|close to me|around here)$/i);
+  if(!m)m=q.match(/^(?:where (?:is|are|can i find|do i find)|which is (?:the )?(?:nearest|closest)|are there any)\s+(?:(?:the|nearest|closest|nearby)\s+)*(.+?)\s*(?:near me|nearby|around me|around here|in my area)?$/i);
+  if(!m)return null;
+  let name=m[1].trim().replace(/^(?:(?:the|a|an|nearest|closest|nearby|local)\s+)+/i,'')
+    .replace(/\s+(?:(?:locations?|restaurants?|branches?|stores?|shops?)\s+)?(?:near me|nearby|around me|close to me|in my area|around here)$/i,'')
+    .replace(/\s+(?:locations?|branches?)$/i,'').trim();
+  if(name.length<2||name.length>75||/^(?:me|you|it|them|that|this|there|my|any|anything|someone|something)$/i.test(name))return null;
+  if(/\b(?:schedule|calendar|memories|memory|history|tasks|projects|settings|account|profile|conversation|answer|reminders|home screen)\b/i.test(name))return null;
+  return {kind:'name',name};
+}
 function aurenV351ActualPlaceIntent(raw) {
   const q=String(raw||'').trim()
     .replace(/^(?:(?:hey|hi|okay|ok)\s+)?(?:auren|aaron|oren)[,!. ]*/i,'')
     .replace(/^(?:(?:please)\s+)?(?:can|could|would|will)\s+you\s+/i,'')
     .replace(/^please\s+/i,'').trim().replace(/[.!?]+$/,'').trim();
   if(!q || q.length>190) return false;
-  if(aurenV355NearbyPlaceRequest(raw))return true;
+  if(aurenV355NearbyPlaceRequest(raw)||aurenV356NamedPlaceRequest(raw))return true;
   if(/^what are (?:the\s+)?(?:nearby|nearest|closest)\s+(?:restaurants?|coffee shops?|cafes?|gyms?|gas stations?|pharmacies|grocery stores?|places?|stores?)$/i.test(q))return true;
   // Topics and tasks are never physical destinations, even following Maps.
   if(/^(?:what|why|who|when|how|tell me|explain|help me|remember|remind|schedule|set|write|draft|create|delete|change|turn|stop|play|call|text|message|email|summari[sz]e)\b/i.test(q)) {
@@ -4743,8 +4764,6 @@ function aurenV351ActualPlaceIntent(raw) {
   if(/^(?:take|send|bring|drive|guide|lead)\s+me\s+to\s+(?:the\s+)?(?:next step|point|conclusion|answer|question|topic|home screen|settings|chat|history|schedule|calendar|memory|memories)\b/i.test(q))return false;
   // Nearby business requests can use natural wording without exact canned sentences.
   // Merely mentioning a brand in conversation is NOT a location request.
-  if(/^(?:(?:can|could|would) you\s+)?(?:find|show|look up|search for|locate|list|give me)\s+(?:me\s+)?(?:the\s+|some\s+|a\s+)?(?:nearest\s+|closest\s+|nearby\s+)?(?:chipotle|chipolte|chick.fil.a|whataburger|starbucks|mcdonald.s|walmart|target)(?:\s+(?:restaurants?|locations?|stores?|branches?|near me|around me|nearby|in my area|close to me|for me|around here))*$/i.test(q))return true;
-  if(/^(?:where (?:can|do) i find|where are|which|are there any)\s+(?:the\s+)?(?:nearest\s+|closest\s+|nearby\s+)?(?:chipotle|chipolte|chick.fil.a|whataburger|starbucks|mcdonald.s)(?:\s+(?:locations?|restaurants?|near me|nearby|around me|around here))*$/i.test(q))return true;
   // Place-specific references are valid; a bare 'yes' never inherits Maps state.
   if(/^(?:directions? again|repeat (?:those |the )?directions|send (?:me )?(?:those |the |its )?directions again|take me there again|take me to the (?:first|second|third|fourth|fifth|sixth|seventh|eighth) one|open (?:the )?(?:route|directions) again|show (?:me )?(?:the )?nearby (?:results|places|options)(?: again)?)$/i.test(q))return true;
   if(/^(?:(?:take|send|bring|guide|drive)\s+me\s+to|(?:navigate|route|head|go|drive)\s+(?:me\s+)?to|(?:directions?|route)\s+(?:to|for)|(?:give|send|show|get|open)\s+(?:me\s+)?(?:the\s+)?(?:directions?|route|map)\s+(?:to|for)|(?:how (?:do|can) i get to))\s+.{2,100}$/i.test(q))return true;
@@ -4754,7 +4773,7 @@ function aurenV351ActualPlaceIntent(raw) {
   if(/^(?:find|show|search(?: for)?|look for|locate|recommend|suggest)\s+(?:me\s+)?(?:a\s+|an\s+|the\s+|some\s+)?(?:nearby\s+|closest\s+|nearest\s+|good\s+|best\s+)?(?:restaurants?|cafes?|coffee shops?|food|places? to eat|places? nearby|places? to go|gas stations?|parks?|gyms?|hotels?|pharmacies|stores?|shops?|museums?|libraries|car washes|mechanics|barbers?|salons?|grocery stores?|supermarkets?)(?:\s+.*)?$/i.test(q))return true;
   // Arbitrary named businesses are supported when the user explicitly locates them.
   if(/^(?:find|show|search(?: for)?|look for|locate|recommend|suggest)\s+.{2,90}\s+(?:near me|nearby|around me|in my area|closest to me)$/i.test(q))return true;
-  if(/^(?:find|show|search(?: for)?|look for|locate)\s+(?:me\s+)?(?:a\s+|an\s+|the\s+)?[A-Z][a-zA-Z0-9'’&. -]{2,65}$/.test(q))return true;
+  if(/^(?:[Ff]ind|[Ss]how|[Ss]earch(?: for)?|[Ll]ook for|[Ll]ocate)\s+(?:me\s+)?(?:a\s+|an\s+|the\s+)?[A-Z][a-zA-Z0-9'’&. -]{2,65}$/.test(q))return true;
   // 'near me' on its own is not a request: it may occur in an unrelated story.
   return false;
 }
@@ -4762,7 +4781,7 @@ function aurenV351NewConversationTopic(raw){return !aurenV351ActualPlaceIntent(r
 async function send(text) {
   // v3.55: Resolve clearly expressed listing requests before the generic AI.
   // Safari may transcribe "listings" as "listening". Never search the raw sentence.
-  const v355Name=aurenV355NearbyPlaceRequest(text);
+  const v355Name=aurenV355NearbyPlaceRequest(text)||aurenV356NamedPlaceRequest(text);
   if(v355Name){
     try{if(await aurenPlaces341.handle('find '+v355Name.name+' near me',text))return;}
     catch(error){console.warn('AUREN nearby list handoff failed',error);}
@@ -4779,15 +4798,8 @@ async function send(text) {
       : 'Location is OFF or not available to AUREN in this tab. Open Settings, turn Location ON, and allow Safari access.');
     return;
   }
-  // Recovery for a previous AI-only location claim: never affirm or repeat
-  // invented listings. Only attempt a real search when a named brand is clear.
-  if(/^(?:(?:yes|yeah|sure)[,.! ]+)?(?:send (?:me )?them|show (?:me )?them|yes[,.! ]* send (?:me )?them)[.!? ]*$/i.test(String(text).trim()) &&
-     /\b(?:nearby|locations?|restaurants?|places)\b/i.test(String(lastSubstantiveReply||'')) &&
-     /\b(?:chipotle|chipolte|starbucks|whataburger|chick.fil.a|mcdonald.s)\b/i.test(String(lastSubstantiveReply||''))) {
-    const name=String(lastSubstantiveReply).match(/\b(?:chipotle|chipolte|starbucks|whataburger|chick.fil.a|mcdonald.s)\b/i)[0];
-    await aurenPlaces341.handle('find '+name+' near me',text);
-    return;
-  }
+  // Follow-ups use only the Places handler's explicit recent-search state.
+  // Never infer a verified list from arbitrary AI text or a hard-coded brand.
   // v3.45: A new question is not a follow-up to the last Maps destination.
   if(aurenV351NewConversationTopic(text)) {
     try{aurenPlaces.clear();}catch(e){console.debug('Maps context cleanup skipped',e);}
@@ -6160,8 +6172,8 @@ const aurenPlaces341 = (() => {
   function parse(raw) {
     let t=clean(raw).replace(/^(?:(?:hey|hi|okay|ok)\s+)?(?:auren|aaron|oren)[,!. ]*/i,'').replace(/^(?:(?:please|hey)\s+)?(?:can|could|would|will)\s+you\s+/i,'').replace(/^please\s+/i,'').replace(/[.?!]+$/,'').trim();
     if(!t)return null;
-    const dictatedListing=aurenV355NearbyPlaceRequest(raw);
-    if(dictatedListing)return dictatedListing;
+    const namedListing=aurenV355NearbyPlaceRequest(raw)||aurenV356NamedPlaceRequest(raw);
+    if(namedListing)return namedListing;
     if(/^(?:send (?:me )?(?:those |the |my |its )?directions again|directions again|repeat (?:those |the )?directions|take me there again|open (?:the )?route again|send me there again)$/i.test(t))return {kind:'repeat'};
     if(/^(?:show|open|display|bring back)\s+(?:me\s+)?(?:the\s+)?(?:nearby\s+)?(?:results|options|places|list)\s*(?:again)?$/i.test(t))return {kind:'list'};
     let m=t.match(/^(?:(?:take|send|bring|guide|drive)\s+me\s+to|(?:navigate|head|go|drive)\s+to|(?:give|send|show|get)\s+(?:me\s+)?(?:the\s+)?(?:directions?|route)\s+(?:to|for)|directions?\s+(?:to|for))\s+(?:the\s+)?(?:number\s+)?(first|second|third|fourth|fifth|sixth|seventh|eighth|[1-8])(?:\s+one)?$/i);
@@ -6243,21 +6255,24 @@ const aurenPlaces341 = (() => {
       return;
     }
     notice(`Finding nearby ${name} locations…`,`${name} near me`);
-    const token=norm(name).slice(0,24);
-    if(token.length<3){await verifiedReply('Please give me a more specific place name.');return;}
-    // Query business NAME and BRAND. Filter the resulting list rather than
-    // claiming a search succeeded simply because a destination was recognized.
-    const safeToken=token.replace(/[^a-z0-9]/g,'');
-    let raw=await fetchOSM(`["name"~"${safeToken}",i]`,p,120);
+    const token=norm(name).slice(0,60);
+    if(token.length<2){await verifiedReply('Please give me a more specific place name.');return;}
+    // v3.56: "Planet Fitness" is stored with a space in OSM, not "planetfitness".
+    // Build a space/punctuation-tolerant regex from each word; never interpolate
+    // arbitrary user regex or query syntax into the Overpass selector.
+    const words=clean(name).toLowerCase().split(/[^a-z0-9]+/).filter(Boolean).slice(0,7);
+    const safePattern=words.map(w=>w.replace(/[^a-z0-9]/g,'')).filter(Boolean).join('[^a-z0-9]*').slice(0,150);
+    if(!safePattern){await verifiedReply('Please give me a specific place name.');return;}
+    let raw=await fetchOSM(`["name"~"${safePattern}",i]`,p,120);
     if(request!==activeRequest)return;
     let found=convert(raw,p);
-    if(!found.length){raw=await fetchOSM(`["brand"~"${safeToken}",i]`,p,120);if(request!==activeRequest)return;found=convert(raw,p);}
+    if(!found.length){raw=await fetchOSM(`["brand"~"${safePattern}",i]`,p,120);if(request!==activeRequest)return;found=convert(raw,p);}
     if(!found.length){
       raw=await fetchOSM('["amenity"~"^(restaurant|fast_food|cafe)$"]',p,160);
       if(request!==activeRequest)return;
-      found=convert(raw,p).filter(x=>norm(x.name).includes(safeToken) || safeToken.includes(norm(x.name)));
+      found=convert(raw,p).filter(x=>norm(x.name).includes(token) || token.includes(norm(x.name)));
     }
-    options=found.filter(x=>norm(x.name).includes(safeToken)||safeToken.includes(norm(x.name))).slice(0,8);
+    options=found.filter(x=>norm(x.name).includes(token)||token.includes(norm(x.name))).slice(0,8);
     if(options.length){showOptions(name);await verifiedReply(verifiedListText(name,options));sendActualMapsLink(name);}
     else{
       notice(`No verified nearby ${name} listings were returned.`,`${name} near me`);
