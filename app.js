@@ -1,3 +1,4 @@
+// AUREN v3.51 — Direction-intent isolation; preserves v3.50 startup + iPhone voice.
 // AUREN v3.50 — Startup restoration + iPhone one-tap speech initialization.
 // Restores the declarations accidentally removed by v3.49b. Preserves all later features.
 import { openDB, put, getAll, del, clear, healthCheck, storageEstimate, uid, STORES } from './db.js';
@@ -4423,7 +4424,7 @@ async function aurenHandleInterpretedIntent(raw){
   await addMessage('user',raw);noteDayConversation(date,scope);rememberScheduleFocus(date);
   await addMessage('auren',aurenScheduleRead(date,scope).text);return true;
  }
- if(intent.intent==='places'){
+ if(intent.intent==='places' && aurenV351ActualPlaceIntent(raw)){
   aurenReminderQuestion=null;pendingReminder=null;pendingYourDayChoice=null;
   if(await aurenPlaces.handle(raw))return true;
   const url='https://www.google.com/maps/search/?api=1&query='+encodeURIComponent((intent.subject||raw).slice(0,120));
@@ -4622,32 +4623,50 @@ const aurenUniversalPlaces334 = createUniversalPlacesBrain({
   }
 });
 
-// AUREN v3.45 — Hear immediately + new topic protection.
-// Only explicit place/navigation commands may inherit the previous Maps state.
-// An unrelated question resets incomplete location prompts; other memories remain.
-function aurenV345ExplicitPlaces(raw){
-  const q=String(raw||'').trim().replace(/^(?:(?:hey|hi|okay)\s+)?(?:auren|aaron|oren)[,.! ]+/i,'').trim();
-  return /^(?:(?:please|can you|could you|would you)\s+)?(?:find|show|search|look for|locate|recommend|suggest|navigate|directions|take me|send me|bring me|drive me|guide me|go to|head to|open maps|pull up maps|where is|where are|how far|how do i get to|how can i get to|get directions|give me directions|show me directions|send directions|route to|closest|nearest|repeat directions|directions again|open directions|show results|more places|the first|the second|the third|number [1-8])\b/i.test(q) || /\b(?:near me|nearby|around me|google maps)\b/i.test(q);
+// AUREN v3.51 — Only deliberate place commands may reach a Places Brain.
+// This gate is shared by all legacy map routers. No old map conversation may
+// turn a general chat question into directions.
+function aurenV351ActualPlaceIntent(raw) {
+  const q=String(raw||'').trim()
+    .replace(/^(?:(?:hey|hi|okay|ok)\s+)?(?:auren|aaron|oren)[,!. ]*/i,'')
+    .replace(/^(?:(?:please)\s+)?(?:can|could|would|will)\s+you\s+/i,'')
+    .replace(/^please\s+/i,'').trim().replace(/[.!?]+$/,'').trim();
+  if(!q || q.length>190) return false;
+  // Topics and tasks are never physical destinations, even following Maps.
+  if(/^(?:what|why|who|when|how|tell me|explain|help me|remember|remind|schedule|set|write|draft|create|delete|change|turn|stop|play|call|text|message|email|summari[sz]e)\b/i.test(q)) {
+    // Genuine location questions must explicitly ask where a physical place is.
+    if(!/^(?:where (?:is|are) (?:the\s+)?(?:nearest|closest)\s+|where (?:can|should) (?:i|we) (?:eat|go|shop|visit)\b|how (?:do|can) i get to\s+|how far (?:away )?is\s+.+\s+from (?:me|here)\b)/i.test(q))return false;
+  }
+  if(/\b(?:my|your|our)\s+(?:schedule|calendar|memories|history|notes|tasks|projects|settings|account|profile|conversation|answer|messages|reminders)\b/i.test(q))return false;
+  if(/^(?:take|send|bring|drive|guide|lead)\s+me\s+to\s+(?:the\s+)?(?:next step|point|conclusion|answer|question|topic|home screen|settings|chat|history|schedule|calendar|memory|memories)\b/i.test(q))return false;
+  // Place-specific references are valid; a bare 'yes' never inherits Maps state.
+  if(/^(?:directions? again|repeat (?:those |the )?directions|send (?:me )?(?:those |the |its )?directions again|take me there again|take me to the (?:first|second|third|fourth|fifth|sixth|seventh|eighth) one|open (?:the )?(?:route|directions) again|show (?:me )?(?:the )?nearby (?:results|places|options)(?: again)?)$/i.test(q))return true;
+  if(/^(?:(?:take|send|bring|guide|drive)\s+me\s+to|(?:navigate|route|head|go|drive)\s+(?:me\s+)?to|(?:directions?|route)\s+(?:to|for)|(?:give|send|show|get|open)\s+(?:me\s+)?(?:the\s+)?(?:directions?|route|map)\s+(?:to|for)|(?:how (?:do|can) i get to))\s+.{2,100}$/i.test(q))return true;
+  if(/^(?:open|pull up|bring up)\s+(?:google\s+)?maps(?:\s+(?:for|to)\s+.{2,100})?$/i.test(q))return true;
+  if(/^(?:where is|where are)\s+(?:the\s+)?(?:nearest|closest)\s+.{2,100}$/i.test(q))return true;
+  if(/^(?:where (?:can|should|could) (?:i|we) (?:go|eat|shop|visit)|what(?:'s| is) (?:near|around) me|places? (?:to eat|near me)|restaurants? near me|food near me|things to do near me)$/i.test(q))return true;
+  if(/^(?:find|show|search(?: for)?|look for|locate|recommend|suggest)\s+(?:me\s+)?(?:a\s+|an\s+|the\s+|some\s+)?(?:nearby\s+|closest\s+|nearest\s+|good\s+|best\s+)?(?:restaurants?|cafes?|coffee shops?|food|places? to eat|places? nearby|places? to go|gas stations?|parks?|gyms?|hotels?|pharmacies|stores?|shops?|museums?|libraries|car washes|mechanics|barbers?|salons?|grocery stores?|supermarkets?)(?:\s+.*)?$/i.test(q))return true;
+  // Arbitrary named businesses are supported when the user explicitly locates them.
+  if(/^(?:find|show|search(?: for)?|look for|locate|recommend|suggest)\s+.{2,90}\s+(?:near me|nearby|around me|in my area|closest to me)$/i.test(q))return true;
+  if(/^(?:find|show|search(?: for)?|look for|locate)\s+(?:me\s+)?(?:a\s+|an\s+|the\s+)?[A-Z][a-zA-Z0-9'’&. -]{2,65}$/.test(q))return true;
+  // 'near me' on its own is not a request: it may occur in an unrelated story.
+  return false;
 }
-function aurenV345NewConversationTopic(raw){
-  const q=String(raw||'').trim().replace(/^(?:(?:hey|hi|okay)\s+)?(?:auren|aaron|oren)[,.! ]+/i,'').trim();
-  if(aurenV345ExplicitPlaces(q)) return false;
-  return /\b(?:what are you doing|what do you do|how are you|what's up|how's it going|tell me|explain|why|who|what|when|how|can we talk|let's talk|i want to talk|i have a question|my schedule|my day|my calendar|weather|remind me|appointment|meeting|project|memory)\b/i.test(q);
-}
+function aurenV351NewConversationTopic(raw){return !aurenV351ActualPlaceIntent(raw);}
 async function send(text) {
   // v3.45: A new question is not a follow-up to the last Maps destination.
-  if(aurenV345NewConversationTopic(text)) {
+  if(aurenV351NewConversationTopic(text)) {
     try{aurenPlaces.clear();}catch(e){console.debug('Maps context cleanup skipped',e);}
     try{conversationAnchor=null;}catch{}
   }
 
   // v3.41 — route places requests before the ordinary AI handler.
-  if (aurenPlaces341.parse(text)) {
+  if (aurenV351ActualPlaceIntent(text) && aurenPlaces341.parse(text)) {
     try { if (await aurenPlaces341.handle(text)) return; }
     catch (error) { console.warn('AUREN v3.41 route error',error); }
   }
   // v3.34: user-initiated navigation takes priority over older local/AI routes.
-  if (aurenUniversalPlaces334.parse(text)) {
+  if (aurenV351ActualPlaceIntent(text) && aurenUniversalPlaces334.parse(text)) {
     try {
       if (await aurenUniversalPlaces334.handle(text)) return;
     } catch (error) {
@@ -4689,7 +4708,7 @@ async function send(text) {
   const recordEdit=aurenRecordEditDialogue(text);
   if(recordEdit!==null){await addMessage('user',text);await addMessage('auren',recordEdit);return;}
   // v2.97: Place searches and their conversational follow-ups precede reminders.
-  if(await aurenHandlePlaceDialogue(text)){conversationAnchor=null;return;}
+  if(aurenV351ActualPlaceIntent(text) && await aurenHandlePlaceDialogue(text)){conversationAnchor=null;return;}
   // v2.92: Name recall always consults the persisted profile, never the generic AI.
   if(aurenNameQuestion(text)){
     await addMessage('user',text);
@@ -4724,7 +4743,7 @@ async function send(text) {
   // The preexisting Smart Places handler provides Google Maps choices; no reminder is saved.
   const placesDiscovery = /\b(?:find|show|suggest|recommend|locate|search for|look for|looking for|where (?:can|should|could) (?:i|we) (?:go|eat)|anywhere|somewhere|places? to|spots? to)\b[\s\S]{0,100}\b(?:eat|food|restaurant|lunch|dinner|breakfast|brunch|coffee|cafe|places?|spots?|activities|things to do|go|visit|shops?|stores?|parks?|gyms?|movies?|hotels?)\b|\b(?:where (?:can|should) (?:i|we) eat|restaurants? near me|places? to eat|food near me|things to do near me)\b/i.test(text) || /\b(?:restaurants?|cafes?|coffee shops?|food|places?|shops?|parks?)\b.{0,55}\b(?:near me|nearby|around me|in my area)\b/i.test(text);
   const reminderAboutFinding = /\b(?:remind me|set (?:a|me a) reminder|don't let me forget|make sure i remember)\b/i.test(text);
-  if(placesDiscovery && !reminderAboutFinding){
+  if(aurenV351ActualPlaceIntent(text) && placesDiscovery && !reminderAboutFinding){
     // Retire only unfinished reminder drafts, not saved reminders.
     aurenReminderQuestion=null;
     pendingReminder=null;
@@ -4952,7 +4971,7 @@ async function send(text) {
   if(contextMove){await addMessage('user',text);await addMessage('auren',contextMove);return;}
   const contextDraft=contextualPlannerTurn(text);
   if(contextDraft){await addMessage('user',text);await addMessage('auren',contextDraft);return;}
-  if (await aurenPlaces.handle(text)) {conversationAnchor=null;return;}
+  if (aurenV351ActualPlaceIntent(text) && await aurenPlaces.handle(text)) {conversationAnchor=null;return;}
   if(conversationalReference(text)&&!readConversationAnchor()){
     await addMessage('user',text);
     await addMessage('auren','Which part would you like me to explain?');
