@@ -1,3 +1,4 @@
+// AUREN v3.52 — Consistent British butler voice on Hear AUREN and normal replies.
 // AUREN v3.51 — Direction-intent isolation; preserves v3.50 startup + iPhone voice.
 // AUREN v3.50 — Startup restoration + iPhone one-tap speech initialization.
 // Restores the declarations accidentally removed by v3.49b. Preserves all later features.
@@ -56,6 +57,34 @@ let aurenSpeechRetryText='';
 const aurenSpeechFallback=document.createElement('button');
 aurenSpeechFallback.type='button';aurenSpeechFallback.textContent='🔊 Hear AUREN';
 aurenSpeechFallback.style.cssText='display:none;margin:10px auto;padding:13px 20px;border-radius:12px;border:1px solid #c9a661;background:#342d22;color:#f7dfb2;font-size:16px;font-weight:700;cursor:pointer';
+// AUREN v3.52: choose one available British system voice for BOTH the
+// one-tap greeting and subsequent replies. Never create a separate greeting TTS.
+// iPhone Safari exposes different installed voices on different devices.
+let aurenButlerVoiceURI='';
+function aurenSelectButlerVoice(){
+  try {
+    const voices=voice.getVoices();
+    const british=voices.filter(v=>/^en-GB$/i.test(String(v.lang||''))
+      && !/bad news|good news|bells|bubbles|whisper|zarvox|trinoids|cellos|boing|organ|bahh|fred|hysterical|novelty/i.test(String(v.name||'')));
+    if(!british.length)return false;
+    const score=v=>(v.localService?20:0)
+       +(/daniel|oliver|arthur|george|jamie|ryan/i.test(v.name)?15:0)
+       +(/premium|enhanced|natural|neural/i.test(v.name)?10:0);
+    british.sort((a,b)=>score(b)-score(a));
+    const selected=british[0];
+    if(selected.voiceURI && selected.voiceURI!==aurenButlerVoiceURI){
+      // Do not change a voice in the middle of a spoken answer.
+      if(voice.speaking)return true;
+      voice.setVoicePreference(selected.voiceURI);
+      aurenButlerVoiceURI=selected.voiceURI;
+    }
+    return true;
+  }catch(error){console.warn('AUREN: British voice selection unavailable',error);return false;}
+}
+// Safari may provide voices after startup; refresh the *same* preference then.
+if(window.speechSynthesis){
+  window.speechSynthesis.addEventListener?.('voiceschanged',aurenSelectButlerVoice);
+}
 // AUREN v3.50: one user gesture enables future voice replies; never replay chat history.
 let aurenIPhoneAudioUnlocked=false;
 function aurenV346PaintHearButton(){
@@ -75,6 +104,7 @@ aurenSpeechFallback.addEventListener('click',()=>{
   aurenIPhoneAudioUnlocked=true;
   aurenV346PaintHearButton();
   // Brief confirmation is spoken once on the direct tap, never from old chat history.
+  aurenSelectButlerVoice(); // Use the same British voice as normal responses.
   voice.speak('At your service.',{manual:true});
 });
 const chicagoClock=document.createElement('div');chicagoClock.style.cssText='font-size:11px;opacity:.75;margin-top:8px;';
@@ -425,7 +455,7 @@ try { savedWake = !!JSON.parse(localStorage.getItem(VOICE_PREFS_KEY) || '{}').wa
 function saveWakePreference() {
   try { localStorage.setItem(VOICE_PREFS_KEY, JSON.stringify({wake: savedWake})); } catch {}
 }
-voice.setVoicePreference(''); // Automatically choose the best available British voice.
+aurenSelectButlerVoice(); // Select a British butler voice if Safari exposes one.
 voice.setVoiceStyle({rate: 0.94, pitch: 0.96});
 
 // Keep the main screen focused on the orb. Secondary voice actions belong in Settings.
