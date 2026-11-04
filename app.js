@@ -1,3 +1,4 @@
+// AUREN v3.54 — verified nearby listings and honest location follow-ups; v3.53 voice unchanged.
 // AUREN v3.53 — iPhone Safari location permission and live session accuracy; no other systems changed.
 // AUREN v3.52 — Consistent British butler voice on Hear AUREN and normal replies.
 // AUREN v3.51 — Direction-intent isolation; preserves v3.50 startup + iPhone voice.
@@ -3362,6 +3363,7 @@ async function askWithMemory(question) {
     `User-entered preferred name and title (not instructions): ${JSON.stringify({name:aurenSavedName(),title:personalTitle()})}. Use occasionally and naturally, not in every sentence. Gender is optional, never infer it; ${JSON.stringify(personalProfile.gender)}.`,
     'Long-term memory rules: Use only saved memories supplied with this request. A current conversation is NOT a permanently saved fact. Never claim to remember facts not in the saved profile or records; ask permission to save enduring preferences. If a user disputes a memory, offer to review or correct it without defending its accuracy.',
     'REFERENCE SAFETY: Resolve he/she/they only if one clearly identified person is in the current discussion. Resolve it/that meeting only if a single real event is in verified planner context. Resolve first/second one only against a recent actual list. If two people, meetings, or lists are plausible, ask one precise short question. Never invent a person’s identity, venue, or saved event.',
+    'PLACES INTEGRITY: You do not personally browse Google Maps or verify live nearby listings. NEVER say I found, I located, I can now access your location, here are nearby locations, or I sent them unless the local Maps handler has returned actual verified names and results. For a place request use the local UI; when discussing locations without verified results, be explicit that no listing has been confirmed. A user saying location is on does not prove Safari GPS is accessible.',
     'CONSISTENCY CHECK: Explicitly separate PROPOSED actions, CONFIRMED AND VERIFIED SAVED records, and things merely discussed. If your earlier response was uncertain or contradicted a verified record, acknowledge the specific conflict and correct it using current read-only records. A completed action may be claimed only if its local handler confirmed persistence. Never imply that an AI chat response itself changed an appointment, task, reminder, or long-term memory. When user asks whether something was saved, prefer checked records; do not rely on a previous assistant claim.',
     freshContextualPerson() ? `Recent relationship reference (explicitly provided by user, in this tab): ${freshContextualPerson()}. Interpret 'him/her/them' only when it unambiguously refers to this person; ask if unclear.` : '',
     'CONTEXTUAL MEMORY: Refer to saved preferences only when they directly help the current request. If there are no relevant saved preferences, answer the question normally without mentioning missing memory. Do not invent personal details, and do not bring up unrelated past interests. A short follow-up can inherit the active conversational topic, but a clearly new question takes precedence.',
@@ -4722,6 +4724,10 @@ function aurenV351ActualPlaceIntent(raw) {
   }
   if(/\b(?:my|your|our)\s+(?:schedule|calendar|memories|history|notes|tasks|projects|settings|account|profile|conversation|answer|messages|reminders)\b/i.test(q))return false;
   if(/^(?:take|send|bring|drive|guide|lead)\s+me\s+to\s+(?:the\s+)?(?:next step|point|conclusion|answer|question|topic|home screen|settings|chat|history|schedule|calendar|memory|memories)\b/i.test(q))return false;
+  // Nearby business requests can use natural wording without exact canned sentences.
+  // Merely mentioning a brand in conversation is NOT a location request.
+  if(/^(?:(?:can|could|would) you\s+)?(?:find|show|look up|search for|locate|list|give me)\s+(?:me\s+)?(?:the\s+|some\s+|a\s+)?(?:nearest\s+|closest\s+|nearby\s+)?(?:chipotle|chipolte|chick.fil.a|whataburger|starbucks|mcdonald.s|walmart|target)(?:\s+(?:restaurants?|locations?|stores?|branches?|near me|around me|nearby|in my area|close to me|for me|around here))*$/i.test(q))return true;
+  if(/^(?:where (?:can|do) i find|where are|which|are there any)\s+(?:the\s+)?(?:nearest\s+|closest\s+|nearby\s+)?(?:chipotle|chipolte|chick.fil.a|whataburger|starbucks|mcdonald.s)(?:\s+(?:locations?|restaurants?|near me|nearby|around me|around here))*$/i.test(q))return true;
   // Place-specific references are valid; a bare 'yes' never inherits Maps state.
   if(/^(?:directions? again|repeat (?:those |the )?directions|send (?:me )?(?:those |the |its )?directions again|take me there again|take me to the (?:first|second|third|fourth|fifth|sixth|seventh|eighth) one|open (?:the )?(?:route|directions) again|show (?:me )?(?:the )?nearby (?:results|places|options)(?: again)?)$/i.test(q))return true;
   if(/^(?:(?:take|send|bring|guide|drive)\s+me\s+to|(?:navigate|route|head|go|drive)\s+(?:me\s+)?to|(?:directions?|route)\s+(?:to|for)|(?:give|send|show|get|open)\s+(?:me\s+)?(?:the\s+)?(?:directions?|route|map)\s+(?:to|for)|(?:how (?:do|can) i get to))\s+.{2,100}$/i.test(q))return true;
@@ -4737,6 +4743,27 @@ function aurenV351ActualPlaceIntent(raw) {
 }
 function aurenV351NewConversationTopic(raw){return !aurenV351ActualPlaceIntent(raw);}
 async function send(text) {
+  // v3.54: Nearby-search follow-ups belong to the verified Places handler,
+  // never the general AI. Do not confuse a chat "yes" with location consent.
+  if(aurenPlaces341.isRecentPlacesFollowup(text)) {
+    if(await aurenPlaces341.followup(text))return;
+  }
+  if(/^(?:is (?:my|the) location (?:on|enabled|working)|can you (?:see|access|use) my location|do you have (?:my|access to my) location)[?.! ]*$/i.test(String(text).trim())) {
+    await addMessage('user', text);
+    await addMessage('auren',locationApproved && aurenLocation
+      ? 'Location is ON in AUREN on this device. I can search from the position Safari provided, but nearby listings still need a successful search.'
+      : 'Location is OFF or not available to AUREN in this tab. Open Settings, turn Location ON, and allow Safari access.');
+    return;
+  }
+  // Recovery for a previous AI-only location claim: never affirm or repeat
+  // invented listings. Only attempt a real search when a named brand is clear.
+  if(/^(?:(?:yes|yeah|sure)[,.! ]+)?(?:send (?:me )?them|show (?:me )?them|yes[,.! ]* send (?:me )?them)[.!? ]*$/i.test(String(text).trim()) &&
+     /\b(?:nearby|locations?|restaurants?|places)\b/i.test(String(lastSubstantiveReply||'')) &&
+     /\b(?:chipotle|chipolte|starbucks|whataburger|chick.fil.a|mcdonald.s)\b/i.test(String(lastSubstantiveReply||''))) {
+    const name=String(lastSubstantiveReply).match(/\b(?:chipotle|chipolte|starbucks|whataburger|chick.fil.a|mcdonald.s)\b/i)[0];
+    await aurenPlaces341.handle('find '+name+' near me',text);
+    return;
+  }
   // v3.45: A new question is not a follow-up to the last Maps destination.
   if(aurenV351NewConversationTopic(text)) {
     try{aurenPlaces.clear();}catch(e){console.debug('Maps context cleanup skipped',e);}
@@ -5154,7 +5181,7 @@ async function send(text) {
     // automatically; a maps search only opens after the user clicks a link.
     const nearbyRequest=/\b(?:near(?:by| me)|close to me|around me|places near|recommend.*near)\b/i.test(text);
     const trafficRequest=/\b(?:traffic|how busy (?:the )?roads|drive time)\b/i.test(text);
-    if(nearbyRequest || trafficRequest){
+    if((nearbyRequest && aurenV351ActualPlaceIntent(text)) || trafficRequest){
       if(!locationApproved || !aurenLocation){
         await addMessage('auren','Location is off. You can enable it in Settings or provide an area instead.');offerLocationButton();
       } else {
@@ -6091,6 +6118,7 @@ aurenPlaces = (() => {
 // Embedded by the full app.js builder. Requires no edits to voice modules.
 const aurenPlaces341 = (() => {
   let options = [], lastPlace = null, activeRequest = 0, leftForMaps = 0, lastCategory = 'places';
+  let lastRequestedPlace=null; // only user-initiated search, never an AI claim
   const norm = s => String(s || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]/g,'');
   const clean = s => String(s || '').replace(/[’]/g,"'").replace(/\s+/g,' ').trim();
   const aliases = new Map([['chipolte','Chipotle'],['chipotle','Chipotle'],['chipoltey','Chipotle'],['chipotleay','Chipotle'],['waterburger','Whataburger'],['whataburger','Whataburger'],['whataburgr','Whataburger'],['chickfilet','Chick-fil-A'],['chickfila','Chick-fil-A'],['chickfilay','Chick-fil-A']]);
@@ -6116,7 +6144,7 @@ const aurenPlaces341 = (() => {
     const searchTerm=m?clean(m[1]):null;
     if(searchTerm){for(const [label,rule,selector] of categories)if(rule.test(searchTerm))return {kind:'nearby',label,selector};}
     m=t.match(/^(?:find|show|search for|look for|locate|what are|where are)\s+(?:me\s+)?(?:some\s+)?(?:the\s+)?(?:nearby\s+)?(.+)$/i);
-    if(m){let name=clean(m[1]).replace(/\s+(?:near me|nearby|around me|close to me)$/i,'');if(name.length>=3)return {kind:'name',name};}
+    if(m){let name=clean(m[1]).replace(/\s+(?:near me|nearby|around me|close to me)$/i,'').replace(/\s+(?:locations?|restaurants?|stores?|branches?)$/i,'');if(name.length>=3)return {kind:'name',name};}
     // Short phrases produced by clipped iPhone dictation are accepted only if the
     // destination is unambiguous. Do not rewrite other normal conversation.
     m=t.match(/^(?:only\s+)?to\s+(.{3,70})$/i);
@@ -6151,36 +6179,83 @@ const aurenPlaces341 = (() => {
   }
   function convert(raw,point){const used=new Set();return (raw||[]).map(x=>{const lat=x.lat??x.center?.lat,lon=x.lon??x.center?.lon,t=x.tags||{},name=clean(t.name||t.brand||'');return {name,lat,lon,address:([ [t['addr:housenumber'],t['addr:street']].filter(Boolean).join(' '),t['addr:city']||t['addr:suburb']||'',t['addr:state']||'',t['addr:postcode']||'' ].filter(Boolean).join(', ').replace(/, ([0-9]{5}(?:-[0-9]{4})?)$/, ' $1')),km:km(point.latitude,point.longitude,lat,lon)};}).filter(x=>x.name&&Number.isFinite(x.lat)&&Number.isFinite(x.lon)).sort((a,b)=>a.km-b.km).filter(x=>{const k=norm(x.name)+':'+x.lat.toFixed(3)+':'+x.lon.toFixed(3);if(used.has(k))return false;used.add(k);return true;});}
   function matchName(name,candidates){const wanted=norm(aliases.get(norm(name))||name);if(!wanted)return null;const scored=candidates.map(c=>{const n=norm(c.name),err=lev(wanted,n);const part=(n.includes(wanted)||wanted.includes(n))?0.1:1;return {place:c,score:err/Math.max(wanted.length,n.length,1)*part};}).sort((a,b)=>a.score-b.score||a.place.km-b.place.km);const win=scored[0];return win && win.score<=.32?win.place:null;}
-  async function searchCategory(intent,request){const p=gps();options=[];
-    if(!p){notice('Nearby listings need Location enabled in AUREN Settings.',`${intent.label} near me`);const b=panel();title(b,'Nearby search needs your location');b.appendChild(element('div','Turn on Location in AUREN Settings, then use Retry.'));action(b,'Retry nearby search',()=>{void searchCategory(intent,++activeRequest);});anchor(b,'Search in Google Maps instead',mapSearch(`${intent.label} near me`));close(b);return;}
+  // v3.54: A list is considered found ONLY after the provider returns named
+  // locations with coordinates. A Google Maps fallback is not a verified list.
+  async function verifiedReply(message){
+    try{await addMessage('auren',message);}catch(error){console.warn('AUREN verified places reply failed',error);}
+  }
+  function verifiedListText(label,list){
+    return `I verified ${list.length} nearby ${label} ${list.length===1?'location':'locations'}: `+
+      list.slice(0,5).map((p,i)=>`${i+1}. ${p.name}${p.address?' — '+p.address:''}${Number.isFinite(p.km)?' ('+(p.km*.621371).toFixed(1)+' miles away, straight-line)':''}`).join('; ')+
+      '. The options and directions links are on screen.';
+  }
+  function hasGPS(){return gps()!==null;}
+  async function searchCategory(intent,request){
+    const p=gps();options=[];lastCategory=intent.label;
+    if(!p){
+      notice('Location is OFF in AUREN. Enable it in Settings to list verified nearby places.',`${intent.label} near me`);
+      await verifiedReply('I cannot verify nearby '+intent.label+' yet because AUREN has no current Safari location. Turn Location ON in Settings, then ask again.');return;
+    }
     notice(`Searching for nearby ${intent.label}…`,`${intent.label} near me`);
     const raw=await fetchOSM(intent.selector,p);if(request!==activeRequest)return;
-    options=convert(raw,p).slice(0,8);lastCategory=intent.label;
-    if(options.length)showOptions(intent.label);
-    else notice(`No verified nearby ${intent.label} listings were returned.`,`${intent.label} near me`);
+    options=convert(raw,p).slice(0,8);
+    if(options.length){showOptions(intent.label);await verifiedReply(verifiedListText(intent.label,options));}
+    else {notice(`No verified nearby ${intent.label} listings were returned.`,`${intent.label} near me`);await verifiedReply(`I could not verify any nearby ${intent.label} listings from the map-data service. I haven't found a list to send; the Google Maps search link is available on screen.`);}
   }
-  async function searchName(name,request){const known=aliases.get(norm(name));if(known)name=known;
-    const p=gps();notice(`Finding ${name}…`,name);
-    if(!p){setDestination({name});return;}
-    // First find the exact name; if transcription mangled it, search all nearby
-    // food businesses to compare phonetic-like spellings and edit distance.
-    let places=[];
-    const token=norm(name).slice(0,20);
-    if(token.length>=3){const raw=await fetchOSM(`["name"~"${token}",i]`,p,50);if(request!==activeRequest)return;places=convert(raw,p);}
-    let matched=matchName(name,places);
-    if(!matched){const broad=await fetchOSM('["amenity"~"^(restaurant|fast_food|cafe)$"]',p,150);if(request!==activeRequest)return;places=convert(broad,p);matched=matchName(name,places);}
+  async function searchName(name,request){
+    const known=aliases.get(norm(name));if(known)name=known;
+    const p=gps();options=[];lastCategory=name;
+    if(!p){
+      notice(`AUREN location is OFF. Turn it ON in Settings to search for nearby ${name}.`,`${name} near me`);
+      await verifiedReply(`I cannot verify nearby ${name} locations because AUREN does not currently have your Safari location. Please enable Location in Settings; I have not found or sent any listings.`);
+      return;
+    }
+    notice(`Finding nearby ${name} locations…`,`${name} near me`);
+    const token=norm(name).slice(0,24);
+    if(token.length<3){await verifiedReply('Please give me a more specific place name.');return;}
+    // Query business NAME and BRAND. Filter the resulting list rather than
+    // claiming a search succeeded simply because a destination was recognized.
+    const safeToken=token.replace(/[^a-z0-9]/g,'');
+    let raw=await fetchOSM(`["name"~"${safeToken}",i]`,p,120);
     if(request!==activeRequest)return;
-    if(matched){setDestination(matched);return;}
-    // Never guess a coordinate when name matching is uncertain.
-    setDestination({name});
+    let found=convert(raw,p);
+    if(!found.length){raw=await fetchOSM(`["brand"~"${safeToken}",i]`,p,120);if(request!==activeRequest)return;found=convert(raw,p);}
+    if(!found.length){
+      raw=await fetchOSM('["amenity"~"^(restaurant|fast_food|cafe)$"]',p,160);
+      if(request!==activeRequest)return;
+      found=convert(raw,p).filter(x=>norm(x.name).includes(safeToken) || safeToken.includes(norm(x.name)));
+    }
+    options=found.filter(x=>norm(x.name).includes(safeToken)||safeToken.includes(norm(x.name))).slice(0,8);
+    if(options.length){showOptions(name);await verifiedReply(verifiedListText(name,options));}
+    else{
+      notice(`No verified nearby ${name} listings were returned.`,`${name} near me`);
+      await verifiedReply(`I could not verify nearby ${name} locations from the map-data service. I haven't found a list to send. Use the Google Maps search link on screen to check current listings.`);
+    }
   }
-  async function handle(input){const intent=parse(input);if(!intent)return false;const request=++activeRequest;
-    try{if(typeof addMessage==='function')await addMessage('user',String(input));}catch{}
+  function recentFollowup(raw){
+    if(!lastRequestedPlace||Date.now()-lastRequestedPlace.at>5*60*1000)return false;
+    return /^(?:(?:yes|yeah|yep|sure|okay|ok)[,.! ]+)?(?:send (?:me )?(?:them|those|the locations|the places|the list)|show (?:me )?(?:them|those|the locations|the places|the list)|list (?:them|those)|give me (?:them|those|the list)|where are (?:they|those)|what are (?:the |those )?locations|yes(?: please)?|go ahead|please do)[.!? ]*$/i.test(String(raw||'').trim());
+  }
+  async function followup(raw){
+    if(!recentFollowup(raw))return false;
+    await addMessage('user',String(raw));
+    if(options.length){showOptions(lastCategory);await verifiedReply(verifiedListText(lastCategory,options));return true;}
+    if(!hasGPS()){
+      notice('AUREN location is not available. Enable it in Settings.',`${lastRequestedPlace.name||lastRequestedPlace.label} near me`);
+      await verifiedReply('I do not have a verified list to send because AUREN location is OFF or unavailable. Turn Location ON in Settings and ask for the places again.');return true;
+    }
+    const request=++activeRequest;
+    if(lastRequestedPlace.kind==='name')await searchName(lastRequestedPlace.name,request);
+    else await searchCategory(lastRequestedPlace,request);
+    return true;
+  }
+  async function handle(input,visibleInput=input){const intent=parse(input);if(!intent)return false;const request=++activeRequest;
+    try{if(typeof addMessage==='function')await addMessage('user',String(visibleInput));}catch{}
     if(intent.kind==='repeat'){if(lastPlace)setDestination(lastPlace);else notice('Choose a destination first.');return true;}
-    if(intent.kind==='list'){if(options.length)showOptions('places');else notice('Ask me to find nearby restaurants or another category first.');return true;}
+    if(intent.kind==='list'){if(options.length){showOptions(lastCategory);await verifiedReply(verifiedListText(lastCategory,options));}else await verifiedReply('I have no verified nearby list yet. Ask me to find a place first.');return true;}
     if(intent.kind==='select'){if(options[intent.index])setDestination(options[intent.index]);else notice(`I have ${options.length} nearby options. Try another number.`);return true;}
-    if(intent.kind==='nearby'){await searchCategory(intent,request);return true;}
-    if(intent.kind==='name'){await searchName(intent.name,request);return true;}
+    if(intent.kind==='nearby'){lastRequestedPlace={...intent,at:Date.now()};await searchCategory(intent,request);return true;}
+    if(intent.kind==='name'){lastRequestedPlace={...intent,at:Date.now()};await searchName(intent.name,request);return true;}
     return false;
   }
 
@@ -6213,5 +6288,5 @@ const aurenPlaces341 = (() => {
   window.addEventListener('focus',onReturnFromMaps);
   window.addEventListener('pageshow',onReturnFromMaps);
   document.addEventListener('visibilitychange',()=>{if(!document.hidden)onReturnFromMaps();});
-  return {handle,parse,showOptions};
+  return {handle,parse,showOptions,isRecentPlacesFollowup:recentFollowup,followup,clearRecent(){lastRequestedPlace=null;}};
 })();
