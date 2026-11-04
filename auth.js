@@ -1,3 +1,4 @@
+import { getFirestore, doc, getDoc, setDoc, getDocs, collection, updateDoc, serverTimestamp } from 'https://www.gstatic.com/firebasejs/11.10.0/firebase-firestore.js';
 // AUREN v3.21 — per-account local data gate.
 // AUREN v3.21 — matching cache-busted application loader.
 // AUREN v3.21 — matching cache-busted app loader.
@@ -83,6 +84,101 @@ function activateAccountStorage(uid){
 }
 
 const gate=document.getElementById('aurenAuthGate');
+// AUREN v3.47 — Firebase account approval (GitHub UI gate, not Worker authorization).
+const AUREN_OWNER_UID = "uQ6OTPvqJKbgU26CmjQ5C4B6taw2";
+const aurenAccessDb = () => getFirestore(firebaseApp);
+const aurenAccessRef = uid => doc(aurenAccessDb(), 'aurenAccess', uid);
+const aurenIsOwner = user => !!user && user.uid === AUREN_OWNER_UID;
+const aurenAccessStyle = `
+  .a47-box{font:14px/1.5 system-ui,sans-serif;color:#e9e1d4;margin:16px auto;padding:16px;max-width:420px;background:#191c23;border:1px solid #8f774f;border-radius:15px;box-sizing:border-box}
+  .a47-box h3{margin:0 0 10px;font:20px Georgia,serif;color:#e3bf83}
+  .a47-box p{margin:8px 0;color:#c7bfaf}
+  .a47-box input{width:100%;box-sizing:border-box;border-radius:9px;background:#0d1016;color:#fff;border:1px solid #877049;padding:12px;margin:6px 0}
+  .a47-box button{background:#d9b578;color:#17130d;border:0;border-radius:8px;padding:10px 14px;margin:6px 6px 6px 0;font-weight:700;cursor:pointer}
+  .a47-box button:disabled{opacity:.5;cursor:wait}
+  .a47-entry{border-top:1px solid #5f5544;padding:12px 0;overflow-wrap:anywhere}
+`;
+const aurenAccessCSS = document.createElement('style');aurenAccessCSS.textContent=aurenAccessStyle;document.head.append(aurenAccessCSS);
+function aurenAccessPanel(){
+ let panel=document.getElementById('aurenAccessPanel');
+ if(!panel){ panel=document.createElement('section'); panel.id='aurenAccessPanel';panel.className='a47-box';panel.setAttribute('aria-live','polite');
+ (gate?.querySelector('.auren-auth-panel')||gate||document.body).append(panel); }
+ panel.hidden=false; return panel;
+}
+function aurenAccessClear(){let p=document.getElementById('aurenAccessPanel');if(p)p.hidden=true;}
+function aurenShowError(messageText){const panel=aurenAccessPanel();panel.replaceChildren();const h=document.createElement('h3');h.textContent='AUREN Private Access';const p=document.createElement('p');p.textContent=messageText;panel.append(h,p);}
+async function aurenCheckApproval(user){
+ if(aurenIsOwner(user))return true;
+ const snap=await getDoc(aurenAccessRef(user.uid));
+ return snap.exists() && snap.data().status === 'approved';
+}
+async function aurenRequestView(user){
+ setGateMode('checking');const panel=aurenAccessPanel();panel.replaceChildren();
+ const heading=document.createElement('h3');heading.textContent='Request access to AUREN';panel.append(heading);
+ const intro=document.createElement('p');intro.textContent='Your Google account: '+(user.email||'signed in');panel.append(intro);
+ const name=document.createElement('input');name.maxLength=70;name.autocomplete='name';name.placeholder='Your name';name.value=(user.displayName||'').slice(0,70);name.setAttribute('aria-label','Your name');panel.append(name);
+ const note=document.createElement('p');note.textContent='You only need approval once for this Google account.';panel.append(note);
+ const request=document.createElement('button');request.type='button';request.textContent='Request access';panel.append(request);
+ const check=document.createElement('button');check.type='button';check.textContent='Check approval';panel.append(check);
+ const signout=document.createElement('button');signout.type='button';signout.textContent='Use a different Google account';panel.append(signout);
+ const feedback=document.createElement('p');feedback.setAttribute('role','status');panel.append(feedback);
+ request.onclick=async()=>{
+   if(!name.value.trim()){feedback.textContent='Please enter your name.';return;}
+   request.disabled=true;
+   try{
+     const ref=aurenAccessRef(user.uid);const prior=await getDoc(ref);
+     if(prior.exists()){feedback.textContent=prior.data().status==='denied'?'This account was denied. Contact the owner.':'Your request is already recorded. Check approval after the owner accepts.';return;}
+     await setDoc(ref,{name:name.value.trim(),email:user.email||'',status:'pending',requestedAt:serverTimestamp()});
+     feedback.textContent='Request submitted. The owner can now approve you.';
+   }catch(e){feedback.textContent='Could not submit request: '+(e.code||e.message||e);}
+   finally{request.disabled=false;}
+ };
+ check.onclick=async()=>{
+   check.disabled=true;feedback.textContent='Checking…';
+   try{const snap=await getDoc(aurenAccessRef(user.uid));if(snap.exists()&&snap.data().status==='approved'){aurenAccessClear();await openApp(user);return;}
+      feedback.textContent=snap.exists()&&snap.data().status==='denied'?'Access denied by owner.':'Still waiting for approval.';
+   }catch(e){feedback.textContent='Could not check approval: '+(e.code||e.message||e);}
+   finally{check.disabled=false;}
+ };
+ signout.onclick=()=>signOut(auth).then(()=>location.reload());
+}
+async function aurenOwnerDashboard(user){
+ if(!aurenIsOwner(user))return;
+ const card=accountCard||document.body;
+ let trigger=document.getElementById('aurenOwnerOpen');
+ if(!trigger){trigger=document.createElement('button');trigger.id='aurenOwnerOpen';trigger.type='button';trigger.textContent='Owner · Access Requests';trigger.style.cssText='padding:9px 12px;margin:10px 0;border:1px solid #caa568;border-radius:8px;background:#1b1a20;color:#e1bd81;cursor:pointer;';card.append(trigger);}
+ let board=document.getElementById('aurenOwnerBoard');
+ if(!board){board=document.createElement('section');board.id='aurenOwnerBoard';board.className='a47-box';board.hidden=true;card.append(board);}
+ trigger.onclick=()=>{board.hidden=!board.hidden;if(!board.hidden)void draw();};
+ async function draw(){
+    board.replaceChildren();const h=document.createElement('h3');h.textContent='Owner · Access Requests';board.append(h);
+    const refresh=document.createElement('button');refresh.textContent='Refresh';board.append(refresh);refresh.onclick=draw;
+    const msg=document.createElement('p');msg.textContent='Loading account requests…';board.append(msg);
+    try{
+      const records=await getDocs(collection(aurenAccessDb(),'aurenAccess'));
+      msg.textContent=records.empty?'No access requests yet.':'Each approval belongs to one Google account, not a device.';
+      const entries=records.docs.map(d=>({uid:d.id,...d.data()})).sort((a,b)=>({pending:0,approved:1,denied:2}[a.status]??3)-({pending:0,approved:1,denied:2}[b.status]??3));
+      entries.forEach(record=>{
+        const entry=document.createElement('div');entry.className='a47-entry';
+        const title=document.createElement('strong');title.textContent=(record.name||'Unnamed')+' · '+(record.status||'unknown');entry.append(title);
+        const line=document.createElement('p');line.textContent=record.email||record.uid;entry.append(line);
+        if(record.status!=='approved'){
+          const yes=document.createElement('button');yes.textContent='Approve';yes.onclick=()=>change(record.uid,'approved',yes);entry.append(yes);
+        }
+        if(record.status!=='denied'){
+          const no=document.createElement('button');no.textContent=record.status==='approved'?'Revoke':'Deny';no.onclick=()=>change(record.uid,'denied',no);entry.append(no);
+        }
+        board.append(entry);
+      });
+    }catch(e){msg.textContent='Could not load requests: '+(e.code||e.message||e)+'. Check your Firestore rules.';}
+ }
+ async function change(uid,status,btn){
+    btn.disabled=true;
+    try{await updateDoc(aurenAccessRef(uid),{status,reviewedAt:serverTimestamp()});await draw();}
+    catch(e){alert('Unable to update access: '+(e.code||e.message||e));btn.disabled=false;}
+ }
+}
+
 const button=document.getElementById('aurenGoogleSignIn');
 const status=document.getElementById('aurenAuthStatus');
 const accountCard=document.getElementById('aurenAccountCard');
@@ -203,12 +299,19 @@ async function openApp(user){
   if(loaded){setGateMode('ready');return;}
   busy=true;setGateMode('loading');
   try{
+    // v3.47: only approved users load AUREN. Owner always permitted.
+    let permitted=false;
+    try{permitted=await aurenCheckApproval(user);}
+    catch(e){aurenShowError('Unable to check approval. Check Firestore setup: '+(e.code||e.message||e));return;}
+    if(!permitted){await aurenRequestView(user);return;}
+    aurenAccessClear();
     activateAccountStorage(user.uid);
     // A fresh versioned URL makes Safari request the CURRENT deployed app.js.
     if(!appPromise)appPromise=import('./app.js?v=3.21').catch(error=>{appPromise=null;throw error;});
     await appPromise;loaded=true;
     if(accountEmail)accountEmail.textContent=user.email||'Signed in';
     if(accountCard)accountCard.hidden=false;
+    if(aurenIsOwner(user))void aurenOwnerDashboard(user);
     const oldDiag=document.getElementById('aurenStartupDiagnostics');if(oldDiag)oldDiag.hidden=true;
     setGateMode('ready');
     if(mountedUserId!==user.uid){
